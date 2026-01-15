@@ -1,0 +1,140 @@
+2026-01-16 04:56:45.846 [INFO] Logging to: log/callback_20260116.log
+2026-01-16 04:56:45.847 [INFO] Starting Claude Code Permission Callback Server
+2026-01-16 04:56:45.849 [INFO] HTTP Port: 8080
+2026-01-16 04:56:45.849 [INFO] Socket Path: /tmp/claude-permission.sock
+2026-01-16 04:56:45.849 [INFO] Request Timeout: 300s (enabled)
+2026-01-16 04:56:45.849 [INFO] Socket server listening on /tmp/claude-permission.sock
+2026-01-16 05:01:46.053 [INFO] Logging to: log/callback_20260116.log
+2026-01-16 05:01:46.053 [INFO] Starting Claude Code Permission Callback Server
+2026-01-16 05:01:46.053 [INFO] HTTP Port: 8080
+2026-01-16 05:01:46.054 [INFO] Socket Path: /tmp/claude-permission.sock
+2026-01-16 05:01:46.054 [INFO] Request Timeout: 300s (enabled)
+2026-01-16 05:01:46.058 [INFO] Socket server listening on /tmp/claude-permission.sock
+2026-01-16 05:01:46.067 [INFO] HTTP server listening on port 8080
+2026-01-16 05:01:49.856 [INFO] [socket] New connection, fileno=5
+2026-01-16 05:01:49.856 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:01:49.856 [DEBUG] [socket] Received 999 bytes (elapsed: 0.0s)
+2026-01-16 05:01:49.856 [DEBUG] [socket] Complete JSON received (999 bytes)
+2026-01-16 05:01:49.856 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:01:49.857 [INFO] [socket] Received 999 bytes of JSON data
+2026-01-16 05:01:49.857 [INFO] [socket] Request ID: 1768510908-31246e24
+2026-01-16 05:01:49.857 [INFO] Registered request: 1768510908-31246e24
+2026-01-16 05:01:49.857 [INFO] [socket] Request 1768510908-31246e24 registered, waiting for user response...
+2026-01-16 05:01:52.413 [INFO] [socket] New connection, fileno=7
+2026-01-16 05:01:52.413 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:01:52.413 [DEBUG] [socket] Received 0 bytes (elapsed: 0.0s)
+2026-01-16 05:01:52.413 [WARNING] [socket] Connection closed by client (received 0 bytes total)
+2026-01-16 05:01:52.413 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:01:52.413 [WARNING] [socket] No data received, closing connection
+2026-01-16 05:02:36.779 [INFO] [socket] New connection, fileno=7
+2026-01-16 05:02:36.779 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:02:36.779 [DEBUG] [socket] Received 4096 bytes (elapsed: 0.0s)
+2026-01-16 05:02:36.779 [DEBUG] [socket] Incomplete JSON, continuing... (Unterminated string starting at: line 1 column 100)
+2026-01-16 05:02:36.780 [DEBUG] [socket] Received 1315 bytes (elapsed: 0.0s)
+2026-01-16 05:02:36.780 [DEBUG] [socket] Complete JSON received (5411 bytes)
+2026-01-16 05:02:36.780 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:02:36.780 [INFO] [socket] Received 5411 bytes of JSON data
+2026-01-16 05:02:36.780 [INFO] [socket] Request ID: 1768510954-de6682e3
+2026-01-16 05:02:36.780 [INFO] Registered request: 1768510954-de6682e3
+2026-01-16 05:02:36.780 [INFO] [socket] Request 1768510954-de6682e3 registered, waiting for user response...
+2026-01-16 05:02:59.252 [INFO] [socket] New connection, fileno=8
+2026-01-16 05:02:59.269 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:02:59.269 [DEBUG] [socket] Received 2307 bytes (elapsed: 0.0s)
+2026-01-16 05:02:59.269 [DEBUG] [socket] Complete JSON received (2307 bytes)
+2026-01-16 05:02:59.269 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:02:59.270 [INFO] [socket] Received 2307 bytes of JSON data
+2026-01-16 05:02:59.270 [INFO] [socket] Request ID: 1768510976-19f7eb16
+2026-01-16 05:02:59.270 [INFO] Registered request: 1768510976-19f7eb16
+2026-01-16 05:02:59.270 [INFO] [socket] Request 1768510976-19f7eb16 registered, waiting for user response...
+2026-01-16 05:03:01.460 [INFO] [socket] New connection, fileno=9
+2026-01-16 05:03:01.461 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:03:01.461 [DEBUG] [socket] Received 90 bytes (elapsed: 0.0s)
+2026-01-16 05:03:01.461 [DEBUG] [socket] Complete JSON received (90 bytes)
+2026-01-16 05:03:01.461 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:03:01.461 [INFO] [socket] Received 90 bytes of JSON data
+2026-01-16 05:03:01.461 [INFO] [socket] Request ID: test-1768510981
+2026-01-16 05:03:01.461 [INFO] Registered request: test-1768510981
+2026-01-16 05:03:01.461 [INFO] [socket] Request test-1768510981 registered, waiting for user response...
+2026-01-16 05:03:04.460 [WARNING] [resolve] Request test- not found
+2026-01-16 05:03:04.460 [INFO] 127.0.0.1 - "GET /allow?id=test- HTTP/1.1" 404 -
+2026-01-16 05:03:36.150 [INFO] Cleaned up dead connection: test-1768510981 (age=35s)
+2026-01-16 05:03:50.768 [INFO] [resolve] Request test-1768510981, status=disconnected, age=49.3s
+2026-01-16 05:03:50.768 [INFO] [resolve] Already disconnected
+2026-01-16 05:03:50.768 [INFO] 127.0.0.1 - "GET /allow?id=test-1768510981 HTTP/1.1" 404 -
+2026-01-16 05:04:06.174 [DEBUG] Removed old request: test-1768510981
+2026-01-16 05:04:18.999 [INFO] [socket] New connection, fileno=10
+2026-01-16 05:04:18.999 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:04:18.999 [DEBUG] [socket] Received 4096 bytes (elapsed: 0.0s)
+2026-01-16 05:04:19.000 [DEBUG] [socket] Incomplete JSON, continuing... (Unterminated string starting at: line 1 column 100)
+2026-01-16 05:04:19.000 [DEBUG] [socket] Received 891 bytes (elapsed: 0.0s)
+2026-01-16 05:04:19.000 [DEBUG] [socket] Complete JSON received (4987 bytes)
+2026-01-16 05:04:19.000 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:04:19.000 [INFO] [socket] Received 4987 bytes of JSON data
+2026-01-16 05:04:19.000 [INFO] [socket] Request ID: 1768511057-89b5ef65
+2026-01-16 05:04:19.000 [INFO] Registered request: 1768511057-89b5ef65
+2026-01-16 05:04:19.000 [INFO] [socket] Request 1768511057-89b5ef65 registered, waiting for user response...
+2026-01-16 05:04:24.681 [INFO] [socket] New connection, fileno=9
+2026-01-16 05:04:24.683 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:04:24.683 [DEBUG] [socket] Received 101 bytes (elapsed: 0.0s)
+2026-01-16 05:04:24.683 [DEBUG] [socket] Complete JSON received (101 bytes)
+2026-01-16 05:04:24.683 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:04:24.683 [INFO] [socket] Received 101 bytes of JSON data
+2026-01-16 05:04:24.684 [INFO] [socket] Request ID: integrated-test-1768511064
+2026-01-16 05:04:24.684 [INFO] Registered request: integrated-test-1768511064
+2026-01-16 05:04:24.684 [INFO] [socket] Request integrated-test-1768511064 registered, waiting for user response...
+2026-01-16 05:04:41.201 [INFO] Cleaned up dead connection: integrated-test-1768511064 (age=17s)
+2026-01-16 05:04:59.374 [INFO] [socket] New connection, fileno=11
+2026-01-16 05:04:59.379 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:04:59.379 [DEBUG] [socket] Received 4096 bytes (elapsed: 0.0s)
+2026-01-16 05:04:59.379 [DEBUG] [socket] Incomplete JSON, continuing... (Unterminated string starting at: line 1 column 100)
+2026-01-16 05:04:59.379 [DEBUG] [socket] Received 1351 bytes (elapsed: 0.0s)
+2026-01-16 05:04:59.379 [DEBUG] [socket] Complete JSON received (5447 bytes)
+2026-01-16 05:04:59.379 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:04:59.379 [INFO] [socket] Received 5447 bytes of JSON data
+2026-01-16 05:04:59.379 [INFO] [socket] Request ID: 1768511097-de9be531
+2026-01-16 05:04:59.379 [INFO] Registered request: 1768511097-de9be531
+2026-01-16 05:04:59.379 [INFO] [socket] Request 1768511097-de9be531 registered, waiting for user response...
+2026-01-16 05:12:33.742 [INFO] Logging to: log/callback_20260116.log
+2026-01-16 05:12:33.743 [INFO] Starting Claude Code Permission Callback Server
+2026-01-16 05:12:33.743 [INFO] HTTP Port: 8080
+2026-01-16 05:12:33.743 [INFO] Socket Path: /tmp/claude-permission.sock
+2026-01-16 05:12:33.743 [INFO] Request Timeout: 300s (enabled)
+2026-01-16 05:12:33.744 [INFO] Socket server listening on /tmp/claude-permission.sock
+2026-01-16 05:12:33.755 [INFO] HTTP server listening on port 8080
+2026-01-16 05:14:49.948 [INFO] [socket] New connection, fileno=5
+2026-01-16 05:14:50.002 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:14:50.005 [DEBUG] [socket] Received 915 bytes (elapsed: 0.0s)
+2026-01-16 05:14:50.021 [DEBUG] [socket] Complete JSON received (915 bytes)
+2026-01-16 05:14:50.021 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:14:50.021 [INFO] [socket] Received 915 bytes of JSON data
+2026-01-16 05:14:50.021 [INFO] [socket] Request ID: 1768511687-02d3825a
+2026-01-16 05:14:50.025 [INFO] Registered request: 1768511687-02d3825a
+2026-01-16 05:14:50.034 [INFO] [socket] Request 1768511687-02d3825a registered, waiting for user response...
+2026-01-16 05:15:11.094 [INFO] [socket] New connection, fileno=7
+2026-01-16 05:15:11.095 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:15:11.095 [DEBUG] [socket] Received 4096 bytes (elapsed: 0.0s)
+2026-01-16 05:15:11.106 [DEBUG] [socket] Incomplete JSON, continuing... (Unterminated string starting at: line 1 column 100)
+2026-01-16 05:15:11.106 [DEBUG] [socket] Received 219 bytes (elapsed: 0.0s)
+2026-01-16 05:15:11.106 [DEBUG] [socket] Complete JSON received (4315 bytes)
+2026-01-16 05:15:11.106 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:15:11.106 [INFO] [socket] Received 4315 bytes of JSON data
+2026-01-16 05:15:11.106 [INFO] [socket] Request ID: 1768511709-f685ee2a
+2026-01-16 05:15:11.106 [INFO] Registered request: 1768511709-f685ee2a
+2026-01-16 05:15:11.106 [INFO] [socket] Request 1768511709-f685ee2a registered, waiting for user response...
+2026-01-16 05:15:38.319 [INFO] [socket] New connection, fileno=8
+2026-01-16 05:15:38.320 [DEBUG] [socket] Set receive timeout to 5s
+2026-01-16 05:15:38.320 [DEBUG] [socket] Received 96 bytes (elapsed: 0.0s)
+2026-01-16 05:15:38.337 [DEBUG] [socket] Complete JSON received (96 bytes)
+2026-01-16 05:15:38.337 [DEBUG] [socket] Removed timeout, connection ready for response
+2026-01-16 05:15:38.337 [INFO] [socket] Received 96 bytes of JSON data
+2026-01-16 05:15:38.337 [INFO] [socket] Request ID: final-test-1768511738
+2026-01-16 05:15:38.337 [INFO] Registered request: final-test-1768511738
+2026-01-16 05:15:38.337 [INFO] [socket] Request final-test-1768511738 registered, waiting for user response...
+2026-01-16 05:15:41.503 [INFO] [resolve] Request final-test-1768511738, status=pending, age=3.2s
+2026-01-16 05:15:41.507 [DEBUG] [resolve] Checking socket connection (fileno=8)
+2026-01-16 05:15:41.509 [INFO] [resolve] Sending 119 bytes to socket (fileno=8)...
+2026-01-16 05:15:41.509 [DEBUG] [resolve] Total data size: 123 bytes (4 header + 119 payload)
+2026-01-16 05:15:41.509 [INFO] [resolve] Data sent successfully
+2026-01-16 05:15:41.509 [INFO] [resolve] Request final-test-1768511738 resolved: allow
+2026-01-16 05:15:41.577 [INFO] 127.0.0.1 - "GET /allow?id=final-test-1768511738 HTTP/1.1" 200 -
+2026-01-16 05:16:38.976 [DEBUG] Removed old request: final-test-1768511738
