@@ -1,0 +1,204 @@
+#!/bin/bash
+
+# =============================================================================
+# start.sh - 启动/停止 Claude Code 权限回调服务
+#
+# 用法:
+#   ./start.sh [start|stop|restart|status]
+#   不带参数默认为 start
+#
+# 功能:
+#   启动 HTTP + Socket 双协议服务器，处理飞书按钮回调请求
+#
+# 环境变量:
+#   FEISHU_WEBHOOK_URL     - 飞书 Webhook URL (可选，仅用于日志)
+#   CALLBACK_SERVER_URL    - 回调服务外部访问地址 (默认: http://localhost:8080)
+#   CALLBACK_SERVER_PORT   - HTTP 服务端口 (默认: 8080)
+#   PERMISSION_SOCKET_PATH - Unix Socket 路径 (默认: /tmp/claude-permission.sock)
+#   REQUEST_TIMEOUT        - 请求超时秒数 (默认: 300，0 表示禁用)
+# =============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PID_FILE="${SCRIPT_DIR}/server.pid"
+LOG_DIR="${SCRIPT_DIR}/../log"
+
+# 确保日志目录存在
+mkdir -p "$LOG_DIR"
+
+# 检查 Python 3
+if ! command -v python3 &> /dev/null; then
+    echo "Error: python3 is required but not installed."
+    exit 1
+fi
+
+# =============================================================================
+# 辅助函数
+# =============================================================================
+
+# 获取进程 ID
+get_pid() {
+    if [ -f "$PID_FILE" ]; then
+        cat "$PID_FILE"
+    fi
+}
+
+# 检查服务是否运行
+is_running() {
+    local pid=$(get_pid)
+    if [ -z "$pid" ]; then
+        return 1
+    fi
+
+    # 检查进程是否存在
+    if ps -p "$pid" > /dev/null 2>&1; then
+        return 0
+    else
+        # PID 文件存在但进程不存在，清理 PID 文件
+        rm -f "$PID_FILE"
+        return 1
+    fi
+}
+
+# 启动服务
+start_service() {
+    if is_running; then
+        local pid=$(get_pid)
+        echo "Service is already running (PID: $pid)"
+        return 0
+    fi
+
+    echo "Starting Claude Code Permission Callback Server..."
+
+    # 检查必需的环境变量
+    if [ -z "$FEISHU_WEBHOOK_URL" ]; then
+        echo "Warning: FEISHU_WEBHOOK_URL is not set. Notifications will be skipped."
+    fi
+
+    # 后台启动服务（日志由 Python logging 模块写入 callback_*.log）
+    nohup python3 "${SCRIPT_DIR}/main.py" >/dev/null 2>&1 &
+    local pid=$!
+
+    # 保存 PID
+    echo $pid > "$PID_FILE"
+
+    # 等待启动
+    sleep 1
+
+    # 验证服务是否启动成功
+    if is_running; then
+        echo "Service started successfully (PID: $pid)"
+        echo "Logs: $LOG_DIR/callback_$(date +%Y%m%d).log"
+        return 0
+    else
+        echo "Failed to start service. Check logs: $LOG_DIR/callback_$(date +%Y%m%d).log"
+        rm -f "$PID_FILE"
+        return 1
+    fi
+}
+
+# 停止服务
+stop_service() {
+    if ! is_running; then
+        echo "Service is not running."
+        rm -f "$PID_FILE"
+        return 0
+    fi
+
+    local pid=$(get_pid)
+    echo "Stopping service (PID: $pid)..."
+
+    # 尝试优雅关闭
+    kill "$pid" 2>/dev/null
+
+    # 等待进程结束（最多 5 秒）
+    local count=0
+    while is_running && [ $count -lt 5 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+
+    # 如果还在运行，强制终止
+    if is_running; then
+        echo "Force killing service..."
+        kill -9 "$pid" 2>/dev/null
+        sleep 1
+    fi
+
+    # 清理 PID 文件
+    rm -f "$PID_FILE"
+
+    # 清理 socket 文件
+    local socket_path="${PERMISSION_SOCKET_PATH:-/tmp/claude-permission.sock}"
+    if [ -S "$socket_path" ]; then
+        rm -f "$socket_path"
+        echo "Cleaned up socket file: $socket_path"
+    fi
+
+    if is_running; then
+        echo "Failed to stop service."
+        return 1
+    else
+        echo "Service stopped."
+        return 0
+    fi
+}
+
+# 重启服务
+restart_service() {
+    echo "Restarting service..."
+    stop_service
+    sleep 1
+    start_service
+}
+
+# 显示服务状态
+show_status() {
+    if is_running; then
+        local pid=$(get_pid)
+        echo "Service is running (PID: $pid)"
+
+        # 显示端口监听状态
+        if command -v netstat &> /dev/null; then
+            local port=${CALLBACK_SERVER_PORT:-8080}
+            if netstat -tln 2>/dev/null | grep -q ":$port "; then
+                echo "HTTP server listening on port $port"
+            fi
+        fi
+
+        # 显示 socket 文件状态
+        local socket_path="${PERMISSION_SOCKET_PATH:-/tmp/claude-permission.sock}"
+        if [ -S "$socket_path" ]; then
+            echo "Socket server listening on $socket_path"
+        fi
+
+        return 0
+    else
+        echo "Service is not running."
+        return 1
+    fi
+}
+
+# =============================================================================
+# 主逻辑
+# =============================================================================
+
+case "${1:-start}" in
+    start)
+        start_service
+        ;;
+    stop)
+        stop_service
+        ;;
+    restart)
+        restart_service
+        ;;
+    status)
+        show_status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

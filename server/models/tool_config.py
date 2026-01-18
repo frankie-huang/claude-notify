@@ -1,0 +1,246 @@
+"""
+工具配置统一管理
+
+从 config/tools.json 读取工具类型配置，消除与 Shell 脚本的配置重复
+"""
+
+import json
+import logging
+from pathlib import Path
+from typing import Dict, Optional, Any
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+# 配置文件路径
+TOOLS_CONFIG_FILE = Path(__file__).parent.parent.parent / "config" / "tools.json"
+
+
+@dataclass
+class ToolConfig:
+    """工具配置数据类"""
+    name: str
+    display_name: str
+    color: str
+    icon: str
+    input_field: str
+    detail_template: str
+    rule_template: str
+    limit_length: Optional[int] = None
+    truncate_suffix: str = "..."
+
+    def format_detail(self, tool_input: Dict[str, Any], description: str = "") -> str:
+        """格式化工具详情
+
+        Args:
+            tool_input: 工具输入参数
+            description: 可选的描述信息
+
+        Returns:
+            格式化后的详情内容（Markdown 格式）
+        """
+        # 提取字段值
+        field_value = tool_input.get(self.input_field, "")
+
+        # 应用长度限制
+        if self.limit_length and len(str(field_value)) > self.limit_length:
+            field_value = str(field_value)[:self.limit_length] + self.truncate_suffix
+
+        # 转义特殊字符（Bash 命令）
+        if self.name == "Bash":
+            field_value = field_value.replace("\\", "\\\\").replace('"', '\\"')
+
+        # 替换模板占位符
+        result = self.detail_template
+        result = result.replace(f"{{{self.input_field}}}", str(field_value))
+        result = result.replace("{tool_name}", self.name)
+
+        # 添加描述
+        if description:
+            result += f"\\n**描述：** {description}"
+
+        return result
+
+    def format_rule(self, tool_input: Dict[str, Any]) -> str:
+        """格式化权限规则
+
+        Args:
+            tool_input: 工具输入参数
+
+        Returns:
+            规则字符串（如 Bash(npm install)）
+        """
+        field_value = tool_input.get(self.input_field, "")
+
+        result = self.rule_template
+        result = result.replace(f"{{{self.input_field}}}", str(field_value))
+        result = result.replace("{tool_name}", self.name)
+
+        return result
+
+
+class ToolConfigManager:
+    """工具配置管理器"""
+
+    def __init__(self):
+        self._configs: Dict[str, ToolConfig] = {}
+        self._load_config()
+
+    def _load_config(self):
+        """加载配置文件"""
+        try:
+            with open(TOOLS_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            tools_data = data.get("tools", {})
+
+            for tool_name, config in tools_data.items():
+                self._configs[tool_name] = ToolConfig(
+                    name=config.get("name", tool_name),
+                    display_name=config.get("display_name", tool_name),
+                    color=config.get("color", "grey"),
+                    icon=config.get("icon", ""),
+                    input_field=config.get("input_field", ""),
+                    detail_template=config.get("detail_template", ""),
+                    rule_template=config.get("rule_template", ""),
+                    limit_length=config.get("limit_length"),
+                    truncate_suffix=config.get("truncate_suffix", "...")
+                )
+
+            logger.info(f"Loaded {len(self._configs)} tool configurations from {TOOLS_CONFIG_FILE}")
+
+        except FileNotFoundError:
+            logger.warning(f"Tools config not found: {TOOLS_CONFIG_FILE}, using built-in config")
+            self._load_builtin_config()
+        except Exception as e:
+            logger.error(f"Failed to load tools config: {e}, using built-in config")
+            self._load_builtin_config()
+
+    def _load_builtin_config(self):
+        """加载内置配置（降级方案）"""
+        builtin_tools = {
+            "Bash": {
+                "name": "Bash",
+                "display_name": "命令执行",
+                "color": "orange",
+                "icon": "terminal",
+                "input_field": "command",
+                "detail_template": "**命令：**\\n```\\n{command}\\n```",
+                "limit_length": 500,
+                "rule_template": "Bash({command})",
+                "truncate_suffix": "..."
+            },
+            "Edit": {
+                "name": "Edit",
+                "display_name": "编辑文件",
+                "color": "yellow",
+                "icon": "edit",
+                "input_field": "file_path",
+                "detail_template": "**文件：** `{file_path}`",
+                "rule_template": "Edit({file_path})"
+            },
+            "Write": {
+                "name": "Write",
+                "display_name": "写入文件",
+                "color": "yellow",
+                "icon": "write",
+                "input_field": "file_path",
+                "detail_template": "**文件：** `{file_path}`",
+                "rule_template": "Write({file_path})"
+            },
+            "Read": {
+                "name": "Read",
+                "display_name": "读取文件",
+                "color": "blue",
+                "icon": "read",
+                "input_field": "file_path",
+                "detail_template": "**文件：** `{file_path}`",
+                "rule_template": "Read({file_path})"
+            },
+            "Glob": {
+                "name": "Glob",
+                "display_name": "文件搜索",
+                "color": "blue",
+                "icon": "search",
+                "input_field": "pattern",
+                "detail_template": "**模式：** `{pattern}`",
+                "rule_template": "Glob({pattern})"
+            },
+            "Grep": {
+                "name": "Grep",
+                "display_name": "内容搜索",
+                "color": "blue",
+                "icon": "search",
+                "input_field": "pattern",
+                "detail_template": "**搜索：** `{pattern}`",
+                "rule_template": "Grep({pattern})"
+            },
+            "WebSearch": {
+                "name": "WebSearch",
+                "display_name": "网络搜索",
+                "color": "purple",
+                "icon": "web",
+                "input_field": "query",
+                "detail_template": "**查询：** {query}",
+                "limit_length": 200,
+                "rule_template": "WebSearch({query})"
+            },
+            "WebFetch": {
+                "name": "WebFetch",
+                "display_name": "获取网页",
+                "color": "purple",
+                "icon": "web",
+                "input_field": "url",
+                "detail_template": "**URL：** {url}",
+                "limit_length": 200,
+                "rule_template": "WebFetch({url})"
+            }
+        }
+
+        for tool_name, config in builtin_tools.items():
+            self._configs[tool_name] = ToolConfig(**config)
+
+        logger.info(f"Loaded {len(self._configs)} built-in tool configurations")
+
+    def get_config(self, tool_name: str) -> ToolConfig:
+        """获取工具配置
+
+        Args:
+            tool_name: 工具名称
+
+        Returns:
+            工具配置对象，如果不存在则返回默认配置
+        """
+        if tool_name in self._configs:
+            return self._configs[tool_name]
+
+        # 返回默认配置
+        return ToolConfig(
+            name=tool_name,
+            display_name=tool_name,
+            color="grey",
+            icon="",
+            input_field="",
+            detail_template="**工具：** {tool_name}",
+            rule_template=f"{tool_name}(*)"
+        )
+
+    def get_color(self, tool_name: str) -> str:
+        """获取工具颜色"""
+        return self.get_config(tool_name).color
+
+    def format_rule(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
+        """格式化权限规则"""
+        return self.get_config(tool_name).format_rule(tool_input)
+
+
+# 全局单例
+_tool_config_manager: Optional[ToolConfigManager] = None
+
+
+def get_tool_config_manager() -> ToolConfigManager:
+    """获取工具配置管理器单例"""
+    global _tool_config_manager
+    if _tool_config_manager is None:
+        _tool_config_manager = ToolConfigManager()
+    return _tool_config_manager

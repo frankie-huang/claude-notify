@@ -6,8 +6,79 @@
 
 本项目为 Claude Code 提供飞书通知功能，允许用户远程响应权限请求，无需返回终端操作。项目包含两个主要组件：
 
-1. **权限通知脚本** (`permission-notify.sh`) - Claude Code PermissionRequest hook，负责发送飞书卡片和处理用户决策
-2. **回调服务** (`callback-server/server.py`) - HTTP 服务接收飞书卡片按钮操作，通过 Unix Socket 传递给通知脚本
+1. **权限通知脚本** (`hooks/permission-notify.sh`) - Claude Code PermissionRequest hook，负责发送飞书卡片和处理用户决策
+2. **回调服务** (`server/main.py`) - HTTP 服务接收飞书卡片按钮操作，通过 Unix Socket 传递给通知脚本
+
+## 项目结构
+
+```
+claude-notify/
+├── install.sh                  # 安装配置脚本
+├── hooks/                      # Hook 脚本
+│   ├── permission-notify.sh    # 权限请求通知脚本
+│   └── webhook-notify.sh       # 通用通知脚本
+├── server/                     # Python 回调服务
+│   ├── main.py                 # 主服务入口
+│   ├── start.sh                # 启动脚本
+│   ├── config.py               # 配置管理
+│   ├── socket-client.py        # Socket 客户端
+│   ├── models/                 # 数据模型
+│   ├── services/               # 业务服务
+│   └── handlers/               # HTTP 处理器
+├── shell-lib/                  # Shell 函数库
+│   ├── log.sh                  # 日志记录函数
+│   ├── json.sh                 # JSON 解析函数
+│   ├── tool.sh                 # 工具详情格式化
+│   ├── feishu.sh               # 飞书卡片构建
+│   └── socket.sh               # Socket 通信函数
+├── shared/                     # 跨语言共享资源
+│   ├── protocol.md             # Socket 通信协议规范
+│   ├── logging.json            # 统一日志配置
+│   └── logging_config.py       # Python 日志配置模块
+├── config/                     # 配置文件
+│   └── tools.json              # 工具类型配置
+├── docs/                       # 文档
+│   ├── AGENTS.md               # AI 助手指南
+│   └── TEST.md                 # 测试文档
+└── log/                        # 日志目录
+```
+
+## 快速开始
+
+### 1. 运行安装脚本
+
+```bash
+./install.sh
+```
+
+安装脚本会：
+- 检测环境依赖（python3, curl 等）
+- 配置 Claude Code hook
+- 生成环境变量配置模板
+
+### 2. 配置环境变量
+
+复制并编辑环境变量文件：
+
+```bash
+cp .env.example .env
+vim .env
+```
+
+必需配置：
+- `FEISHU_WEBHOOK_URL` - 飞书 Webhook URL
+- `CALLBACK_SERVER_URL` - 回调服务外部访问地址
+
+### 3. 启动回调服务
+
+```bash
+source .env
+./server/start.sh
+```
+
+### 4. 开始使用
+
+启动 Claude Code，权限请求将自动发送到飞书。
 
 ## 架构设计
 
@@ -15,15 +86,15 @@
 
 ```
 ┌─────────────────┐         ┌──────────────────┐         ┌─────────────────┐
-│  Claude Code    │────────▶│ permission-notify│────────▶│   飞书 Webhook   │
-│                 │  Hook   │      .sh         │  Card   │                 │
+│  Claude Code    │────────▶│ hooks/permission │────────▶│   飞书 Webhook   │
+│                 │  Hook   │    -notify.sh    │  Card   │                 │
 └─────────────────┘         └────────┬─────────┘         └─────────────────┘
                                      │
                                      │ Unix Socket
                                      │ (注册请求)
                                      ▼
                             ┌──────────────────┐
-                            │ callback-server  │
+                            │     server/      │
                             │   HTTP Server    │
                             └────────┬─────────┘
                                      │
@@ -31,8 +102,8 @@
                                      │ (用户点击按钮)
                                      ▼
                             ┌──────────────────┐         ┌─────────────────┐
-                            │ callback-server  │────────▶│ permission-notify│
-                            │   (resolve)      │  Socket │      .sh         │
+                            │     server/      │────────▶│ hooks/permission│
+                            │   (resolve)      │  Socket │    -notify.sh   │
                             └──────────────────┘         └────────┬─────────┘
                                                               │
                                                               │ Decision JSON
@@ -47,118 +118,64 @@
 
 1. **飞书卡片由前端发送**: `permission-notify.sh` 负责构造和发送飞书卡片，回调服务只处理用户决策
 2. **Unix Socket 双向通信**: 请求注册和决策返回通过同一个 Socket 连接
-3. **长度前缀协议**: 使用 4 字节长度前缀确保数据完整性
+3. **长度前缀协议**: 使用 4 字节长度前缀确保数据完整性（详见 `shared/protocol.md`）
 4. **连接状态驱动**: 请求有效性由 Socket 连接状态决定，支持死连接检测和超时处理
 5. **优雅降级**: 回调服务不可用时自动降级为仅通知模式
 
 ## 功能特性
 
-- **可交互权限控制**: 用户可直接在飞书消息中点击按钮批准/拒绝权限请求，无需返回终端操作
+- **可交互权限控制**: 用户可直接在飞书消息中点击按钮批准/拒绝权限请求
 - **权限持久化**: 支持"始终允许"选项，自动写入项目权限规则
 - **优雅降级**: 回调服务不可用时自动降级为仅通知模式
-- **连接状态驱动**: 请求有效性由 Socket 连接状态决定，支持死连接检测
-- **灵活超时**: 客户端无限等待，服务器端统一控制超时（可禁用）
+- **统一配置**: Shell 和 Python 共用 `shared/logging.json` 日志配置
+
+## 待实现功能
+
+- **权限请求延迟通知**: 支持配置延迟时间，在权限请求发出后等待一段时间再发送飞书通知，避免终端快速响应时产生不必要的通知
+- **决策页面增强**:
+  - 显示具体批准/拒绝的指令内容
+  - 支持定时自动关闭页面
+- **目录结构重构**: 重组一级目录，将代码文件统一收拢到 `src/` 目录，改善项目结构清晰度
 
 ## 脚本说明
 
 | 脚本 | 用途 | Hook 类型 |
 |------|------|-----------|
-| `webhook-notify.sh` | 通用通知（任务暂停等） | Notification, Stop |
-| `permission-notify.sh` | 权限请求通知（可交互） | PermissionRequest |
-| `callback-server/server.py` | 权限回调服务（HTTP + Socket） | - |
-| `callback-server/socket-client.py` | Socket 客户端（替代 socat） | - |
+| `hooks/webhook-notify.sh` | 通用通知（任务暂停等） | Notification, Stop |
+| `hooks/permission-notify.sh` | 权限请求通知（可交互） | PermissionRequest |
+| `server/main.py` | 权限回调服务（HTTP + Socket） | - |
+| `server/socket-client.py` | Socket 客户端（替代 socat） | - |
 
 ## 配置方法
 
-### 1. 设置 Webhook URL
+### 手动配置（不使用 install.sh）
 
-通过环境变量设置：
+#### 1. 设置 Webhook URL
 
 ```bash
 export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 ```
 
-### 2. 启动回调服务（用于可交互权限控制）
-
-#### 启动服务
-
-启动权限回调服务：
+#### 2. 启动回调服务
 
 ```bash
-cd callback-server
-./start-server.sh start
+./server/start.sh
 ```
 
-或者直接运行（不带参数，默认启动）：
+#### 3. 配置 Claude Code Hooks
 
-```bash
-cd callback-server
-./start-server.sh
-```
-
-#### 停止服务
-
-```bash
-cd callback-server
-./start-server.sh stop
-```
-
-#### 重启服务
-
-```bash
-cd callback-server
-./start-server.sh restart
-```
-
-#### 查看服务状态
-
-```bash
-# 检查 HTTP 端口是否监听
-lsof -i :8080 | grep LISTEN
-
-# 检查 Socket 文件是否存在
-ls -l /tmp/claude-permission.sock
-
-# 查看服务日志
-tail -f log/callback_$(date +%Y%m%d).log
-```
-
-#### 手动强制停止（如果脚本停止失败）
-
-```bash
-# 查找并停止占用 8080 端口的进程
-lsof -i :8080 | grep LISTEN | awk '{print $2}' | xargs -r kill
-
-# 清理 Socket 文件
-rm -f /tmp/claude-permission.sock
-```
-
-#### 环境变量配置
-
-- `FEISHU_WEBHOOK_URL` - 飞书 Webhook URL（必需）
-- `CALLBACK_SERVER_URL` - 回调服务外部访问地址（默认: `http://localhost:8080`）
-- `CALLBACK_SERVER_PORT` - HTTP 服务端口（默认: 8080）
-- `PERMISSION_SOCKET_PATH` - Unix Socket 路径（默认: `/tmp/claude-permission.sock`）
-- `REQUEST_TIMEOUT` - 服务器端超时秒数（默认: 300，设为 0 禁用超时）
-
-**超时说明**：客户端无限等待用户响应，超时由服务器端统一控制。服务器在超时后会主动关闭 socket 连接，客户端收到后返回 deny 决策。
-
-**注意**: 如果需要在远程服务器上使用，请将 `CALLBACK_SERVER_URL` 设置为公网可访问的地址。
-
-### 3. 配置 Claude Code Hooks
-
-在 `~/.claude/settings.json` 或项目的 `.claude/settings.json` 中添加：
+在 `~/.claude/settings.json` 中添加：
 
 ```json
 {
   "hooks": {
     "PermissionRequest": [
       {
-        "matcher": "*",
+        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash /path/to/permission-notify.sh"
+            "command": "/path/to/claude-notify/hooks/permission-notify.sh"
           }
         ]
       }
@@ -167,124 +184,70 @@ rm -f /tmp/claude-permission.sock
 }
 ```
 
-#### Matcher 选项
+### 环境变量
 
-- `"*"` - 所有权限请求
-- `"Bash"` - 仅 Bash 命令
-- `"Edit|Write"` - 仅文件修改
-- `"Bash|Edit|Write"` - 命令和文件修改
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `FEISHU_WEBHOOK_URL` | 飞书 Webhook URL | 必需 |
+| `CALLBACK_SERVER_URL` | 回调服务外部访问地址 | `http://localhost:8080` |
+| `CALLBACK_SERVER_PORT` | HTTP 服务端口 | 8080 |
+| `PERMISSION_SOCKET_PATH` | Unix Socket 路径 | `/tmp/claude-permission.sock` |
+| `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
 
-### 4. 依赖
+## 依赖
 
 **可交互模式推荐**:
-- `python3` - 回调服务 + Socket 客户端（推荐，更稳定）
-- `socat` - Unix Socket 通信（可选，作为备选方案）
+- `python3` - 回调服务 + Socket 客户端
+- `curl` - 发送 HTTP 请求
+- `socat` - 可选，Socket 通信备选方案
+
+**降级模式仅需**:
 - `curl` - 发送 HTTP 请求
 
-**降级模式（无回调服务）仅需**:
-- `curl` - 发送 HTTP 请求
+**可选**:
+- `jq` - 更好的 JSON 处理（脚本会自动降级使用 Python3 或 grep/sed）
 
-**注意**: `jq` 不再是必需依赖，脚本会自动检测并使用 Python3 或原生命令（grep/sed）解析 JSON
-
-安装依赖：
+安装：
 
 ```bash
 # Ubuntu/Debian
-apt-get install python3 curl socat
-
-# CentOS/RHEL
-yum install python3 curl socat
+apt-get install python3 curl
 
 # macOS
-brew install python3 curl socat
+brew install python3 curl
 ```
 
 ## 使用流程
 
 ### 交互模式（推荐）
 
-**前提条件**: 回调服务已启动（见上方配置方法）
-
-**执行流程**:
 1. Claude Code 发起权限请求
-2. `permission-notify.sh` 接收 Hook，发送飞书交互卡片
-3. 用户在飞书中收到带 4 个按钮的通知卡片：
+2. `permission-notify.sh` 发送飞书交互卡片（4 个按钮）：
    - **批准运行** - 允许这一次执行
-   - **始终允许** - 允许并写入规则，后续自动允许
-   - **拒绝运行** - 拒绝这一次，Claude 可继续尝试其他方式
-   - **拒绝并中断** - 拒绝并停止 Claude 当前任务
-4. 用户点击按钮，浏览器访问回调服务器
-5. 回调服务器通过 Unix Socket 返回决策
-6. `permission-notify.sh` 接收决策并返回给 Claude Code
-7. Claude Code 根据决策继续或停止执行
+   - **始终允许** - 允许并写入规则
+   - **拒绝运行** - 拒绝，Claude 可继续尝试其他方式
+   - **拒绝并中断** - 拒绝并停止当前任务
+3. 用户点击按钮，决策返回给 Claude Code
 
 ### 降级模式
 
-**触发条件**: 回调服务未运行（Socket 文件不存在）
+回调服务不可用时：
+- 发送不带交互按钮的通知卡片
+- 用户需在终端手动确认
 
-**行为**:
-- 发送不带交互按钮的飞书通知卡片
-- 返回 `EXIT_FALLBACK`，让 Claude Code 回退到终端交互模式
-- 用户需要在终端手动确认权限请求
+## 日志
 
-## 通知效果
+日志文件位于 `log/` 目录：
 
-权限请求通知会显示：
-- 工具类型（Bash/Edit/Write 等）
-- 项目名称
-- 请求时间
-- 详细内容（命令、文件路径等）
-- 交互按钮（交互模式下）
+| 文件模式 | 说明 |
+|----------|------|
+| `hook_YYYYMMDD.log` | Hook 脚本日志 |
+| `callback_YYYYMMDD.log` | 回调服务日志 |
+| `socket_client_YYYYMMDD.log` | Socket 客户端日志 |
 
-不同工具类型使用不同颜色区分：
-- Bash 命令 - 橙色
-- 文件修改 - 黄色
-- 文件读取/搜索 - 蓝色
-- 网络请求 - 紫色
+日志配置统一定义在 `shared/logging.json`。
 
-## 权限规则格式
+## 文档
 
-点击"始终允许"后，会在项目的 `.claude/settings.local.json` 中写入规则：
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(npm run build)",
-      "Edit(/path/to/file.js)",
-      "Glob(**/*.py)"
-    ]
-  }
-}
-```
-
-## 调试和日志
-
-### 日志文件位置
-
-- **回调服务日志**: `log/callback_YYYYMMDD.log`
-- **Socket 客户端日志**: `/tmp/socket-client-debug.log` (通过 `SOCKET_CLIENT_DEBUG` 环境变量配置)
-- **权限请求日志**: `log/permission_YYYYMMDD.log`
-
-### 日志级别
-
-- 回调服务默认使用 `DEBUG` 级别，记录详细的 socket 操作和时序信息
-- 日志格式包含毫秒级时间戳，便于精确定位问题
-
-### 常见问题排查
-
-**Socket 连接失败**:
-1. 检查回调服务是否运行: `ls -l /tmp/claude-permission.sock`
-2. 查看回调服务日志: `tail -f log/callback_$(date +%Y%m%d).log`
-3. 查看客户端日志: `tail -f /tmp/socket-client-debug.log`
-
-**权限请求无响应**:
-- 检查超时设置（默认 55 秒）
-- 查看服务端日志中的请求注册记录
-- 确认飞书 Webhook 是否正常发送
-
-**数据传递问题**:
-- 检查进程退出码记录在日志中
-- 确认使用管道方式传递数据（当前版本）
-- 查看是否有特殊字符导致 JSON 解析失败
-
+- [Socket 通信协议](shared/protocol.md)
+- [测试文档](docs/TEST.md)

@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""
+Claude Code Permission Callback Server
+
+功能：
+    HTTP 服务接收飞书卡片按钮的 URL 跳转请求，
+    通过 Unix Domain Socket 将用户决策传递给 hooks/permission-notify.sh
+
+架构：
+    1. hooks/permission-notify.sh 发送飞书交互卡片（带按钮）
+    2. 用户点击飞书按钮，浏览器访问回调服务器 HTTP 端点
+    3. 回调服务器接收 HTTP 请求，通过 Unix Socket 返回决策
+    4. hooks/permission-notify.sh 接收决策并返回给 Claude Code
+
+通信协议详见: shared/protocol.md
+"""
+
+import base64
+import json
+import os
+import socket
+import threading
+import time
+import logging
+from http.server import HTTPServer
+
+from config import REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT
+from models.decision import Decision
+from services.request_manager import RequestManager
+from handlers.callback import CallbackHandler
+
+# =============================================================================
+# 配置
+# =============================================================================
+
+SOCKET_PATH = os.environ.get('PERMISSION_SOCKET_PATH', '/tmp/claude-permission.sock')
+HTTP_PORT = int(os.environ.get('CALLBACK_SERVER_PORT', '8080'))
+FEISHU_WEBHOOK_URL = os.environ.get('FEISHU_WEBHOOK_URL', '')
+CLEANUP_INTERVAL = 5  # 清理断开连接的检查间隔（秒）
+
+# 日志配置
+log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'log')
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, f"callback_{time.strftime('%Y%m%d')}.log")
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+logger.info(f"Logging to: {log_file}")
+
+
+# =============================================================================
+# 全局请求管理器
+# =============================================================================
+
+request_manager = RequestManager()
+CallbackHandler.request_manager = request_manager
+
+
+# =============================================================================
+# Socket 服务器处理
+# =============================================================================
+
+def handle_socket_client(conn: socket.socket, addr):
+    """处理来自 permission-notify.sh 的 Socket 连接
+
+    流程：
+        1. 接收请求数据（JSON 格式）
+        2. 注册请求到 RequestManager（保持连接打开）
+        3. 发送确认响应
+        4. 等待 resolve() 通过此连接返回用户决策
+        5. 连接在 resolve() 中关闭
+    """
+    fileno = conn.fileno()
+    logger.info(f"[socket] New connection, fileno={fileno}")
+
+    try:
+        # 设置接收超时，避免永久阻塞
+        conn.settimeout(5.0)
+        logger.debug(f"[socket] Set receive timeout to 5s")
+
+        data = b''
+        start_time = time.time()
+
+        while True:
+            chunk = conn.recv(4096)
+            elapsed = time.time() - start_time
+            logger.debug(f"[socket] Received {len(chunk) if chunk else 0} bytes (elapsed: {elapsed:.1f}s)")
+
+            if not chunk:
+                logger.warning(f"[socket] Connection closed by client (received {len(data)} bytes total)")
+                break
+
+            data += chunk
+
+            # 检查是否收到完整的 JSON
+            try:
+                json.loads(data.decode('utf-8'))
+                logger.debug(f"[socket] Complete JSON received ({len(data)} bytes)")
+                break
+            except json.JSONDecodeError as e:
+                logger.debug(f"[socket] Incomplete JSON, continuing... ({str(e)[:50]})")
+                continue
+
+        # 恢复阻塞模式（后续操作不需要超时）
+        conn.settimeout(None)
+        logger.debug(f"[socket] Removed timeout, connection ready for response")
+
+        if not data:
+            logger.warning(f"[socket] No data received, closing connection")
+            conn.close()
+            return
+
+        logger.info(f"[socket] Received {len(data)} bytes of JSON data")
+
+        request = json.loads(data.decode('utf-8'))
+        request_id = request.get('request_id')
+
+        if not request_id:
+            conn.sendall(json.dumps({'success': False, 'error': 'missing request_id'}).encode())
+            conn.close()
+            return
+
+        logger.info(f"[socket] Request ID: {request_id}")
+
+        # 解码 raw_input_encoded 提取 tool_name 和 tool_input
+        # 这些字段用于 /always 端点生成正确的权限规则
+        raw_input_encoded = request.get('raw_input_encoded')
+        if raw_input_encoded:
+            try:
+                raw_input = json.loads(base64.b64decode(raw_input_encoded).decode('utf-8'))
+                request['tool_name'] = raw_input.get('tool_name')
+                request['tool_input'] = raw_input.get('tool_input', {})
+                logger.debug(f"[socket] Decoded tool_name: {request['tool_name']}")
+            except Exception as e:
+                logger.warning(f"[socket] Failed to decode raw_input_encoded: {e}")
+
+        # 注册请求（保存 socket 连接供后续 resolve 使用）
+        request_manager.register(request_id, conn, request)
+
+        # 发送确认响应
+        conn.sendall(json.dumps({'success': True, 'message': 'Request registered'}).encode())
+
+        # 重要：不关闭连接！等待用户响应后由 resolve() 关闭
+        logger.info(f"[socket] Request {request_id} registered, waiting for user response...")
+
+    except Exception as e:
+        logger.error(f"Socket handler error: {e}")
+        try:
+            conn.sendall(json.dumps({'success': False, 'error': str(e)}).encode())
+            conn.close()
+        except:
+            pass
+
+
+def run_socket_server():
+    """运行 Unix Domain Socket 服务器
+
+    功能：
+        监听 Unix Socket，接受来自 permission-notify.sh 的连接
+    """
+    # 删除已存在的 socket 文件
+    if os.path.exists(SOCKET_PATH):
+        os.unlink(SOCKET_PATH)
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(SOCKET_PATH)
+    os.chmod(SOCKET_PATH, 0o666)
+    server.listen(10)
+
+    logger.info(f"Socket server listening on {SOCKET_PATH}")
+
+    while True:
+        conn, addr = server.accept()
+        thread = threading.Thread(target=handle_socket_client, args=(conn, addr))
+        thread.daemon = True
+        thread.start()
+
+
+def run_cleanup_thread():
+    """运行断开连接清理线程
+
+    功能：
+        定期清理断开连接和超时的请求
+    """
+    while True:
+        time.sleep(CLEANUP_INTERVAL)
+        request_manager.cleanup_disconnected()
+
+
+# =============================================================================
+# 主函数
+# =============================================================================
+
+def main():
+    """主函数：启动所有服务
+
+    服务组件：
+        1. Unix Socket 服务器 - 接收 permission-notify.sh 的连接
+        2. 清理线程 - 定期清理断开连接
+        3. HTTP 服务器 - 接收飞书按钮的回调请求
+    """
+    logger.info("Starting Claude Code Permission Callback Server")
+    logger.info(f"HTTP Port: {HTTP_PORT}")
+    logger.info(f"Socket Path: {SOCKET_PATH}")
+    env_timeout = os.environ.get('REQUEST_TIMEOUT', '')
+    if env_timeout:
+        logger.info(f"Request Timeout: {REQUEST_TIMEOUT}s (from env: REQUEST_TIMEOUT={env_timeout})")
+    else:
+        logger.info(f"Request Timeout: {REQUEST_TIMEOUT}s (default: {DEFAULT_REQUEST_TIMEOUT}s)")
+
+    if not FEISHU_WEBHOOK_URL:
+        logger.warning("FEISHU_WEBHOOK_URL not set - notifications will be skipped")
+
+    # 启动 Socket 服务器线程
+    socket_thread = threading.Thread(target=run_socket_server)
+    socket_thread.daemon = True
+    socket_thread.start()
+
+    # 启动清理线程
+    cleanup_thread = threading.Thread(target=run_cleanup_thread)
+    cleanup_thread.daemon = True
+    cleanup_thread.start()
+
+    # 启动 HTTP 服务器
+    server = HTTPServer(('0.0.0.0', HTTP_PORT), CallbackHandler)
+    logger.info(f"HTTP server listening on port {HTTP_PORT}")
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+        server.shutdown()
+
+
+if __name__ == '__main__':
+    main()

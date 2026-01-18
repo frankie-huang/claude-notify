@@ -1,0 +1,20 @@
+{
+  "_comment": "统一日志配置 - Shell 和 Python 共用",
+  "version": 1,
+  "log_dir_relative": "log",
+  "date_format": "%Y%m%d",
+  "datetime_format": "%Y-%m-%d %H:%M:%S",
+  "file_patterns": {
+    "hook": "hook_{date}.log",
+    "server": "callback_{date}.log",
+    "socket_client": "socket_client_{date}.log"
+  },
+  "formats": {
+    "shell": "[{pid}] {datetime} [{level}] {message}",
+    "python": "[%(process)d] %(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
+    "python_datefmt": "%Y-%m-%d %H:%M:%S"
+  },
+  "levels": {
+    "default": "DEBUG"
+  }
+}
