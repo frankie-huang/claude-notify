@@ -32,12 +32,15 @@ class ToolConfig:
     def format_detail(self, tool_input: Dict[str, Any], description: str = "") -> str:
         """格式化工具详情
 
+        注意：此方法现在只返回纯值，不包含标签。
+        标签由飞书卡片的子模板处理。
+
         Args:
             tool_input: 工具输入参数
             description: 可选的描述信息
 
         Returns:
-            格式化后的详情内容（Markdown 格式）
+            格式化后的详情内容（纯值）
         """
         # 提取字段值
         field_value = tool_input.get(self.input_field, "")
@@ -46,7 +49,7 @@ class ToolConfig:
         if self.limit_length and len(str(field_value)) > self.limit_length:
             field_value = str(field_value)[:self.limit_length] + self.truncate_suffix
 
-        # 转义特殊字符（Bash 命令）
+        # 基本转义（Bash 命令）
         if self.name == "Bash":
             field_value = field_value.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -55,9 +58,9 @@ class ToolConfig:
         result = result.replace(f"{{{self.input_field}}}", str(field_value))
         result = result.replace("{tool_name}", self.name)
 
-        # 添加描述
+        # 如果有描述，直接附加（不添加标签）
         if description:
-            result += f"\\n**描述：** {description}"
+            result += f" {description}"
 
         return result
 
@@ -125,7 +128,7 @@ class ToolConfigManager:
                 "color": "orange",
                 "icon": "terminal",
                 "input_field": "command",
-                "detail_template": "**命令：**\\n```\\n{command}\\n```",
+                "detail_template": "{command}",
                 "limit_length": 500,
                 "rule_template": "Bash({command})",
                 "truncate_suffix": "..."
@@ -136,7 +139,7 @@ class ToolConfigManager:
                 "color": "yellow",
                 "icon": "edit",
                 "input_field": "file_path",
-                "detail_template": "**文件：** `{file_path}`",
+                "detail_template": "{file_path}",
                 "rule_template": "Edit({file_path})"
             },
             "Write": {
@@ -145,7 +148,7 @@ class ToolConfigManager:
                 "color": "yellow",
                 "icon": "write",
                 "input_field": "file_path",
-                "detail_template": "**文件：** `{file_path}`",
+                "detail_template": "{file_path}",
                 "rule_template": "Write({file_path})"
             },
             "Read": {
@@ -154,7 +157,7 @@ class ToolConfigManager:
                 "color": "blue",
                 "icon": "read",
                 "input_field": "file_path",
-                "detail_template": "**文件：** `{file_path}`",
+                "detail_template": "{file_path}",
                 "rule_template": "Read({file_path})"
             },
             "Glob": {
@@ -163,7 +166,7 @@ class ToolConfigManager:
                 "color": "blue",
                 "icon": "search",
                 "input_field": "pattern",
-                "detail_template": "**模式：** `{pattern}`",
+                "detail_template": "{pattern}",
                 "rule_template": "Glob({pattern})"
             },
             "Grep": {
@@ -172,7 +175,7 @@ class ToolConfigManager:
                 "color": "blue",
                 "icon": "search",
                 "input_field": "pattern",
-                "detail_template": "**搜索：** `{pattern}`",
+                "detail_template": "{pattern}",
                 "rule_template": "Grep({pattern})"
             },
             "WebSearch": {
@@ -181,7 +184,7 @@ class ToolConfigManager:
                 "color": "purple",
                 "icon": "web",
                 "input_field": "query",
-                "detail_template": "**查询：** {query}",
+                "detail_template": "{query}",
                 "limit_length": 200,
                 "rule_template": "WebSearch({query})"
             },
@@ -191,7 +194,7 @@ class ToolConfigManager:
                 "color": "purple",
                 "icon": "web",
                 "input_field": "url",
-                "detail_template": "**URL：** {url}",
+                "detail_template": "{url}",
                 "limit_length": 200,
                 "rule_template": "WebFetch({url})"
             }
@@ -221,7 +224,7 @@ class ToolConfigManager:
             color="grey",
             icon="",
             input_field="",
-            detail_template="**工具：** {tool_name}",
+            detail_template="{tool_name}",
             rule_template=f"{tool_name}(*)"
         )
 

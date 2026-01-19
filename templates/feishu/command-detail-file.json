@@ -1,0 +1,7 @@
+{
+  "tag": "markdown",
+  "content": "**文件：**\n{{file_path}}",
+  "text_align": "left",
+  "text_size": "normal_v2",
+  "margin": "0px 0px 0px 0px"
+}

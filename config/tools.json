@@ -1,6 +1,7 @@
 {
   "_comment": "工具类型统一配置 - Claude Code 权限请求",
   "_usage": "Shell 使用 jq/python3 读取，Python 使用 json.load()",
+  "_note": "detail_template 现在只返回纯值，不包含标签。标签由子模板处理。",
   "tools": {
     "Bash": {
       "name": "Bash",
@@ -8,10 +9,8 @@
       "color": "orange",
       "icon": "terminal",
       "input_field": "command",
-      "detail_template": "**命令：**\\n```\\n{command}\\n```",
-      "limit_length": 500,
-      "rule_template": "Bash({command})",
-      "truncate_suffix": "..."
+      "detail_template": "{command}",
+      "rule_template": "Bash({command})"
     },
     "Edit": {
       "name": "Edit",
@@ -19,7 +18,7 @@
       "color": "yellow",
       "icon": "edit",
       "input_field": "file_path",
-      "detail_template": "**文件：** `{file_path}`",
+      "detail_template": "{file_path}",
       "rule_template": "Edit({file_path})"
     },
     "Write": {
@@ -28,7 +27,7 @@
       "color": "yellow",
       "icon": "write",
       "input_field": "file_path",
-      "detail_template": "**文件：** `{file_path}`",
+      "detail_template": "{file_path}",
       "rule_template": "Write({file_path})"
     },
     "Read": {
@@ -37,7 +36,7 @@
       "color": "blue",
       "icon": "read",
       "input_field": "file_path",
-      "detail_template": "**文件：** `{file_path}`",
+      "detail_template": "{file_path}",
       "rule_template": "Read({file_path})"
     },
     "Glob": {
@@ -46,7 +45,7 @@
       "color": "blue",
       "icon": "search",
       "input_field": "pattern",
-      "detail_template": "**模式：** `{pattern}`",
+      "detail_template": "{pattern}",
       "rule_template": "Glob({pattern})"
     },
     "Grep": {
@@ -55,7 +54,7 @@
       "color": "blue",
       "icon": "search",
       "input_field": "pattern",
-      "detail_template": "**搜索：** `{pattern}`",
+      "detail_template": "{pattern}",
       "rule_template": "Grep({pattern})"
     },
     "WebSearch": {
@@ -64,7 +63,7 @@
       "color": "purple",
       "icon": "web",
       "input_field": "query",
-      "detail_template": "**查询：** {query}",
+      "detail_template": "{query}",
       "limit_length": 200,
       "rule_template": "WebSearch({query})"
     },
@@ -74,7 +73,7 @@
       "color": "purple",
       "icon": "web",
       "input_field": "url",
-      "detail_template": "**URL：** {url}",
+      "detail_template": "{url}",
       "limit_length": 200,
       "rule_template": "WebFetch({url})"
     },
@@ -84,7 +83,7 @@
       "color": "purple",
       "icon": "image",
       "input_field": "imageSource",
-      "detail_template": "**图像分析**",
+      "detail_template": "图像分析",
       "rule_template": "mcp__4_5v_mcp__analyze_image(*)"
     },
     "mcp__web_reader__webReader": {
@@ -93,14 +92,14 @@
       "color": "purple",
       "icon": "web",
       "input_field": "url",
-      "detail_template": "**URL：** {url}",
+      "detail_template": "{url}",
       "rule_template": "mcp__web_reader__webReader({url})"
     }
   },
   "_defaults": {
     "unknown_tool": {
       "color": "grey",
-      "detail_template": "**工具：** {tool_name}",
+      "detail_template": "{tool_name}",
       "rule_template": "{tool_name}(*)"
     }
   }

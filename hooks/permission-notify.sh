@@ -117,7 +117,8 @@ run_interactive_mode() {
 
     # 提取工具详情
     extract_tool_detail "$INPUT" "$TOOL_NAME"
-    local detail_content="$EXTRACTED_DETAIL"
+    local command_content="$EXTRACTED_COMMAND"
+    local description="$EXTRACTED_DESCRIPTION"
     local template_color="$EXTRACTED_COLOR"
     local project_name
     project_name=$(basename "$PROJECT_DIR")
@@ -128,7 +129,7 @@ run_interactive_mode() {
 
     # 构建并发送飞书卡片
     local card
-    card=$(build_permission_card "$TOOL_NAME" "$project_name" "$TIMESTAMP" "$detail_content" "$template_color" "$buttons")
+    card=$(build_permission_card "$TOOL_NAME" "$project_name" "$TIMESTAMP" "$command_content" "$description" "$template_color" "$buttons")
 
     log "Sending interactive Feishu card"
     send_feishu_card "$card" "$WEBHOOK_URL"
@@ -210,14 +211,15 @@ run_fallback_mode() {
 
     # 提取工具详情
     extract_tool_detail "$INPUT" "$TOOL_NAME"
-    local detail_content="$EXTRACTED_DETAIL"
+    local command_content="$EXTRACTED_COMMAND"
+    local description="$EXTRACTED_DESCRIPTION"
     local template_color="$EXTRACTED_COLOR"
     local project_name
     project_name=$(basename "$PROJECT_DIR")
 
     # 构建不带按钮的卡片
     local card
-    card=$(build_permission_card "$TOOL_NAME" "$project_name" "$TIMESTAMP" "$detail_content" "$template_color" "")
+    card=$(build_permission_card "$TOOL_NAME" "$project_name" "$TIMESTAMP" "$command_content" "$description" "$template_color" "")
 
     # 发送通知（使用统一的发送函数，失败时自动发送降级文本消息）
     send_feishu_card "$card" "$WEBHOOK_URL"

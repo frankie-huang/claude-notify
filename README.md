@@ -31,6 +31,15 @@ claude-notify/
 │   ├── tool.sh                 # 工具详情格式化
 │   ├── feishu.sh               # 飞书卡片构建
 │   └── socket.sh               # Socket 通信函数
+├── templates/                  # 飞书卡片模板
+│   └── feishu/                 # 飞书卡片模板文件
+│       ├── permission-card.json           # 权限请求卡片(带按钮)
+│       ├── permission-card-static.json    # 权限请求卡片(无按钮)
+│       ├── notification-card.json         # 通用通知卡片
+│       ├── buttons.json                   # 交互按钮模板
+│       ├── command-detail-bash.json       # Bash 命令详情模板
+│       ├── command-detail-file.json       # 文件操作详情模板
+│       └── description-element.json       # 描述元素模板
 ├── shared/                     # 跨语言共享资源
 │   ├── protocol.md             # Socket 通信协议规范
 │   ├── logging.json            # 统一日志配置
@@ -134,8 +143,13 @@ source .env
 - **权限请求延迟通知**: 支持配置延迟时间，在权限请求发出后等待一段时间再发送飞书通知，避免终端快速响应时产生不必要的通知
 - **决策页面增强**:
   - 显示具体批准/拒绝的指令内容
-  - 支持定时自动关闭页面
+  - ✅ 支持定时自动关闭页面（已实现）
 - **目录结构重构**: 重组一级目录，将代码文件统一收拢到 `src/` 目录，改善项目结构清晰度
+
+## 已完成功能
+
+- ✅ **飞书卡片模板化**: 支持模块化的飞书卡片模板，便于自定义和扩展
+- ✅ **决策页面自动关闭**: 支持定时自动关闭决策页面（通过 `CLOSE_PAGE_TIMEOUT` 配置）
 
 ## 脚本说明
 
@@ -193,6 +207,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `CALLBACK_SERVER_PORT` | HTTP 服务端口 | 8080 |
 | `PERMISSION_SOCKET_PATH` | Unix Socket 路径 | `/tmp/claude-permission.sock` |
 | `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
+| `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
 
 ## 依赖
 

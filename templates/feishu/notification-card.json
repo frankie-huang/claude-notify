@@ -1,0 +1,52 @@
+{
+  "msg_type": "interactive",
+  "card": {
+    "header": {
+      "template": "blue",
+      "title": {
+        "content": "{{title}}",
+        "tag": "plain_text"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "content": "{{content}}",
+          "tag": "lark_md"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "fields": [
+          {
+            "is_short": true,
+            "text": {
+              "content": "**项目：**\n{{project_name}}",
+              "tag": "lark_md"
+            }
+          },
+          {
+            "is_short": true,
+            "text": {
+              "content": "**时间：**\n{{timestamp}}",
+              "tag": "lark_md"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "请尽快返回处理"
+          }
+        ]
+      }
+    ]
+  }
+}

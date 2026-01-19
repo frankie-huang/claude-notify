@@ -66,7 +66,8 @@ if [ "$USE_EXTERNAL_CONFIG" = "false" ]; then
 fi
 
 # 全局变量用于存储提取的详情
-EXTRACTED_DETAIL=""
+EXTRACTED_COMMAND=""
+EXTRACTED_DESCRIPTION=""
 EXTRACTED_COLOR=""
 
 # =============================================================================
@@ -96,7 +97,8 @@ get_tool_color() {
 # =============================================================================
 # 功能：从 PermissionRequest 的 tool_input 中提取工具详情并格式化为飞书 Markdown
 # 用法：extract_tool_detail "json_input" "tool_name"
-# 输出：设置全局变量 EXTRACTED_DETAIL（格式化后的详情内容）
+# 输出：设置全局变量 EXTRACTED_COMMAND（命令内容）
+#       设置全局变量 EXTRACTED_DESCRIPTION（描述内容）
 #       设置全局变量 EXTRACTED_COLOR（卡片颜色）
 # =============================================================================
 extract_tool_detail() {
@@ -114,50 +116,65 @@ extract_tool_detail() {
         field_name="${TOOL_FIELDS[$tool_name]:-}"
     fi
 
+    # 初始化
+    EXTRACTED_COMMAND=""
+    EXTRACTED_DESCRIPTION=""
+
+    # 提取描述（通用）
+    EXTRACTED_DESCRIPTION=$(json_get "$json_input" "tool_input.description")
+
     # 使用统一配置或内置逻辑
     if [ "$USE_EXTERNAL_CONFIG" = "true" ] && [ -n "$field_name" ]; then
-        # 使用外部配置
-        EXTRACTED_DETAIL=$(tool_format_detail "$json_input" "$tool_name")
+        # 使用外部配置，直接获取命令内容和描述（不使用 tool_format_detail）
+        local field_value
+        field_value=$(json_get "$json_input" "tool_input.${field_name}")
+        field_value="${field_value:-}"
+
+        # 检查是否需要截断
+        local limit_length
+        limit_length=$(_tool_config_get "$tool_name" "limit_length" 2>/dev/null)
+
+        if [ -n "$limit_length" ] && [ "$limit_length" -gt 0 ] 2>/dev/null && [ ${#field_value} -gt "$limit_length" ]; then
+            local suffix
+            suffix=$(_tool_config_get "$tool_name" "truncate_suffix" 2>/dev/null)
+            field_value="${field_value:0:$limit_length}${suffix}"
+        fi
+
+        # Bash 命令：只提取原始值，转义由模板渲染统一处理
+
+        # 获取模板并替换占位符
+        local template
+        template=$(tool_get_detail_template "$tool_name")
+        EXTRACTED_COMMAND="$template"
+        EXTRACTED_COMMAND="${EXTRACTED_COMMAND//\{${field_name}\}/${field_value}}"
+        EXTRACTED_COMMAND="${EXTRACTED_COMMAND//\{tool_name\}/${tool_name}}"
     else
         # 使用内置逻辑（向后兼容）
-        local detail=""
+        # 注意：现在使用子模板，子模板已包含标签，这里只返回纯值
         case "$tool_name" in
             "Bash")
                 local command
                 command=$(json_get "$json_input" "tool_input.command")
                 command="${command:-N/A}"
-                if [ ${#command} -gt 500 ]; then
-                    command="${command:0:500}..."
-                fi
-                # 更完整的转义：换行、反斜杠、双引号、反引号、美元符号
-                command=$(echo "$command" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g' | tr '\n' ' ')
-                detail="**命令：**\\n\`\`\`\\n${command}\\n\`\`\`"
+                # 只提取原始值，转义由模板渲染统一处理
+                EXTRACTED_COMMAND="$command"
                 ;;
             "Edit"|"Write")
                 local file_path
                 file_path=$(json_get "$json_input" "tool_input.file_path")
                 file_path="${file_path:-N/A}"
-                detail="**文件：** \`${file_path}\`"
+                EXTRACTED_COMMAND="$file_path"
                 ;;
             "Read")
                 local file_path
                 file_path=$(json_get "$json_input" "tool_input.file_path")
                 file_path="${file_path:-N/A}"
-                detail="**文件：** \`${file_path}\`"
+                EXTRACTED_COMMAND="$file_path"
                 ;;
             *)
-                detail="**工具：** ${tool_name}"
+                EXTRACTED_COMMAND="$tool_name"
                 ;;
         esac
-
-        # 添加描述
-        local description
-        description=$(json_get "$json_input" "tool_input.description")
-        if [ -n "$description" ]; then
-            detail="${detail}\\n**描述：** ${description}"
-        fi
-
-        EXTRACTED_DETAIL="$detail"
     fi
 }
 

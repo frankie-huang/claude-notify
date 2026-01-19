@@ -4,6 +4,77 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added - 2026-01-20
+
+#### 飞书卡片子模板抽象化 (飞书卡片模板化增强)
+
+- 新增子模板系统,支持模块化的卡片元素组合:
+  - `command-detail-bash.json` - Bash 命令详情元素模板
+  - `command-detail-file.json` - 文件操作详情元素模板 (Edit/Write/Read)
+  - `description-element.json` - 操作描述元素模板
+- 新增 `render_sub_template()` 函数,支持渲染独立子模板
+- 重构 `build_permission_card()` 函数:
+  - 根据工具类型自动选择对应的子模板
+  - 支持 Bash、Edit、Write、Read 等不同工具类型
+  - 动态组合命令详情和描述元素
+- 统一配置管理:
+  - 更新 `config/tools.json` 的 `detail_template`,只返回纯值不包含标签
+  - 同步更新 `shell-lib/tool.sh` 内置逻辑
+  - 同步更新 `server/models/tool_config.py` 内置配置
+- 优化代码规范:
+  - 规范化 `shell-lib/feishu.sh` 代码和注释
+  - 统一函数文档格式
+  - 改进代码组织结构
+
+**优势**:
+- 更高复用性: 命令详情、描述等元素可独立复用
+- 更易扩展: 新增工具类型只需添加对应子模板
+- 配置统一: Shell 脚本和 Python 服务器使用相同配置
+- 代码清晰: 模板职责明确,便于维护
+
+### Changed - 2026-01-20
+
+#### 配置文件更新
+
+- `config/tools.json`:
+  - 所有工具的 `detail_template` 改为只返回纯值
+  - 移除模板中的标签 (如"**命令：**"、"**文件：**")
+  - 标签由飞书卡片子模板负责添加
+- `shell-lib/tool.sh`:
+  - 内置逻辑改为只返回纯值
+  - 简化转义处理
+- `server/models/tool_config.py`:
+  - 更新内置配置与 tools.json 保持一致
+  - 更新 `format_detail()` 方法只返回纯值
+
+### Added - 2026-01-19
+
+#### 飞书卡片模板化 (extract-feishu-card-templates)
+
+- 将飞书卡片的 JSON 构造逻辑从 Shell 脚本抽离为独立的模板文件
+- 新增 `templates/feishu/` 目录,存放卡片模板:
+  - `permission-card.json` - 权限请求卡片(交互模式)
+  - `permission-card-static.json` - 权限请求卡片(静态模式)
+  - `notification-card.json` - 通用通知卡片
+  - `buttons.json` - 交互按钮配置
+  - `README.md` - 模板使用说明和变量清单
+- 新增模板渲染函数:
+  - `validate_template()` - 验证模板文件 JSON 格式
+  - `render_template()` - 核心模板渲染函数(支持变量替换和 JSON 转义)
+  - `render_card_template()` - 卡片模板渲染包装函数
+- 重构卡片构建函数使用模板:
+  - `build_permission_card()` - 权限请求卡片
+  - `build_notification_card()` - 通用通知卡片
+  - `build_permission_buttons()` - 交互按钮
+- 支持环境变量 `FEISHU_TEMPLATE_PATH` 自定义模板目录
+- 移除硬编码的 JSON 字符串拼接逻辑
+
+**优势**:
+- 维护便利:直接编辑 JSON 模板即可更新卡片样式,无需修改代码
+- 版本管理:模板独立存储,可轻松回滚或升级
+- 扩展性强:新增卡片类型只需添加新模板文件
+- 向后兼容:保持现有 API 接口不变
+
 ### Added - 2026-01-15
 
 #### 可交互权限控制 (add-interactive-permission-control)

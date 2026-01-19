@@ -12,6 +12,7 @@ from urllib.parse import urlparse, parse_qs
 from models.decision import Decision
 from services.request_manager import RequestManager
 from services.rule_writer import write_always_allow_rule
+from config import CLOSE_PAGE_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,18 @@ class CallbackHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         logger.info(f"{self.address_string()} - {format % args}")
 
-    def send_html_response(self, status: int, title: str, message: str, success: bool = True):
-        """发送 HTML 响应页面"""
+    def send_html_response(self, status: int, title: str, message: str, success: bool = True, close_timeout: int = None):
+        """发送 HTML 响应页面
+
+        Args:
+            status: HTTP 状态码
+            title: 页面标题
+            message: 显示消息
+            success: 是否成功
+            close_timeout: 自动关闭页面超时时间（秒），默认从环境变量 CLOSE_PAGE_TIMEOUT 读取
+        """
+        if close_timeout is None:
+            close_timeout = CLOSE_PAGE_TIMEOUT
         color = '#28a745' if success else '#dc3545'
         icon = '✓' if success else '✗'
 
@@ -75,6 +86,20 @@ class CallbackHandler(BaseHTTPRequestHandler):
         .message {{
             color: #666;
             line-height: 1.6;
+            margin-bottom: 20px;
+        }}
+        .countdown {{
+            color: #999;
+            font-size: 14px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }}
+        .close-hint {{
+            display: none;
+            color: #666;
+            font-size: 14px;
+            margin-top: 10px;
         }}
     </style>
 </head>
@@ -83,7 +108,45 @@ class CallbackHandler(BaseHTTPRequestHandler):
         <div class="icon">{icon}</div>
         <div class="title">{title}</div>
         <div class="message">{message}</div>
+        <div class="countdown" id="countdown">
+            页面将在 <span id="seconds">{close_timeout}</span> 秒后自动关闭
+        </div>
+        <div class="close-hint" id="closeHint">
+            您现在可以关闭此页面
+        </div>
     </div>
+    <script>
+        (function() {{
+            const timeout = {close_timeout};
+            let seconds = timeout;
+            const countdownEl = document.getElementById('seconds');
+            const countdownDiv = document.getElementById('countdown');
+            const closeHint = document.getElementById('closeHint');
+
+            const timer = setInterval(function() {{
+                seconds--;
+                if (countdownEl) {{
+                    countdownEl.textContent = seconds;
+                }}
+
+                if (seconds <= 0) {{
+                    clearInterval(timer);
+                    if (countdownDiv) {{
+                        countdownDiv.style.display = 'none';
+                    }}
+                    if (closeHint) {{
+                        closeHint.style.display = 'block';
+                    }}
+                    // 尝试关闭窗口（只有脚本打开的窗口才能被关闭）
+                    try {{
+                        window.close();
+                    }} catch (e) {{
+                        // 忽略关闭失败（浏览器安全限制）
+                    }}
+                }}
+            }}, 1000);
+        }})();
+    </script>
 </body>
 </html>'''
 

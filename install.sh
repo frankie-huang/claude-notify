@@ -294,6 +294,11 @@ PERMISSION_SOCKET_PATH=/tmp/claude-permission.sock
 # 请求超时时间，秒 (可选，默认 300)
 # 用户在此时间内未响应，将回退到终端交互
 REQUEST_TIMEOUT=300
+
+# 回调页面自动关闭时间，秒 (可选，默认 3)
+# 用户点击按钮后，回调页面显示的倒计时秒数
+# 建议范围: 1-10 秒
+CLOSE_PAGE_TIMEOUT=3
 EOF
 
     print_success "环境变量模板已生成: $env_file"
