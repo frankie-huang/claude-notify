@@ -14,6 +14,7 @@
 # 环境变量:
 #   FEISHU_WEBHOOK_URL - 飞书 Webhook URL (必需)
 #   CLAUDE_PROJECT_DIR - 项目目录 (可选，默认为当前目录)
+#   session_id          - 会话 ID (可选，用于标识不同会话，待实现功能)
 # =============================================================================
 
 # 飞书 Webhook URL
@@ -27,7 +28,11 @@ fi
 
 # 获取当前时间
 TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
-SESSION_ID="${session_id:-unknown}"
+
+# Session ID - 预留功能，用于标识不同会话（待实现）
+# 目前 Claude Code hook 不传递 session_id，需要等待后续版本支持
+SESSION_ID="${session_id:-}"
+
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 PROJECT_NAME=$(basename "$PROJECT_DIR")
 
@@ -41,12 +46,25 @@ GREETINGS=(
 )
 RANDOM_GREETING=${GREETINGS[$RANDOM % ${#GREETINGS[@]}]}
 
-# 构建飞书卡片消息
+# 构建飞书卡片消息（2.0 格式）
 # 包含：标题、项目信息、时间戳、操作按钮
 read -r -d '' CARD_CONTENT << EOF
 {
   "msg_type": "interactive",
   "card": {
+    "schema": "2.0",
+    "config": {
+      "update_multi": true,
+      "style": {
+        "text_size": {
+          "normal_v2": {
+            "default": "normal",
+            "pc": "normal",
+            "mobile": "heading"
+          }
+        }
+      }
+    },
     "header": {
       "template": "blue",
       "title": {
@@ -54,51 +72,68 @@ read -r -d '' CARD_CONTENT << EOF
         "tag": "plain_text"
       }
     },
-    "elements": [
+    "body": {
+      "direction": "vertical",
+      "elements": [
       {
-        "tag": "div",
-        "text": {
-          "content": "**${RANDOM_GREETING}**",
-          "tag": "lark_md"
-        }
+        "tag": "markdown",
+        "content": "**${RANDOM_GREETING}**",
+        "text_align": "left",
+        "text_size": "normal_v2",
+        "margin": "0px 0px 0px 0px"
       },
       {
-        "tag": "hr"
+        "tag": "hr",
+        "margin": "0px 0px 0px 0px"
       },
       {
-        "tag": "div",
-        "fields": [
+        "tag": "column_set",
+        "columns": [
           {
-            "is_short": true,
-            "text": {
-              "content": "**项目名称：**\\n${PROJECT_NAME}",
-              "tag": "lark_md"
-            }
+            "tag": "column",
+            "width": "weighted",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**项目：**\\n${PROJECT_NAME}",
+                "text_align": "left",
+                "text_size": "normal_v2"
+              }
+            ],
+            "vertical_align": "top",
+            "weight": 1
           },
           {
-            "is_short": true,
-            "text": {
-              "content": "**通知时间：**\\n${TIMESTAMP}",
-              "tag": "lark_md"
-            }
+            "tag": "column",
+            "width": "weighted",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**时间：**\\n${TIMESTAMP}",
+                "text_align": "left",
+                "text_size": "normal_v2"
+              }
+            ],
+            "vertical_align": "top",
+            "weight": 1
           }
         ]
+      },
+      {
+        "tag": "markdown",
+        "content": "**状态：** Claude Code 正在等待确认，请及时处理",
+        "text_align": "left",
+        "text_size": "normal_v2"
       },
       {
         "tag": "div",
         "text": {
-          "content": "**状态：** Claude Code 正在等待确认，请及时处理",
-          "tag": "lark_md"
+          "tag": "plain_text",
+          "content": "请尽快返回处理",
+          "text_size": "notation",
+          "text_align": "left",
+          "text_color": "grey"
         }
-      },
-      {
-        "tag": "note",
-        "elements": [
-          {
-            "tag": "plain_text",
-            "content": "请尽快返回处理"
-          }
-        ]
       },
       {
         "tag": "action",
@@ -114,6 +149,7 @@ read -r -d '' CARD_CONTENT << EOF
         ]
       }
     ]
+    }
   }
 }
 EOF

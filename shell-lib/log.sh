@@ -186,3 +186,50 @@ log_debug() {
 
     echo "[$(date "+${_LOG_DATETIME_FORMAT}")] DEBUG: $1" >> "$LOG_FILE"
 }
+
+# =============================================================================
+# 记录命令日志
+# =============================================================================
+# 功能：将权限请求的 command 保存到日志文件
+# 用法：log_command "command_content" "request_id" "tool_name" "session_id"
+# 参数：
+#   $1 - command 内容
+#   $2 - 请求 ID（可选）
+#   $3 - 工具名称（可选）
+#   $4 - 会话 ID（可选，用于文件名）
+# 输出：追加写入 log/command/ 目录下按日期和会话 ID 命名的文件
+# 文件名格式：command_{date}_{session_id}.log
+# =============================================================================
+log_command() {
+    local command_content="$1"
+    local request_id="${2:-unknown}"
+    local tool_name="${3:-unknown}"
+    local session_id="${4:-unknown}"
+
+    # 获取项目根目录
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    local command_log_dir="${script_dir}/log/command"
+
+    # 创建目录
+    mkdir -p "$command_log_dir"
+
+    # 生成文件名：command_YYYYMMDD_sessionid.log（按日期和会话区分）
+    local date_part
+    date_part=$(date "+%Y%m%d")
+    local log_filename="command_${date_part}_${session_id}.log"
+    local log_file="${command_log_dir}/${log_filename}"
+
+    # 追加写入文件
+    {
+        echo "=========================================="
+        echo "时间: $(date "+${_LOG_DATETIME_FORMAT}")"
+        echo "请求 ID: ${request_id}"
+        echo "工具: ${tool_name}"
+        echo "------------------------------------------"
+        echo "$command_content"
+        echo ""
+    } >> "$log_file"
+
+    log "Command logged to: ${log_filename}"
+}

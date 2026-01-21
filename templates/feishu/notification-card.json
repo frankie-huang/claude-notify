@@ -10,31 +10,45 @@
     },
     "elements": [
       {
-        "tag": "div",
-        "text": {
-          "content": "{{content}}",
-          "tag": "lark_md"
-        }
+        "tag": "markdown",
+        "content": "{{content}}",
+        "text_align": "left",
+        "text_size": "normal_v2",
+        "margin": "0px 0px 0px 0px"
       },
       {
         "tag": "hr"
       },
       {
-        "tag": "div",
-        "fields": [
+        "tag": "column_set",
+        "columns": [
           {
-            "is_short": true,
-            "text": {
-              "content": "**项目：**\n{{project_name}}",
-              "tag": "lark_md"
-            }
+            "tag": "column",
+            "width": "weighted",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**项目：**\n{{project_name}}",
+                "text_align": "left",
+                "text_size": "normal_v2"
+              }
+            ],
+            "vertical_align": "top",
+            "weight": 1
           },
           {
-            "is_short": true,
-            "text": {
-              "content": "**时间：**\n{{timestamp}}",
-              "tag": "lark_md"
-            }
+            "tag": "column",
+            "width": "weighted",
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**时间：**\n{{timestamp}}",
+                "text_align": "left",
+                "text_size": "normal_v2"
+              }
+            ],
+            "vertical_align": "top",
+            "weight": 1
           }
         ]
       },

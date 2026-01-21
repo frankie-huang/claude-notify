@@ -62,6 +62,12 @@
         "type": "danger",
         "width": "fill",
         "size": "medium",
+        "behaviors": [
+          {
+            "type": "open_url",
+            "default_url": "{{callback_url}}/deny?id={{request_id}}"
+          }
+        ],
         "margin": "4px 0px 4px 0px"
       }
     ],
@@ -80,6 +86,12 @@
         "type": "danger_filled",
         "width": "fill",
         "size": "medium",
+        "behaviors": [
+          {
+            "type": "open_url",
+            "default_url": "{{callback_url}}/interrupt?id={{request_id}}"
+          }
+        ],
         "margin": "4px 0px 4px 0px"
       }
     ],

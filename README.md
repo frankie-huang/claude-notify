@@ -4,10 +4,12 @@
 
 ## 项目概述
 
-本项目为 Claude Code 提供飞书通知功能，允许用户远程响应权限请求，无需返回终端操作。项目包含两个主要组件：
+本项目为 Claude Code 提供飞书通知功能，允许用户远程响应权限请求，无需返回终端操作。项目包含以下主要组件：
 
 1. **权限通知脚本** (`hooks/permission-notify.sh`) - Claude Code PermissionRequest hook，负责发送飞书卡片和处理用户决策
 2. **回调服务** (`server/main.py`) - HTTP 服务接收飞书卡片按钮操作，通过 Unix Socket 传递给通知脚本
+3. **通用通知脚本** (`hooks/webhook-notify.sh`) - Notification/Stop hook，用于任务暂停等通用通知
+4. **飞书卡片模板系统** (`templates/feishu/`) - 模块化的卡片模板，支持自定义扩展
 
 ## 项目结构
 
@@ -15,7 +17,7 @@
 claude-notify/
 ├── install.sh                  # 安装配置脚本
 ├── hooks/                      # Hook 脚本
-│   ├── permission-notify.sh    # 权限请求通知脚本
+│   ├── permission-notify.sh    # 权限请求通知脚本（可交互）
 │   └── webhook-notify.sh       # 通用通知脚本
 ├── server/                     # Python 回调服务
 │   ├── main.py                 # 主服务入口
@@ -23,13 +25,18 @@ claude-notify/
 │   ├── config.py               # 配置管理
 │   ├── socket-client.py        # Socket 客户端
 │   ├── models/                 # 数据模型
+│   │   ├── decision.py         # 决策模型
+│   │   └── tool_config.py      # 工具配置模型
 │   ├── services/               # 业务服务
+│   │   ├── request_manager.py  # 请求管理服务
+│   │   └── rule_writer.py      # 规则写入服务
 │   └── handlers/               # HTTP 处理器
+│       └── callback.py         # 回调请求处理器
 ├── shell-lib/                  # Shell 函数库
 │   ├── log.sh                  # 日志记录函数
 │   ├── json.sh                 # JSON 解析函数
 │   ├── tool.sh                 # 工具详情格式化
-│   ├── feishu.sh               # 飞书卡片构建
+│   ├── feishu.sh               # 飞书卡片构建和发送
 │   └── socket.sh               # Socket 通信函数
 ├── templates/                  # 飞书卡片模板
 │   └── feishu/                 # 飞书卡片模板文件
@@ -39,13 +46,18 @@ claude-notify/
 │       ├── buttons.json                   # 交互按钮模板
 │       ├── command-detail-bash.json       # Bash 命令详情模板
 │       ├── command-detail-file.json       # 文件操作详情模板
-│       └── description-element.json       # 描述元素模板
+│       ├── description-element.json       # 描述元素模板
+│       └── README.md                      # 模板使用说明
 ├── shared/                     # 跨语言共享资源
 │   ├── protocol.md             # Socket 通信协议规范
 │   ├── logging.json            # 统一日志配置
 │   └── logging_config.py       # Python 日志配置模块
 ├── config/                     # 配置文件
 │   └── tools.json              # 工具类型配置
+├── openspec/                   # OpenSpec 规范管理
+│   ├── specs/                  # 当前规范
+│   ├── changes/                # 变更提案
+│   └── project.md              # 项目上下文
 ├── docs/                       # 文档
 │   ├── AGENTS.md               # AI 助手指南
 │   └── TEST.md                 # 测试文档
@@ -134,18 +146,22 @@ source .env
 ## 功能特性
 
 - **可交互权限控制**: 用户可直接在飞书消息中点击按钮批准/拒绝权限请求
+- **四种操作模式**: 批准运行、始终允许、拒绝运行、拒绝并中断
 - **权限持久化**: 支持"始终允许"选项，自动写入项目权限规则
 - **优雅降级**: 回调服务不可用时自动降级为仅通知模式
-- **统一配置**: Shell 和 Python 共用 `shared/logging.json` 日志配置
+- **模板化卡片**: 飞书卡片 2.0 格式，支持模块化模板和自定义扩展
+- **统一配置**: Shell 和 Python 共用 `config/tools.json` 工具配置
+- **连接状态驱动**: 请求有效性由 Socket 连接状态决定，支持长时间等待
+- **多工具支持**: 支持 Bash、Edit、Write、Read、Glob、Grep、WebSearch、WebFetch 等 Claude Code 工具
 
 ## 待实现功能
 
 - **权限请求延迟通知**: 支持配置延迟时间，在权限请求发出后等待一段时间再发送飞书通知，避免终端快速响应时产生不必要的通知
+- **Session 标识**: 发送飞书卡片时附带 session 标识，以便用户知道是哪个会话发起的权限请求
+- **任务完成通知**: 除了权限通知之外，当 Claude 处理完成之后，同样支持发送飞书卡片通知
 - **决策页面增强**:
   - 显示具体批准/拒绝的指令内容
   - ✅ 支持定时自动关闭页面（已实现）
-- **目录结构重构**: 重组一级目录，将代码文件统一收拢到 `src/` 目录，改善项目结构清晰度
-
 ## 已完成功能
 
 - ✅ **飞书卡片模板化**: 支持模块化的飞书卡片模板，便于自定义和扩展
@@ -159,6 +175,16 @@ source .env
 | `hooks/permission-notify.sh` | 权限请求通知（可交互） | PermissionRequest |
 | `server/main.py` | 权限回调服务（HTTP + Socket） | - |
 | `server/socket-client.py` | Socket 客户端（替代 socat） | - |
+
+## Shell 函数库说明
+
+| 函数库 | 功能 |
+|--------|------|
+| `shell-lib/log.sh` | 日志记录函数 |
+| `shell-lib/json.sh` | JSON 解析函数（支持 jq/python3/grep+sed 多级降级） |
+| `shell-lib/tool.sh` | 工具详情格式化 |
+| `shell-lib/feishu.sh` | 飞书卡片构建和发送 |
+| `shell-lib/socket.sh` | Socket 通信函数 |
 
 ## 配置方法
 
@@ -208,6 +234,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `PERMISSION_SOCKET_PATH` | Unix Socket 路径 | `/tmp/claude-permission.sock` |
 | `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
 | `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
+| `FEISHU_TEMPLATE_PATH` | 自定义飞书卡片模板目录 | `templates/feishu` |
 
 ## 依赖
 
@@ -264,5 +291,8 @@ brew install python3 curl
 
 ## 文档
 
+- [Claude Code Hooks 事件调研](docs/CLAUDE_CODE_HOOKS.md) - 所有 hooks 事件类型、触发时机和配置方式
 - [Socket 通信协议](shared/protocol.md)
+- [飞书卡片模板说明](templates/feishu/README.md)
 - [测试文档](docs/TEST.md)
+- [OpenSpec 规范](openspec/specs/)

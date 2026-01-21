@@ -121,20 +121,33 @@ render_template() {
            [[ "$key" != "description_element" ]] && \
            [[ "$key" != "detail_elements" ]]; then
             # 转义特殊字符为 JSON 格式
+            # 注意: JSON 解析器（jq/python3）会将转义序列解释为实际字符（如 \t → TAB, \n → LF）
+            # 因此需要将这些实际字符重新转义回 JSON 格式
             if [[ "$key" == "command" ]]; then
-                # command 变量: JSON 解析后需重新转义双引号，反斜杠，换行转 \n
-                value=$(printf '%s' "$value" | sed 's/\\/\\\\/g; s/"/\\"/g; s/$/\\n/g' | tr -d '\n' | sed 's/\\n$//')
-            else
-                # 其他变量: 先转义反斜杠(必须先处理),再转义双引号,然后处理换行
+                # command 变量: JSON 解析后需重新转义
+                # 顺序: 1.反斜杠 2.双引号 3.制表符 4.换行符
                 value=$(printf '%s' "$value" | \
-                    sed 's/\\/\\\\/g; s/"/\\"/g; s/$/\\n/g' | \
-                    tr -d '\n' | \
-                    sed 's/\\n$//')
+                    sed 's/\\/\\\\/g' | \
+                    sed 's/"/\\"/g' | \
+                    sed $'s/\t/\\\\t/g' | \
+                    sed 's/$/\\n/g' | tr -d '\n' | sed 's/\\n$//')
+            else
+                # 其他变量: 同样处理所有 JSON 特殊字符
+                value=$(printf '%s' "$value" | \
+                    sed 's/\\/\\\\/g' | \
+                    sed 's/"/\\"/g' | \
+                    sed $'s/\t/\\\\t/g' | \
+                    sed 's/$/\\n/g' | tr -d '\n' | sed 's/\\n$//')
             fi
         fi
 
-        # 使用 awk 进行替换,避免特殊字符问题
-        # 通过 ENVIRON 传递变量来避免 awk 的 & 和 \ 转义问题
+        # 转义 awk gsub 的特殊字符
+        # 注意: ENVIRON 传递的字符串中只有 & 是特殊字符(代表匹配内容)
+        # \ 不会被 gsub 特殊处理，所以只需转义 &
+        value=$(printf '%s' "$value" | sed 's/&/\\&/g')
+
+        # 使用 awk 进行替换
+        # 通过 ENVIRON 传递变量避免 shell 展开问题
         local awk_key="TEMPLATE_KEY_$(echo "$key" | tr -c 'a-zA-Z0-9_' '_')"
         local awk_val="TEMPLATE_VAL_$(echo "$key" | tr -c 'a-zA-Z0-9_' '_')"
         export "$awk_key"="{{$key}}"

@@ -1,6 +1,9 @@
 # Spec: 项目结构规范
 
-## ADDED Requirements
+## Purpose
+定义 claude-notify 项目的目录结构组织规范，确保跨语言组件（Shell 和 Python）的代码组织清晰、易于维护。
+
+## Requirements
 
 ### Requirement: 根目录简洁性
 根目录 SHALL 只保留入口级文件和必要的配置文件。
@@ -57,10 +60,10 @@
 ### Requirement: 文档目录组织
 非核心文档 SHALL 放置在 `docs/` 目录。
 
-#### Scenario: 测试文档
-- Given 需要查看测试说明
-- When 查找测试文档
-- Then 文档位于 `docs/TEST.md`
+#### Scenario: 查看文档
+- Given 需要查看项目文档
+- When 列出 `docs/` 目录
+- Then 目录包含 AGENTS.md 等文档文件
 
 ### Requirement: Shell 库目录命名
 Shell 函数库 MUST 放置在 `shell-lib/` 目录，明确表示其语言归属。
@@ -82,8 +85,6 @@ Shell 函数库 MUST 放置在 `shell-lib/` 目录，明确表示其语言归属
 - Given 执行 `./install.sh`
 - When 用户确认配置
 - Then 脚本将 hook 路径写入 Claude Code 配置
-
-## MODIFIED Requirements
 
 ### Requirement: 日志配置统一
 Shell 和 Python 组件 MUST 使用相同的日志配置源。
@@ -133,8 +134,7 @@ claude-notify/
 │   ├── socket-client.py
 │   ├── handlers/
 │   ├── models/
-│   ├── services/
-│   └── templates/
+│   └── services/
 │
 ├── shell-lib/                # Shell 函数库
 │   ├── log.sh
@@ -152,10 +152,12 @@ claude-notify/
 │   └── tools.json
 │
 ├── docs/                     # 文档
-│   ├── AGENTS.md
-│   └── TEST.md
+│   └── AGENTS.md
 │
 ├── log/                      # 日志目录
+│
+├── templates/                # 飞书卡片模板
+│   └── feishu/
 │
 └── openspec/                 # OpenSpec 规范
 ```

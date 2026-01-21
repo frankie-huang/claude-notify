@@ -67,10 +67,12 @@ log_input
 # =============================================================================
 TOOL_NAME=$(json_get "$INPUT" "tool_name")
 TOOL_NAME="${TOOL_NAME:-unknown}"
+SESSION_ID=$(json_get "$INPUT" "session_id")
+SESSION_ID="${SESSION_ID:-unknown}"
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(json_get "$INPUT" "cwd")}"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 
-log "Tool: $TOOL_NAME, Project: $PROJECT_DIR"
+log "Tool: $TOOL_NAME, Session: $SESSION_ID, Project: $PROJECT_DIR"
 
 # =============================================================================
 # 生成请求 ID
@@ -122,6 +124,9 @@ run_interactive_mode() {
     local template_color="$EXTRACTED_COLOR"
     local project_name
     project_name=$(basename "$PROJECT_DIR")
+
+    # 记录 command 到单独的日志文件
+    log_command "$command_content" "$REQUEST_ID" "$TOOL_NAME" "$SESSION_ID"
 
     # 构建交互按钮
     local buttons
@@ -216,6 +221,9 @@ run_fallback_mode() {
     local template_color="$EXTRACTED_COLOR"
     local project_name
     project_name=$(basename "$PROJECT_DIR")
+
+    # 记录 command 到单独的日志文件
+    log_command "$command_content" "$REQUEST_ID" "$TOOL_NAME" "$SESSION_ID"
 
     # 构建不带按钮的卡片
     local card
