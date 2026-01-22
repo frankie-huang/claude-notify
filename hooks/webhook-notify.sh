@@ -11,14 +11,18 @@
 #   - 错误或异常通知
 #   - 任何需要用户返回终端的情况
 #
-# 环境变量:
+# 配置项 (优先级: .env > 环境变量 > 默认值):
 #   FEISHU_WEBHOOK_URL - 飞书 Webhook URL (必需)
 #   CLAUDE_PROJECT_DIR - 项目目录 (可选，默认为当前目录)
-#   session_id          - 会话 ID (可选，用于标识不同会话，待实现功能)
 # =============================================================================
 
-# 飞书 Webhook URL
-WEBHOOK_URL="${FEISHU_WEBHOOK_URL:-}"
+# 引入配置模块
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${PROJECT_ROOT}/shell-lib/env.sh"
+
+# 飞书 Webhook URL (优先级: .env > 环境变量 > 默认值)
+WEBHOOK_URL=$(get_config "FEISHU_WEBHOOK_URL" "")
 
 # 检查 Webhook URL 是否配置
 if [ -z "$WEBHOOK_URL" ]; then
@@ -33,6 +37,7 @@ TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
 # 目前 Claude Code hook 不传递 session_id，需要等待后续版本支持
 SESSION_ID="${session_id:-}"
 
+# 项目目录 (优先从环境变量 CLAUDE_PROJECT_DIR 获取)
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 PROJECT_NAME=$(basename "$PROJECT_DIR")
 

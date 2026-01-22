@@ -46,12 +46,8 @@ check_socket_tools() {
     HAS_SOCKET_CLIENT=false
     HAS_SOCAT=false
 
-    # 获取脚本目录
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
     # 默认 Socket 客户端路径
-    SOCKET_CLIENT="${script_dir}/server/socket-client.py"
+    SOCKET_CLIENT="${PROJECT_ROOT}/server/socket-client.py"
 
     # 检测 Python 客户端（推荐）
     if [ -f "$SOCKET_CLIENT" ] && command -v python3 &> /dev/null; then

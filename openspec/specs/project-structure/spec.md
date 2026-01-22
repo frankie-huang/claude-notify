@@ -137,6 +137,7 @@ claude-notify/
 │   └── services/
 │
 ├── shell-lib/                # Shell 函数库
+│   ├── project.sh            # 项目路径管理（解析软链接）
 │   ├── log.sh
 │   ├── json.sh
 │   ├── tool.sh

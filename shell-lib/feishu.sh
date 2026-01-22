@@ -34,9 +34,10 @@
 # 常量定义
 # =============================================================================
 
-# 获取脚本所在目录的父目录(项目根目录)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# 引入项目路径管理（如果尚未引入）
+if ! type get_project_root &> /dev/null; then
+    source "${BASH_SOURCE[0]%/*}/project.sh"
+fi
 
 # 默认模板目录
 DEFAULT_TEMPLATE_DIR="${PROJECT_ROOT}/templates/feishu"

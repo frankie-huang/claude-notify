@@ -24,18 +24,22 @@ import time
 import logging
 from http.server import HTTPServer
 
-from config import REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT
+from config import (
+    REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT,
+    get_config, get_config_int,
+    DEFAULT_SOCKET_PATH, DEFAULT_HTTP_PORT
+)
 from models.decision import Decision
 from services.request_manager import RequestManager
 from handlers.callback import CallbackHandler
 
 # =============================================================================
-# 配置
+# 配置 (优先级: .env > 环境变量 > 默认值)
 # =============================================================================
 
-SOCKET_PATH = os.environ.get('PERMISSION_SOCKET_PATH', '/tmp/claude-permission.sock')
-HTTP_PORT = int(os.environ.get('CALLBACK_SERVER_PORT', '8080'))
-FEISHU_WEBHOOK_URL = os.environ.get('FEISHU_WEBHOOK_URL', '')
+SOCKET_PATH = get_config('PERMISSION_SOCKET_PATH', DEFAULT_SOCKET_PATH)
+HTTP_PORT = get_config_int('CALLBACK_SERVER_PORT', int(DEFAULT_HTTP_PORT))
+FEISHU_WEBHOOK_URL = get_config('FEISHU_WEBHOOK_URL', '')
 CLEANUP_INTERVAL = 5  # 清理断开连接的检查间隔（秒）
 
 # 日志配置

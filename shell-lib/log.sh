@@ -34,9 +34,7 @@ _LOG_FILE_PATTERN="hook_{date}.log"
 # 加载日志配置
 # =============================================================================
 _load_log_config() {
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    local config_file="${script_dir}/shared/logging.json"
+    local config_file="${PROJECT_ROOT}/shared/logging.json"
 
     if [ -f "$config_file" ]; then
         # 尝试使用 jq 读取配置
@@ -72,9 +70,7 @@ log_init() {
         LOG_FILE="$log_file"
     else
         # 默认日志文件路径
-        local script_dir
-        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-        local log_dir="${script_dir}/log"
+        local log_dir="${PROJECT_ROOT}/log"
         mkdir -p "$log_dir"
 
         local log_date
@@ -206,10 +202,7 @@ log_command() {
     local tool_name="${3:-unknown}"
     local session_id="${4:-unknown}"
 
-    # 获取项目根目录
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    local command_log_dir="${script_dir}/log/command"
+    local command_log_dir="${PROJECT_ROOT}/log/command"
 
     # 创建目录
     mkdir -p "$command_log_dir"

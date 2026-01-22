@@ -33,6 +33,7 @@ claude-notify/
 │   └── handlers/               # HTTP 处理器
 │       └── callback.py         # 回调请求处理器
 ├── shell-lib/                  # Shell 函数库
+│   ├── project.sh              # 项目路径管理（解析软链接）
 │   ├── log.sh                  # 日志记录函数
 │   ├── json.sh                 # JSON 解析函数
 │   ├── tool.sh                 # 工具详情格式化
@@ -93,9 +94,10 @@ vim .env
 ### 3. 启动回调服务
 
 ```bash
-source .env
 ./server/start.sh
 ```
+
+> **注意**：脚本会自动从 `.env` 文件读取配置，无需手动 `source .env`。
 
 ### 4. 开始使用
 
@@ -166,6 +168,7 @@ source .env
 
 - ✅ **飞书卡片模板化**: 支持模块化的飞书卡片模板，便于自定义和扩展
 - ✅ **决策页面自动关闭**: 支持定时自动关闭决策页面（通过 `CLOSE_PAGE_TIMEOUT` 配置）
+- ✅ **VSCode 自动跳转**: 点击飞书按钮后自动跳转到 VSCode（通过 `VSCODE_REMOTE_PREFIX` 配置）
 
 ## 脚本说明
 
@@ -180,6 +183,8 @@ source .env
 
 | 函数库 | 功能 |
 |--------|------|
+| `shell-lib/project.sh` | 项目路径管理，自动解析软链接，导出 `PROJECT_ROOT` 变量 |
+| `shell-lib/env.sh` | 环境配置读取，自动从 `.env` 文件加载配置（带缓存） |
 | `shell-lib/log.sh` | 日志记录函数 |
 | `shell-lib/json.sh` | JSON 解析函数（支持 jq/python3/grep+sed 多级降级） |
 | `shell-lib/tool.sh` | 工具详情格式化 |
@@ -226,6 +231,10 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 
 ### 环境变量
 
+**配置优先级**：`.env` 文件 > 环境变量 > 默认值
+
+脚本会自动从项目根目录的 `.env` 文件读取配置，无需手动 `source`。如果 `.env` 中未配置某项，则从系统环境变量读取；如果仍未配置，则使用默认值。
+
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `FEISHU_WEBHOOK_URL` | 飞书 Webhook URL | 必需 |
@@ -234,6 +243,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `PERMISSION_SOCKET_PATH` | Unix Socket 路径 | `/tmp/claude-permission.sock` |
 | `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
 | `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
+| `VSCODE_REMOTE_PREFIX` | VSCode Remote 前缀，点击按钮后自动跳转 VSCode | 空（不跳转） |
 | `FEISHU_TEMPLATE_PATH` | 自定义飞书卡片模板目录 | `templates/feishu` |
 
 ## 依赖

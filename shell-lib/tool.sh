@@ -26,11 +26,10 @@
 # =============================================================================
 
 # 尝试加载统一配置管理
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 USE_EXTERNAL_CONFIG=false
 
-if [ -f "${SCRIPT_DIR}/shell-lib/tool-config.sh" ] && [ -f "${SCRIPT_DIR}/config/tools.json" ]; then
-    source "${SCRIPT_DIR}/shell-lib/tool-config.sh"
+if [ -f "${PROJECT_ROOT}/shell-lib/tool-config.sh" ] && [ -f "${PROJECT_ROOT}/config/tools.json" ]; then
+    source "${PROJECT_ROOT}/shell-lib/tool-config.sh"
     if tool_config_init 2>/dev/null; then
         USE_EXTERNAL_CONFIG=true
     fi

@@ -20,6 +20,8 @@
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${PROJECT_ROOT}/shell-lib/project.sh"
+source "${PROJECT_ROOT}/shell-lib/env.sh"
 source "${PROJECT_ROOT}/shell-lib/log.sh"
 source "${PROJECT_ROOT}/shell-lib/json.sh"
 source "${PROJECT_ROOT}/shell-lib/tool.sh"
@@ -48,10 +50,10 @@ log_init
 # 初始化 JSON 解析器
 json_init
 
-# 配置
-SOCKET_PATH="${PERMISSION_SOCKET_PATH:-/tmp/claude-permission.sock}"
-WEBHOOK_URL="${FEISHU_WEBHOOK_URL:-}"
-CALLBACK_SERVER_URL="${CALLBACK_SERVER_URL:-http://localhost:8080}"
+# 配置 (优先级: .env > 环境变量 > 默认值)
+SOCKET_PATH=$(get_config "PERMISSION_SOCKET_PATH" "/tmp/claude-permission.sock")
+WEBHOOK_URL=$(get_config "FEISHU_WEBHOOK_URL" "")
+CALLBACK_SERVER_URL=$(get_config "CALLBACK_SERVER_URL" "http://localhost:8080")
 
 # 时间戳
 TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")

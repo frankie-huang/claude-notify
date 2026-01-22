@@ -19,8 +19,12 @@
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PID_FILE="${SCRIPT_DIR}/server.pid"
-LOG_DIR="${SCRIPT_DIR}/../log"
+LOG_DIR="${PROJECT_ROOT}/log"
+
+# 引入配置模块 (优先级: .env > 环境变量 > 默认值)
+source "${PROJECT_ROOT}/shell-lib/env.sh"
 
 # 确保日志目录存在
 mkdir -p "$LOG_DIR"
@@ -69,8 +73,10 @@ start_service() {
 
     echo "Starting Claude Code Permission Callback Server..."
 
-    # 检查必需的环境变量
-    if [ -z "$FEISHU_WEBHOOK_URL" ]; then
+    # 检查必需的配置
+    local webhook_url
+    webhook_url=$(get_config "FEISHU_WEBHOOK_URL" "")
+    if [ -z "$webhook_url" ]; then
         echo "Warning: FEISHU_WEBHOOK_URL is not set. Notifications will be skipped."
     fi
 
@@ -128,7 +134,8 @@ stop_service() {
     rm -f "$PID_FILE"
 
     # 清理 socket 文件
-    local socket_path="${PERMISSION_SOCKET_PATH:-/tmp/claude-permission.sock}"
+    local socket_path
+    socket_path=$(get_config "PERMISSION_SOCKET_PATH" "/tmp/claude-permission.sock")
     if [ -S "$socket_path" ]; then
         rm -f "$socket_path"
         echo "Cleaned up socket file: $socket_path"
@@ -159,14 +166,16 @@ show_status() {
 
         # 显示端口监听状态
         if command -v netstat &> /dev/null; then
-            local port=${CALLBACK_SERVER_PORT:-8080}
+            local port
+            port=$(get_config "CALLBACK_SERVER_PORT" "8080")
             if netstat -tln 2>/dev/null | grep -q ":$port "; then
                 echo "HTTP server listening on port $port"
             fi
         fi
 
         # 显示 socket 文件状态
-        local socket_path="${PERMISSION_SOCKET_PATH:-/tmp/claude-permission.sock}"
+        local socket_path
+        socket_path=$(get_config "PERMISSION_SOCKET_PATH" "/tmp/claude-permission.sock")
         if [ -S "$socket_path" ]; then
             echo "Socket server listening on $socket_path"
         fi

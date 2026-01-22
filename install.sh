@@ -273,7 +273,9 @@ generate_env_template() {
 # Claude Code 权限通知 - 环境变量配置
 # =============================================================================
 # 复制此文件为 .env 并填入实际值
-# 然后在启动服务前执行: source .env
+# 脚本会自动从 .env 文件读取配置，无需手动 source
+#
+# 配置优先级: .env 文件 > 环境变量 > 默认值
 # =============================================================================
 
 # 飞书 Webhook URL (必需)
@@ -299,6 +301,20 @@ REQUEST_TIMEOUT=300
 # 用户点击按钮后，回调页面显示的倒计时秒数
 # 建议范围: 1-10 秒
 CLOSE_PAGE_TIMEOUT=3
+
+# VSCode Remote 前缀 (可选)
+# 配置后，点击飞书卡片按钮会自动跳转到 VSCode
+# 格式: vscode://vscode-remote/{remote-type}+{host}
+# 示例:
+#   - SSH Remote: vscode://vscode-remote/ssh-remote+myserver
+#   - WSL: vscode://vscode-remote/wsl+Ubuntu
+#   - 本地: vscode://file (用于本地开发)
+# 不配置则不跳转，仅显示操作结果页面
+#
+# 【推荐】VSCode 设置，允许外部应用直接打开（无需确认）：
+#   - 本地开发: settings.json 中添加 "security.promptForLocalFileProtocolHandling": false
+#   - SSH Remote: settings.json 中添加 "security.promptForRemoteFileProtocolHandling": false
+# VSCODE_REMOTE_PREFIX=vscode://vscode-remote/ssh-remote+myserver
 EOF
 
     print_success "环境变量模板已生成: $env_file"
@@ -306,29 +322,9 @@ EOF
     echo "下一步："
     echo "  1. 复制模板: cp ${env_file} ${SCRIPT_DIR}/.env"
     echo "  2. 编辑配置: vim ${SCRIPT_DIR}/.env"
-    echo "  3. 加载环境: source ${SCRIPT_DIR}/.env"
-    echo "  4. 启动服务: ${SCRIPT_DIR}/server/start.sh"
+    echo "  3. 启动服务: ${SCRIPT_DIR}/server/start.sh"
     echo ""
-
-    # 检测当前 shell 并提示配置文件
-    local current_shell=$(basename "$SHELL")
-    local config_file=""
-
-    case "$current_shell" in
-        bash)
-            config_file="~/.bashrc"
-            ;;
-        zsh)
-            config_file="~/.zshrc"
-            ;;
-        *)
-            config_file="~/.bashrc 或 ~/.zshrc"
-            ;;
-    esac
-
-    echo "提示：将以下配置添加到 $config_file 可实现自动加载环境变量"
-    echo ""
-    echo "  echo 'if [ -f ${SCRIPT_DIR}/.env ]; then set -a; source ${SCRIPT_DIR}/.env; set +a; fi' >> $config_file"
+    echo "提示：脚本会自动从 .env 文件读取配置，无需手动 source"
     echo ""
 }
 

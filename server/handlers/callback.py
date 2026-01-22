@@ -12,7 +12,7 @@ from urllib.parse import urlparse, parse_qs
 from models.decision import Decision
 from services.request_manager import RequestManager
 from services.rule_writer import write_always_allow_rule
-from config import CLOSE_PAGE_TIMEOUT
+from config import CLOSE_PAGE_TIMEOUT, VSCODE_REMOTE_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,9 @@ class CallbackHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         logger.info(f"{self.address_string()} - {format % args}")
 
-    def send_html_response(self, status: int, title: str, message: str, success: bool = True, close_timeout: int = None):
+    def send_html_response(self, status: int, title: str, message: str,
+                           success: bool = True, close_timeout: int = None,
+                           vscode_uri: str = None):
         """发送 HTML 响应页面
 
         Args:
@@ -43,11 +45,54 @@ class CallbackHandler(BaseHTTPRequestHandler):
             message: 显示消息
             success: 是否成功
             close_timeout: 自动关闭页面超时时间（秒），默认从环境变量 CLOSE_PAGE_TIMEOUT 读取
+            vscode_uri: VSCode URI，配置后会自动跳转到 VSCode
         """
         if close_timeout is None:
             close_timeout = CLOSE_PAGE_TIMEOUT
         color = '#28a745' if success else '#dc3545'
         icon = '✓' if success else '✗'
+
+        # VSCode 跳转相关的 HTML 和 JS
+        vscode_redirect_html = ''
+        vscode_redirect_js = ''
+        if vscode_uri and success:
+            # 判断是本地还是远程，用于显示对应的设置提示
+            is_local = vscode_uri.startswith('vscode://file')
+            setting_hint = (
+                '"security.promptForLocalFileProtocolHandling": false'
+                if is_local
+                else '"security.promptForRemoteFileProtocolHandling": false'
+            )
+
+            vscode_redirect_html = f'''
+        <div class="vscode-redirect" id="vscodeRedirect">
+            正在跳转到 VSCode...
+        </div>
+        <div class="vscode-fallback" id="vscodeFallback">
+            <p>跳转失败？<a href="{vscode_uri}" class="vscode-link">点击手动打开 VSCode</a></p>
+            <p class="vscode-hint">首次使用需在 VSCode settings.json 中添加：<br><code>{setting_hint}</code></p>
+        </div>'''
+            vscode_redirect_js = f'''
+            // VSCode 自动跳转
+            const vscodeUri = "{vscode_uri}";
+            const vscodeRedirect = document.getElementById('vscodeRedirect');
+            const vscodeFallback = document.getElementById('vscodeFallback');
+
+            // 500ms 后尝试跳转
+            setTimeout(function() {{
+                window.location.href = vscodeUri;
+
+                // 2 秒后检测是否仍在页面（跳转失败）
+                setTimeout(function() {{
+                    if (vscodeRedirect) {{
+                        vscodeRedirect.textContent = '跳转失败';
+                        vscodeRedirect.style.color = '#dc3545';
+                    }}
+                    if (vscodeFallback) {{
+                        vscodeFallback.style.display = 'block';
+                    }}
+                }}, 2000);
+            }}, 500);'''
 
         html = f'''<!DOCTYPE html>
 <html>
@@ -88,6 +133,41 @@ class CallbackHandler(BaseHTTPRequestHandler):
             line-height: 1.6;
             margin-bottom: 20px;
         }}
+        .vscode-redirect {{
+            color: #007acc;
+            font-size: 14px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }}
+        .vscode-fallback {{
+            display: none;
+            color: #666;
+            font-size: 14px;
+            margin-top: 10px;
+        }}
+        .vscode-link {{
+            color: #007acc;
+            text-decoration: none;
+        }}
+        .vscode-link:hover {{
+            text-decoration: underline;
+        }}
+        .vscode-hint {{
+            font-size: 12px;
+            color: #999;
+            margin-top: 10px;
+            line-height: 1.4;
+        }}
+        .vscode-hint code {{
+            display: inline-block;
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 11px;
+            color: #d63384;
+        }}
         .countdown {{
             color: #999;
             font-size: 14px;
@@ -107,8 +187,8 @@ class CallbackHandler(BaseHTTPRequestHandler):
     <div class="card">
         <div class="icon">{icon}</div>
         <div class="title">{title}</div>
-        <div class="message">{message}</div>
-        <div class="countdown" id="countdown">
+        <div class="message">{message}</div>{vscode_redirect_html}
+        <div class="countdown" id="countdown"{' style="display:none;"' if vscode_uri and success else ''}>
             页面将在 <span id="seconds">{close_timeout}</span> 秒后自动关闭
         </div>
         <div class="close-hint" id="closeHint">
@@ -116,7 +196,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         </div>
     </div>
     <script>
-        (function() {{
+        (function() {{{vscode_redirect_js}
             const timeout = {close_timeout};
             let seconds = timeout;
             const countdownEl = document.getElementById('seconds');
@@ -155,6 +235,29 @@ class CallbackHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode('utf-8'))
 
+    def _build_vscode_uri(self, request_id: str) -> str:
+        """构建 VSCode URI
+
+        Args:
+            request_id: 请求 ID
+
+        Returns:
+            VSCode URI 或空字符串（未配置时）
+        """
+        if not VSCODE_REMOTE_PREFIX:
+            return ''
+
+        req_data = self.request_manager.get_request_data(request_id)
+        if not req_data:
+            return ''
+
+        project_dir = req_data.get('project_dir', '')
+        if not project_dir:
+            return ''
+
+        # 拼接 VSCode URI: prefix + project_dir
+        return f"{VSCODE_REMOTE_PREFIX}{project_dir}"
+
     def _handle_decision(self, request_id: str, decision: dict,
                          success_title: str, success_msg: str,
                          extra_handler=None):
@@ -163,12 +266,15 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.send_html_response(400, '参数错误', '缺少请求 ID', False)
             return
 
+        # 先获取 VSCode URI（在 resolve 之前，因为 resolve 后数据可能被清理）
+        vscode_uri = self._build_vscode_uri(request_id)
+
         success, error_msg = self.request_manager.resolve(request_id, decision)
         if success:
             # 执行额外的处理逻辑（如写入规则）
             if extra_handler:
                 extra_handler(request_id)
-            self.send_html_response(200, success_title, success_msg)
+            self.send_html_response(200, success_title, success_msg, vscode_uri=vscode_uri)
         else:
             self.send_html_response(404, '请求无效', f'处理失败：{error_msg}', False)
 

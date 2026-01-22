@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added - 2026-01-23
+
+#### VSCode 自动跳转 (add-vscode-redirect)
+
+- 点击飞书卡片按钮后，自动跳转到 VSCode 并聚焦到项目目录
+- 新增 `VSCODE_REMOTE_PREFIX` 环境变量配置:
+  - 支持本地开发: `vscode://file`
+  - 支持 SSH Remote: `vscode://vscode-remote/ssh-remote+server`
+  - 支持 WSL: `vscode://vscode-remote/wsl+Ubuntu`
+- 响应页面增强:
+  - 显示"正在跳转到 VSCode..."提示
+  - 跳转失败时显示手动打开链接和 VSCode 设置提示
+  - 根据本地/远程自动显示对应的配置项（`security.promptForLocalFileProtocolHandling` / `security.promptForRemoteFileProtocolHandling`）
+- 未配置 `VSCODE_REMOTE_PREFIX` 时保持原有行为（不跳转）
+
 ### Added - 2026-01-20
 
 #### 飞书卡片子模板抽象化 (飞书卡片模板化增强)
