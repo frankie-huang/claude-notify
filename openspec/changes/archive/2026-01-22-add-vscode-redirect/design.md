@@ -31,9 +31,9 @@ VSCode 支持通过 URI Scheme 打开文件和执行命令：
 - Remote SSH: `vscode://vscode-remote/ssh-remote+hostname/path/to/project`
 - WSL: `vscode://vscode-remote/wsl+distro/path/to/project`
 
-用户配置 `VSCODE_REMOTE_PREFIX` 环境变量（不含路径部分），系统自动拼接项目路径：
+用户配置 `VSCODE_URI_PREFIX` 环境变量（不含路径部分），系统自动拼接项目路径：
 ```
-VSCODE_REMOTE_PREFIX=vscode://vscode-remote/ssh-remote+myserver
+VSCODE_URI_PREFIX=vscode://vscode-remote/ssh-remote+myserver
 ```
 
 完整 URI 示例：`vscode://vscode-remote/ssh-remote+myserver/home/user/project`
@@ -42,7 +42,7 @@ VSCODE_REMOTE_PREFIX=vscode://vscode-remote/ssh-remote+myserver
 
 响应页面通过 JavaScript 实现跳转：
 ```javascript
-// 仅当配置了 VSCODE_REMOTE_PREFIX 时执行
+// 仅当配置了 VSCODE_URI_PREFIX 时执行
 if (vscodeUri) {
     setTimeout(() => {
         window.location.href = vscodeUri;
@@ -64,7 +64,7 @@ VSCode URI 支持 `goto` 参数指定打开的视图。可以尝试使用以下�
 |------|----------|
 | 浏览器可能阻止自动跳转 | 使用 `window.location.href` 而非 `window.open()`；页面由用户主动点击触发 |
 | VSCode 未安装或 URI Handler 未注册 | 跳转失败时不影响决策已处理的事实；页面显示"操作成功" |
-| 不同平台 URI 格式不同 | 由用户配置正确的 `VSCODE_REMOTE_PREFIX` |
+| 不同平台 URI 格式不同 | 由用户配置正确的 `VSCODE_URI_PREFIX` |
 
 ## UI 设计决策
 

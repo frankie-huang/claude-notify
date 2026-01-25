@@ -12,7 +12,7 @@ from urllib.parse import urlparse, parse_qs
 from models.decision import Decision
 from services.request_manager import RequestManager
 from services.rule_writer import write_always_allow_rule
-from config import CLOSE_PAGE_TIMEOUT, VSCODE_REMOTE_PREFIX
+from config import CLOSE_PAGE_TIMEOUT, VSCODE_URI_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +188,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         <div class="icon">{icon}</div>
         <div class="title">{title}</div>
         <div class="message">{message}</div>{vscode_redirect_html}
-        <div class="countdown" id="countdown"{' style="display:none;"' if vscode_uri and success else ''}>
+        <div class="countdown" id="countdown">
             页面将在 <span id="seconds">{close_timeout}</span> 秒后自动关闭
         </div>
         <div class="close-hint" id="closeHint">
@@ -244,7 +244,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         Returns:
             VSCode URI 或空字符串（未配置时）
         """
-        if not VSCODE_REMOTE_PREFIX:
+        if not VSCODE_URI_PREFIX:
             return ''
 
         req_data = self.request_manager.get_request_data(request_id)
@@ -256,7 +256,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
             return ''
 
         # 拼接 VSCode URI: prefix + project_dir
-        return f"{VSCODE_REMOTE_PREFIX}{project_dir}"
+        return f"{VSCODE_URI_PREFIX}{project_dir}"
 
     def _handle_decision(self, request_id: str, decision: dict,
                          success_title: str, success_msg: str,
@@ -265,6 +265,12 @@ class CallbackHandler(BaseHTTPRequestHandler):
         if not request_id:
             self.send_html_response(400, '参数错误', '缺少请求 ID', False)
             return
+
+        # 先获取请求数据（用于日志和 VSCode URI）
+        req_data = self.request_manager.get_request_data(request_id)
+        session_id = req_data.get('session_id', 'unknown') if req_data else 'unknown'
+        behavior = decision.get('behavior', 'unknown')
+        logger.info(f"[callback] Request {request_id} (Session: {session_id}), decision: {behavior}")
 
         # 先获取 VSCode URI（在 resolve 之前，因为 resolve 后数据可能被清理）
         vscode_uri = self._build_vscode_uri(request_id)

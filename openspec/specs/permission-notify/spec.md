@@ -412,7 +412,7 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 
 #### Scenario: 配置 VSCode Remote 前缀
 
-- **GIVEN** 用户在 `.env` 文件中配置 `VSCODE_REMOTE_PREFIX`
+- **GIVEN** 用户在 `.env` 文件中配置 `VSCODE_URI_PREFIX`
 - **WHEN** 回调服务启动
 - **THEN** 服务读取该配置
 - **AND** 配置值为 VSCode URI 前缀（如 `vscode://vscode-remote/ssh-remote+server`）
@@ -420,11 +420,47 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 
 #### Scenario: 未配置时禁用跳转
 
-- **GIVEN** 用户未配置 `VSCODE_REMOTE_PREFIX` 环境变量
+- **GIVEN** 用户未配置 `VSCODE_URI_PREFIX` 环境变量
 - **WHEN** 用户点击飞书卡片按钮并处理完成
 - **THEN** 响应页面显示操作结果
 - **AND** 不执行 VSCode 跳转
 - **AND** 保持当前的自动关闭页面行为
+
+### Requirement: Notification Delay
+
+系统 SHALL 支持配置权限通知延迟发送，避免快速连续请求时的消息轰炸。
+
+#### Scenario: 配置延迟时间
+
+- **GIVEN** 用户在 `.env` 文件中配置 `PERMISSION_NOTIFY_DELAY=3`
+- **WHEN** permission-notify.sh 收到权限请求
+- **THEN** 脚本等待 3 秒后再发送飞书通知
+- **AND** 默认值为 0（立即发送）
+
+#### Scenario: 延迟期间用户终端响应
+
+- **GIVEN** 用户配置了通知延迟（如 3 秒）
+- **AND** 权限请求正在延迟等待中
+- **WHEN** 用户在终端选择 yes/no 响应权限请求
+- **THEN** Claude Code 发送 SIGKILL 终止 hook 进程
+- **AND** 飞书通知不会发送
+
+#### Scenario: 延迟期间父进程退出
+
+- **GIVEN** 用户配置了通知延迟
+- **AND** 权限请求正在延迟等待中
+- **WHEN** 用户通过 Ctrl+C 中断 Claude Code
+- **THEN** 脚本检测到父进程退出
+- **AND** 脚本跳过发送飞书通知
+- **AND** 脚本以退出码 1 结束
+
+#### Scenario: 延迟完成后正常发送
+
+- **GIVEN** 用户配置了通知延迟（如 3 秒）
+- **AND** 权限请求正在延迟等待中
+- **WHEN** 延迟时间结束且用户未响应
+- **THEN** 脚本正常发送飞书通知
+- **AND** 继续后续的交互流程
 
 ### Requirement: Response Page VSCode Redirect
 
@@ -432,13 +468,13 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 
 #### Scenario: 操作成功后跳转 VSCode
 
-- **GIVEN** 用户已配置 `VSCODE_REMOTE_PREFIX`
+- **GIVEN** 用户已配置 `VSCODE_URI_PREFIX`
 - **AND** 权限请求包含有效的项目路径（`project_dir`）
 - **WHEN** 用户点击飞书卡片按钮（批准/拒绝/始终允许/拒绝并中断）
 - **AND** 回调服务成功处理决策
 - **THEN** 响应页面显示操作成功信息
 - **AND** 页面在短暂延迟（约 500ms）后自动跳转到 VSCode
-- **AND** VSCode URI 格式为 `{VSCODE_REMOTE_PREFIX}{project_dir}`
+- **AND** VSCode URI 格式为 `{VSCODE_URI_PREFIX}{project_dir}`
 
 #### Scenario: 跳转后聚焦终端
 
@@ -449,14 +485,14 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 
 #### Scenario: 操作失败时不跳转
 
-- **GIVEN** 用户已配置 `VSCODE_REMOTE_PREFIX`
+- **GIVEN** 用户已配置 `VSCODE_URI_PREFIX`
 - **WHEN** 回调服务处理决策失败（请求无效、连接断开等）
 - **THEN** 响应页面显示错误信息
 - **AND** 不执行 VSCode 跳转
 
 #### Scenario: 页面显示跳转提示
 
-- **GIVEN** 用户已配置 `VSCODE_REMOTE_PREFIX`
+- **GIVEN** 用户已配置 `VSCODE_URI_PREFIX`
 - **AND** 决策处理成功
 - **WHEN** 响应页面加载
 - **THEN** 页面显示"正在跳转到 VSCode..."的提示信息
@@ -464,7 +500,7 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 
 #### Scenario: 跳转失败时显示手动链接
 
-- **GIVEN** 用户已配置 `VSCODE_REMOTE_PREFIX`
+- **GIVEN** 用户已配置 `VSCODE_URI_PREFIX`
 - **AND** 决策处理成功
 - **AND** 页面尝试跳转到 VSCode
 - **WHEN** 跳转超时（页面仍未离开，如 2 秒后）

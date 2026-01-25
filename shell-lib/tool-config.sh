@@ -21,8 +21,8 @@
 #   detail=$(tool_format_detail "$tool_input_json" "Bash")
 # =============================================================================
 
-# 配置文件路径
-TOOLS_CONFIG_FILE="${SCRIPT_DIR}/config/tools.json"
+# 配置文件路径（使用 PROJECT_ROOT 而非 SCRIPT_DIR，因为脚本可能在子目录中执行）
+TOOLS_CONFIG_FILE="${PROJECT_ROOT}/config/tools.json"
 
 # 配置缓存
 TOOLS_CONFIG_CACHE=""

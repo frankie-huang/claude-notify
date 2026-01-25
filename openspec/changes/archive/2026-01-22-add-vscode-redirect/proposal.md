@@ -6,9 +6,9 @@
 
 ## What Changes
 
-- 新增 `VSCODE_REMOTE_PREFIX` 环境变量配置，用于指定 VSCode Remote 的 URI 前缀
+- 新增 `VSCODE_URI_PREFIX` 环境变量配置，用于指定 VSCode Remote 的 URI 前缀
 - 回调服务响应页面增加 VSCode 自动跳转逻辑
-- 仅当配置了 `VSCODE_REMOTE_PREFIX` 时才执行跳转
+- 仅当配置了 `VSCODE_URI_PREFIX` 时才执行跳转
 - 跳转后自动聚焦到运行 Claude Code 的终端
 
 ## Impact

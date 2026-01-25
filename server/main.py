@@ -132,28 +132,39 @@ def handle_socket_client(conn: socket.socket, addr):
             conn.close()
             return
 
-        logger.info(f"[socket] Request ID: {request_id}")
-
-        # 解码 raw_input_encoded 提取 tool_name 和 tool_input
-        # 这些字段用于 /always 端点生成正确的权限规则
+        # 解码 raw_input_encoded 提取 session_id、tool_name 和 tool_input
+        # 这些字段用于日志记录和 /always 端点生成正确的权限规则
+        session_id = None
         raw_input_encoded = request.get('raw_input_encoded')
         if raw_input_encoded:
             try:
                 raw_input = json.loads(base64.b64decode(raw_input_encoded).decode('utf-8'))
+                session_id = raw_input.get('session_id', 'unknown')
+                request['session_id'] = session_id
                 request['tool_name'] = raw_input.get('tool_name')
                 request['tool_input'] = raw_input.get('tool_input', {})
-                logger.debug(f"[socket] Decoded tool_name: {request['tool_name']}")
+                logger.debug(f"[socket] Decoded session_id: {session_id}, tool_name: {request['tool_name']}")
             except Exception as e:
                 logger.warning(f"[socket] Failed to decode raw_input_encoded: {e}")
+                request['session_id'] = 'unknown'
+        else:
+            request['session_id'] = 'unknown'
+
+        logger.info(f"[socket] Request ID: {request_id}, Session: {request['session_id']}")
 
         # 注册请求（保存 socket 连接供后续 resolve 使用）
         request_manager.register(request_id, conn, request)
 
         # 发送确认响应
-        conn.sendall(json.dumps({'success': True, 'message': 'Request registered'}).encode())
+        conn.sendall(json.dumps({
+            'success': True,
+            'message': 'Request registered',
+            'session_id': session_id
+        }).encode())
 
         # 重要：不关闭连接！等待用户响应后由 resolve() 关闭
-        logger.info(f"[socket] Request {request_id} registered, waiting for user response...")
+        session_id = request.get('session_id', 'unknown')
+        logger.info(f"[socket] Request {request_id} registered (Session: {session_id}), waiting for user response...")
 
     except Exception as e:
         logger.error(f"Socket handler error: {e}")

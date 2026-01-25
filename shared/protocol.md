@@ -41,14 +41,31 @@ Client (permission-notify.sh)           Server (callback server)
 |------|------|------|------|
 | request_id | string | 是 | 唯一请求标识 (格式: {timestamp}-{uuid8}) |
 | project_dir | string | 是 | 项目目录路径 |
-| raw_input_encoded | string | 是 | Base64 编码的原始 PermissionRequest 输入 |
+| raw_input_encoded | string | 是 | Base64 编码的原始 PermissionRequest 输入（包含 session_id、tool_name、tool_input） |
+
+**raw_input_encoded 解码后的字段**:
+
+| 字段 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| session_id | string | 否 | Claude Code 会话 ID，用于追踪请求来源 |
+| tool_name | string | 是 | 工具名称（如 Bash、Write 等） |
+| tool_input | object | 是 | 工具输入参数 |
 
 **示例**:
 ```json
 {
   "request_id": "1705555200-a1b2c3d4",
   "project_dir": "/home/user/myproject",
-  "raw_input_encoded": "eyJ0b29sX25hbWUiOiJCYXNoIiwidG9vbF9pbnB1dCI6ey4uLn19"
+  "raw_input_encoded": "eyJzZXNzaW9uX2lkIjoic2Vzc18xMjMiLCJ0b29sX25hbWUiOiJCYXNoIiwidG9vbF9pbnB1dCI6eyJjb21tYW5kIjoiZWNobyBoZWxsbyJ9fQ=="
+}
+```
+
+其中 `raw_input_encoded` 解码后为：
+```json
+{
+  "session_id": "sess_123",
+  "tool_name": "Bash",
+  "tool_input": {"command": "echo hello"}
 }
 ```
 
@@ -58,9 +75,21 @@ Client (permission-notify.sh)           Server (callback server)
 - **长度前缀**: 无
 - **时机**: 请求注册成功后立即发送
 
+**JSON 字段说明**:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| success | boolean | 请求是否成功注册 |
+| message | string | 状态消息 |
+| session_id | string | 会话 ID（来自请求的 raw_input_encoded） |
+
 **示例**:
 ```json
-{"success": true, "message": "Request registered"}
+{
+  "success": true,
+  "message": "Request registered",
+  "session_id": "sess_123"
+}
 ```
 
 ### 3. 决策消息 (Server → Client)
@@ -82,15 +111,19 @@ Client (permission-notify.sh)           Server (callback server)
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | success | boolean | 请求是否成功处理 |
+| session_id | string | 会话 ID（用于追踪请求来源） |
 | decision.behavior | string | "allow" 或 "deny" |
 | decision.message | string | 决策原因说明 |
 | decision.interrupt | boolean | 是否中断 Claude (仅 deny 时有效) |
 | fallback_to_terminal | boolean | 是否回退到终端交互 (可选) |
+| error | string | 错误类型（仅失败时有值） |
+| message | string | 错误/状态消息（仅失败时有值） |
 
 **成功响应示例**:
 ```json
 {
   "success": true,
+  "session_id": "sess_123",
   "decision": {
     "behavior": "allow"
   }
@@ -101,6 +134,7 @@ Client (permission-notify.sh)           Server (callback server)
 ```json
 {
   "success": true,
+  "session_id": "sess_123",
   "decision": {
     "behavior": "deny",
     "message": "用户通过飞书拒绝",
@@ -115,6 +149,7 @@ Client (permission-notify.sh)           Server (callback server)
   "success": false,
   "fallback_to_terminal": true,
   "error": "server_timeout",
+  "session_id": "sess_123",
   "message": "服务器超时（300秒），请在终端操作"
 }
 ```
@@ -144,3 +179,4 @@ Client (permission-notify.sh)           Server (callback server)
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-01-18 | 初始版本 |
+| v1.1 | 2026-01-26 | 新增 session_id 字段用于请求追踪，所有日志输出包含 session_id |

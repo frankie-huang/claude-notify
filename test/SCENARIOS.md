@@ -30,7 +30,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
         "hooks": [
           {
             "type": "command",
-            "command": "bash /path/to/permission-notify.sh"
+            "command": "bash /root/claude/claude-notify/hooks/permission-notify.sh"
           }
         ]
       }
@@ -571,8 +571,8 @@ curl http://localhost:8080/status
   "resolved": 0,
   "disconnected": 0,
   "requests": {
-    "123-abc": {"status": "pending", "age_seconds": 10, "tool": "Bash"},
-    "456-def": {"status": "pending", "age_seconds": 5, "tool": "Edit"}
+    "123-abc": {"status": "pending", "age_seconds": 10, "session": "sess_123", "tool": "Bash"},
+    "456-def": {"status": "pending", "age_seconds": 5, "session": "sess_456", "tool": "Edit"}
   }
 }
 ```
@@ -615,9 +615,7 @@ export CALLBACK_SERVER_URL="http://wrong-server:9999"
 ```bash
 # 脚本测试快速连续请求
 for i in {1..10}; do
-  echo '{"tool_name":"Bash","tool_input":{"command":"echo test'$i'"},"cwd":"/tmp"}' | \
-  FEISHU_WEBHOOK_URL="$FEISHU_WEBHOOK_URL" \
-  bash /path/to/permission-notify.sh
+  ./test/test-permission.sh bash "echo test$i"
   sleep 0.5
 done
 ```

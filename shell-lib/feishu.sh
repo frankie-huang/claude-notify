@@ -39,6 +39,11 @@ if ! type get_project_root &> /dev/null; then
     source "${BASH_SOURCE[0]%/*}/project.sh"
 fi
 
+# 引入环境配置读取（如果尚未引入）
+if ! type get_config &> /dev/null; then
+    source "${BASH_SOURCE[0]%/*}/env.sh"
+fi
+
 # 默认模板目录
 DEFAULT_TEMPLATE_DIR="${PROJECT_ROOT}/templates/feishu"
 
@@ -431,6 +436,12 @@ build_permission_card() {
     fi
 
     # 渲染主模板
+    # 根据 FEISHU_AT_ALL 环境变量决定是否 @所有人
+    local at_all=""
+    if [ "$(get_config "FEISHU_AT_ALL" "false")" = "true" ]; then
+        at_all="<at id=all></at> "
+    fi
+
     local card
     if [ -n "$buttons_json" ]; then
         card=$(render_card_template "$card_type" \
@@ -439,14 +450,16 @@ build_permission_card() {
             "project_name=$project_name" \
             "timestamp=$timestamp" \
             "detail_elements=$detail_elements" \
-            "buttons_json=$buttons_json")
+            "buttons_json=$buttons_json" \
+            "at_all=$at_all")
     else
         card=$(render_card_template "$card_type" \
             "template_color=$template_color" \
             "tool_name=$tool_name" \
             "project_name=$project_name" \
             "timestamp=$timestamp" \
-            "detail_elements=$detail_elements")
+            "detail_elements=$detail_elements" \
+            "at_all=$at_all")
     fi
 
     if [ $? -ne 0 ]; then

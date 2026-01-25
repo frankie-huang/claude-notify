@@ -157,8 +157,6 @@ vim .env
 - **多工具支持**: 支持 Bash、Edit、Write、Read、Glob、Grep、WebSearch、WebFetch 等 Claude Code 工具
 
 ## 待实现功能
-
-- **权限请求延迟通知**: 支持配置延迟时间，在权限请求发出后等待一段时间再发送飞书通知，避免终端快速响应时产生不必要的通知
 - **Session 标识**: 发送飞书卡片时附带 session 标识，以便用户知道是哪个会话发起的权限请求
 - **任务完成通知**: 除了权限通知之外，当 Claude 处理完成之后，同样支持发送飞书卡片通知
 - **决策页面增强**:
@@ -166,9 +164,10 @@ vim .env
   - ✅ 支持定时自动关闭页面（已实现）
 ## 已完成功能
 
+- ✅ **权限通知延迟发送**: 支持配置延迟时间，避免快速连续请求时的消息轰炸（通过 `PERMISSION_NOTIFY_DELAY` 配置）
 - ✅ **飞书卡片模板化**: 支持模块化的飞书卡片模板，便于自定义和扩展
 - ✅ **决策页面自动关闭**: 支持定时自动关闭决策页面（通过 `CLOSE_PAGE_TIMEOUT` 配置）
-- ✅ **VSCode 自动跳转**: 点击飞书按钮后自动跳转到 VSCode（通过 `VSCODE_REMOTE_PREFIX` 配置）
+- ✅ **VSCode 自动跳转**: 点击飞书按钮后从浏览器页面自动跳转到 VSCode（通过 `VSCODE_URI_PREFIX` 配置）
 
 ## 脚本说明
 
@@ -190,6 +189,47 @@ vim .env
 | `shell-lib/tool.sh` | 工具详情格式化 |
 | `shell-lib/feishu.sh` | 飞书卡片构建和发送 |
 | `shell-lib/socket.sh` | Socket 通信函数 |
+| `shell-lib/vscode-proxy.sh` | VSCode 本地代理客户端，通过反向 SSH 隧道唤起本地 VSCode |
+
+## VSCode SSH 远程开发代理
+
+通过反向 SSH 隧道，在远程服务器上触发请求后自动唤起本地电脑的 VSCode 窗口。适用于 VSCode 通过 SSH Remote 连接到远程服务器的开发模式。
+
+### 使用方法
+
+1. **在本地电脑启动代理服务**：
+
+```bash
+python3 local-proxy/vscode-ssh-proxy.py --vps myserver
+```
+
+参数说明：
+- `--vps`: SSH 地址（别名如 `myserver`，或 `root@1.2.3.4`）
+- `--ssh-port`: SSH 端口（默认 22，使用别名时从 `~/.ssh/config` 读取）
+- `--port`: 本地 HTTP 服务端口（默认 9527）
+- `--remote-port`: 远程服务器端端口（默认同本地端口）
+
+2. **在远程服务器上配置环境变量**（`.env` 文件）：
+
+```bash
+# 启用 VSCode 自动激活
+ACTIVATE_VSCODE_ON_CALLBACK=true
+
+# SSH 隧道代理端口（需与启动时的端口一致）
+VSCODE_SSH_PROXY_PORT=9527
+```
+
+3. **工作流程**：
+   - 点击飞书卡片按钮后，远程服务器通过 SSH 隧道向本地代理发送请求
+   - 本地代理调用 `code --folder-uri vscode-remote://ssh-remote+myserver/path/to/project`
+   - 本地 VSCode 自动打开并激活对应远程项目
+
+### 两种激活模式
+
+| 模式 | 配置 | 行为 |
+|------|------|------|
+| **SSH 隧道代理激活** | `ACTIVATE_VSCODE_ON_CALLBACK=true` + `VSCODE_SSH_PROXY_PORT=9527` | 通过反向 SSH 隧道唤起本地 VSCode 窗口 |
+| **本地命令激活** | `ACTIVATE_VSCODE_ON_CALLBACK=true` | 在当前机器执行 `code .` 激活窗口 |
 
 ## 配置方法
 
@@ -235,6 +275,8 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 
 脚本会自动从项目根目录的 `.env` 文件读取配置，无需手动 `source`。如果 `.env` 中未配置某项，则从系统环境变量读取；如果仍未配置，则使用默认值。
 
+**基础配置**
+
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `FEISHU_WEBHOOK_URL` | 飞书 Webhook URL | 必需 |
@@ -243,8 +285,17 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `PERMISSION_SOCKET_PATH` | Unix Socket 路径 | `/tmp/claude-permission.sock` |
 | `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
 | `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
-| `VSCODE_REMOTE_PREFIX` | VSCode Remote 前缀，点击按钮后自动跳转 VSCode | 空（不跳转） |
+| `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 0（立即发送） |
+| `FEISHU_AT_ALL` | 飞书权限通知是否 @所有人 | `false` |
 | `FEISHU_TEMPLATE_PATH` | 自定义飞书卡片模板目录 | `templates/feishu` |
+
+**VSCode 自动跳转/激活配置**（以下两种模式二选一）
+
+| 模式 | 变量 | 说明 | 默认值 |
+|------|------|------|--------|
+| 浏览器跳转 | `VSCODE_URI_PREFIX` | 通过浏览器 vscode:// 协议跳转（受浏览器策略限制） | 空（不跳转） |
+| 自动激活 | `ACTIVATE_VSCODE_ON_CALLBACK` | 服务端直接激活 VSCode 窗口（推荐） | `false` |
+| 自动激活 | `VSCODE_SSH_PROXY_PORT` | SSH Remote 场景的代理端口（配合反向隧道） | 空（不启用） |
 
 ## 依赖
 
@@ -304,5 +355,7 @@ brew install python3 curl
 - [Claude Code Hooks 事件调研](docs/CLAUDE_CODE_HOOKS.md) - 所有 hooks 事件类型、触发时机和配置方式
 - [Socket 通信协议](shared/protocol.md)
 - [飞书卡片模板说明](templates/feishu/README.md)
-- [测试文档](docs/TEST.md)
+- [测试文档](test/README.md) - 测试脚本使用说明
+- [测试指令集](test/PROMPTS.md) - 权限请求测试指令
+- [测试场景](test/SCENARIOS.md) - 详细测试场景文档
 - [OpenSpec 规范](openspec/specs/)

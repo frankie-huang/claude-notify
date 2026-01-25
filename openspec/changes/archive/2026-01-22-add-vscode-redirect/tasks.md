@@ -1,6 +1,6 @@
 ## 1. 配置支持
 
-- [x] 1.1 在 `server/config.py` 中添加 `VSCODE_REMOTE_PREFIX` 配置项
+- [x] 1.1 在 `server/config.py` 中添加 `VSCODE_URI_PREFIX` 配置项
 - [x] 1.2 在 `.env.example` 中添加配置示例和说明
 
 ## 2. 响应页面改造
@@ -18,6 +18,6 @@
 
 ## 4. 测试验证
 
-- [ ] 4.1 测试未配置 `VSCODE_REMOTE_PREFIX` 时的行为（不跳转）
+- [ ] 4.1 测试未配置 `VSCODE_URI_PREFIX` 时的行为（不跳转）
 - [ ] 4.2 测试配置后的 VSCode 跳转功能
 - [ ] 4.3 测试跳转后终端聚焦效果

@@ -162,6 +162,6 @@ CLIENT_TIMEOUT = REQUEST_TIMEOUT + CLIENT_TIMEOUT_BUFFER
 # 回调页面关闭超时
 CLOSE_PAGE_TIMEOUT = get_close_page_timeout()
 
-# VSCode Remote 前缀（可选，用于自动跳转 VSCode）
-# 示例: vscode://vscode-remote/ssh-remote+myserver
-VSCODE_REMOTE_PREFIX = get_config('VSCODE_REMOTE_PREFIX', '')
+# VSCode URI 前缀（可选，用于从浏览器页面跳转到 VSCode）
+# 示例: vscode://vscode-remote/ssh-remote+myserver 或 vscode://file
+VSCODE_URI_PREFIX = get_config('VSCODE_URI_PREFIX', '')

@@ -27,6 +27,7 @@ source "${PROJECT_ROOT}/shell-lib/json.sh"
 source "${PROJECT_ROOT}/shell-lib/tool.sh"
 source "${PROJECT_ROOT}/shell-lib/feishu.sh"
 source "${PROJECT_ROOT}/shell-lib/socket.sh"
+source "${PROJECT_ROOT}/shell-lib/vscode-proxy.sh"
 
 # =============================================================================
 # Claude Code Hook Exit Codes
@@ -54,6 +55,7 @@ json_init
 SOCKET_PATH=$(get_config "PERMISSION_SOCKET_PATH" "/tmp/claude-permission.sock")
 WEBHOOK_URL=$(get_config "FEISHU_WEBHOOK_URL" "")
 CALLBACK_SERVER_URL=$(get_config "CALLBACK_SERVER_URL" "http://localhost:8080")
+NOTIFY_DELAY=$(get_config "PERMISSION_NOTIFY_DELAY" "0")
 
 # 时间戳
 TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
@@ -75,6 +77,37 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(json_get "$INPUT" "cwd")}"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 
 log "Tool: $TOOL_NAME, Session: $SESSION_ID, Project: $PROJECT_DIR"
+
+# =============================================================================
+# 延迟发送（带父进程存活检测）
+# =============================================================================
+# 功能：延迟指定秒数，期间每秒检测父进程是否存活
+# 参数：$1 - 延迟秒数
+# 返回：0 - 延迟完成，可以发送；1 - 父进程已退出，应跳过发送
+# =============================================================================
+delay_with_parent_check() {
+    local delay="$1"
+    local parent_pid="$PPID"
+
+    if [ -z "$delay" ] || [ "$delay" -le 0 ] 2>/dev/null; then
+        return 0
+    fi
+
+    log "Delaying notification for ${delay}s (parent PID: $parent_pid)"
+
+    local i=0
+    while [ "$i" -lt "$delay" ]; do
+        sleep 1
+        # 检查父进程是否存活
+        if ! kill -0 "$parent_pid" 2>/dev/null; then
+            log "Parent process $parent_pid exited, skipping notification"
+            return 1
+        fi
+        i=$((i + 1))
+    done
+
+    return 0
+}
 
 # =============================================================================
 # 生成请求 ID
@@ -138,6 +171,11 @@ run_interactive_mode() {
     local card
     card=$(build_permission_card "$TOOL_NAME" "$project_name" "$TIMESTAMP" "$command_content" "$description" "$template_color" "$buttons")
 
+    # 延迟发送（如果配置了延迟时间），期间检测父进程存活
+    if ! delay_with_parent_check "$NOTIFY_DELAY"; then
+        exit $EXIT_FALLBACK
+    fi
+
     log "Sending interactive Feishu card"
     send_feishu_card "$card" "$WEBHOOK_URL"
 
@@ -186,6 +224,9 @@ run_interactive_mode() {
     if [ "$RESPONSE_SUCCESS" = "true" ]; then
         # 只有用户明确决策时才输出决策（allow 或 deny）
         output_decision "$RESPONSE_BEHAVIOR" "$RESPONSE_MESSAGE" "$RESPONSE_INTERRUPT"
+
+        # 根据 VSCode 代理配置自动激活窗口
+        vscode_proxy_activate "$PROJECT_DIR"
     else
         # 服务返回任何错误都回退到终端交互模式
         # 只有用户点击拒绝按钮时才会返回 success=true + behavior=deny
@@ -230,6 +271,11 @@ run_fallback_mode() {
     # 构建不带按钮的卡片
     local card
     card=$(build_permission_card "$TOOL_NAME" "$project_name" "$TIMESTAMP" "$command_content" "$description" "$template_color" "")
+
+    # 延迟发送（如果配置了延迟时间），期间检测父进程存活
+    if ! delay_with_parent_check "$NOTIFY_DELAY"; then
+        exit $EXIT_FALLBACK
+    fi
 
     # 发送通知（使用统一的发送函数，失败时自动发送降级文本消息）
     send_feishu_card "$card" "$WEBHOOK_URL"

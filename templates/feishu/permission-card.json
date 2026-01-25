@@ -27,7 +27,7 @@
       "elements": [
         {
           "tag": "markdown",
-          "content": "**<at id=all></at> Claude Code 请求使用 {{tool_name}} 工具**",
+          "content": "**{{at_all}}Claude Code 请求使用 {{tool_name}} 工具**",
           "text_align": "left",
           "text_size": "normal_v2",
           "margin": "0px 0px 0px 0px"

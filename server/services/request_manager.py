@@ -38,7 +38,7 @@ class RequestManager:
         Args:
             request_id: 请求唯一标识
             conn: Unix Socket 连接（用于后续返回决策）
-            data: 请求数据（包含 tool_name, tool_input, project_dir 等）
+            data: 请求数据（包含 session_id, tool_name, tool_input, project_dir 等）
         """
         with self._lock:
             self._requests[request_id] = {
@@ -48,7 +48,8 @@ class RequestManager:
                 'status': self.STATUS_PENDING,
                 'resolved_decision': None  # 记录已处理的决策类型
             }
-            logger.info(f"Registered request: {request_id}")
+            session_id = data.get('session_id', 'unknown')
+            logger.info(f"Registered request: {request_id}, Session: {session_id}")
 
     def _close_connection(self, conn: socket.socket):
         """安全关闭 socket 连接"""
@@ -81,7 +82,8 @@ class RequestManager:
 
             req = self._requests[request_id]
             age = time.time() - req['timestamp']
-            logger.info(f"[resolve] Request {request_id}, status={req['status']}, age={age:.1f}s")
+            session_id = req['data'].get('session_id', 'unknown')
+            logger.info(f"[resolve] Request {request_id}, Session: {session_id}, status={req['status']}, age={age:.1f}s")
 
             # 检查请求状态
             if req['status'] == self.STATUS_RESOLVED:
@@ -105,6 +107,7 @@ class RequestManager:
                 response = json.dumps({
                     'success': True,
                     'decision': decision,
+                    'session_id': req['data'].get('session_id', 'unknown'),
                     'tool_name': req['data'].get('tool_name'),
                     'tool_input': req['data'].get('tool_input'),
                     'project_dir': req['data'].get('project_dir')
@@ -124,7 +127,8 @@ class RequestManager:
                 behavior = decision.get(Decision.FIELD_BEHAVIOR, 'unknown')
                 req['status'] = self.STATUS_RESOLVED
                 req['resolved_decision'] = '批准' if behavior == Decision.ALLOW else '拒绝'
-                logger.info(f"[resolve] Request {request_id} resolved: {behavior}")
+                session_id = req['data'].get('session_id', 'unknown')
+                logger.info(f"[resolve] Request {request_id} (Session: {session_id}) resolved: {behavior}")
                 return True, ""
 
             except (BrokenPipeError, ConnectionResetError, OSError) as e:
@@ -149,11 +153,13 @@ class RequestManager:
 
     def _send_fallback_response(self, request_id: str, req: dict, conn, age: float):
         """发送"回退终端"响应，让 Claude 回退到终端交互模式"""
+        session_id = req['data'].get('session_id', 'unknown')
         try:
             response = json.dumps({
                 'success': False,
                 'fallback_to_terminal': True,
                 'error': 'server_timeout',
+                'session_id': session_id,
                 'message': f'服务器超时（{age:.0f}秒），请在终端操作'
             })
             response_bytes = response.encode('utf-8')
@@ -162,7 +168,7 @@ class RequestManager:
 
             conn.settimeout(5)  # 设置发送超时
             conn.sendall(total_data)
-            logger.info(f"Sent fallback response to {request_id} (age={age:.0f}s)")
+            logger.info(f"Sent fallback response to {request_id} (Session: {session_id}, age={age:.0f}s)")
         except Exception as e:
             logger.warning(f"Failed to send fallback response to {request_id}: {e}")
         finally:
@@ -216,9 +222,10 @@ class RequestManager:
 
                     # 检查连接是否已断开（无论是否启用超时）
                     if not self._is_connection_alive(conn):
+                        session_id = req['data'].get('session_id', 'unknown')
                         req['status'] = self.STATUS_DISCONNECTED
                         self._close_connection(conn)
-                        logger.info(f"Cleaned up dead connection: {rid} (age={age:.0f}s)")
+                        logger.info(f"Cleaned up dead connection: {rid} (Session: {session_id}, age={age:.0f}s)")
                         continue
 
                     # 如果启用了超时，检查是否超时
@@ -247,6 +254,7 @@ class RequestManager:
                 stats['requests'][rid] = {
                     'status': req['status'],
                     'age_seconds': int(now - req['timestamp']),
+                    'session': req['data'].get('session_id', 'unknown'),
                     'tool': req['data'].get('tool_name', 'Unknown')
                 }
             return stats

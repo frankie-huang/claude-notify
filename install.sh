@@ -302,19 +302,63 @@ REQUEST_TIMEOUT=300
 # 建议范围: 1-10 秒
 CLOSE_PAGE_TIMEOUT=3
 
-# VSCode Remote 前缀 (可选)
-# 配置后，点击飞书卡片按钮会自动跳转到 VSCode
-# 格式: vscode://vscode-remote/{remote-type}+{host}
+# 权限通知延迟时间，秒 (可选，默认 0)
+# 收到权限请求后延迟指定秒数再发送飞书消息
+# 用于避免快速连续请求时的消息轰炸
+# 设为 0 表示立即发送
+PERMISSION_NOTIFY_DELAY=0
+
+# 飞书权限通知是否 @所有人 (可选，默认 false)
+# 设为 true 时会在消息中 @所有人
+FEISHU_AT_ALL=false
+
+# =============================================================================
+# VSCode 自动跳转/激活配置 (可选，以下两种模式二选一)
+# =============================================================================
+#
+# 【模式一】浏览器跳转模式 - VSCODE_URI_PREFIX
+# -----------------------------------------------------------------------------
+# 原理：点击飞书按钮后，浏览器回调页面通过 vscode:// 协议链接跳转到 VSCode
+# 优点：配置简单，无需额外服务
+# 缺点：受浏览器安全策略限制，可能触发跳转确认弹窗
+#
+# 格式: vscode://vscode-remote/{remote-type}+{host} 或 vscode://file
 # 示例:
 #   - SSH Remote: vscode://vscode-remote/ssh-remote+myserver
 #   - WSL: vscode://vscode-remote/wsl+Ubuntu
 #   - 本地: vscode://file (用于本地开发)
-# 不配置则不跳转，仅显示操作结果页面
 #
 # 【推荐】VSCode 设置，允许外部应用直接打开（无需确认）：
-#   - 本地开发: settings.json 中添加 "security.promptForLocalFileProtocolHandling": false
-#   - SSH Remote: settings.json 中添加 "security.promptForRemoteFileProtocolHandling": false
-# VSCODE_REMOTE_PREFIX=vscode://vscode-remote/ssh-remote+myserver
+#   - 本地: settings.json 添加 "security.promptForLocalFileProtocolHandling": false
+#   - 远程: settings.json 添加 "security.promptForRemoteFileProtocolHandling": false
+#
+VSCODE_URI_PREFIX=
+
+# 【模式二】自动激活模式 - ACTIVATE_VSCODE_ON_CALLBACK (推荐)
+# -----------------------------------------------------------------------------
+# 原理：服务端直接调用命令激活 VSCode 窗口，不依赖浏览器跳转
+# 优点：不受浏览器策略限制，体验更流畅
+# 缺点：SSH Remote 场景需要配合反向隧道代理
+#
+# --- 本地开发场景 ---
+# 仅配置此项为 true 即可，服务端会执行 'code .' 激活本地 VSCode 窗口
+ACTIVATE_VSCODE_ON_CALLBACK=false
+#
+# --- SSH Remote 远程开发场景 ---
+# 结合上述配置，再配置 VSCODE_SSH_PROXY_PORT 即可
+# 通过反向 SSH 隧道唤起本地 VSCode 窗口
+#
+# 使用方法:
+#   1. 在本地电脑运行代理服务:
+#      python3 local-proxy/vscode-ssh-proxy.py --vps <host> [options]
+#        --vps HOST        VPS 的 SSH 地址 (别名如 myserver，或 root@1.2.3.4)
+#        --ssh-port PORT   SSH 端口 (默认: 22，使用别名时从 ~/.ssh/config 读取)
+#        -p, --port        本地 HTTP 服务端口 (默认: 9527)
+#        -r, --remote-port VPS 端远程端口 (默认: 同本地端口)
+#   2. 点击飞书按钮会自动唤起本地 VSCode
+#
+# 注意: VSCODE_SSH_PROXY_PORT 需与代理服务的 --remote-port 参数保持一致 (如 9527)
+VSCODE_SSH_PROXY_PORT=
 EOF
 
     print_success "环境变量模板已生成: $env_file"
@@ -425,6 +469,9 @@ main() {
                 echo "  1. 配置环境变量 (参考 .env.example)"
                 echo "  2. 启动回调服务: ./server/start.sh"
                 echo "  3. 使用 Claude Code，权限请求将发送到飞书"
+                echo ""
+                echo "可选功能："
+                echo "  - VSCode 本地代理: python3 local-proxy/vscode-ssh-proxy.py --vps myserver"
             fi
             ;;
         *)
