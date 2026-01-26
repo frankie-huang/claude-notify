@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# test-permission.sh - permission-notify.sh 测试脚本
+# test-permission.sh - hook-router.sh 测试脚本
 #
 # 用法: ./test-permission.sh [工具类型] [命令/描述]
 #
@@ -14,7 +14,12 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-HOOK_SCRIPT="${PROJECT_ROOT}/hooks/permission-notify.sh"
+HOOK_SCRIPT="${PROJECT_ROOT}/src/hook-router.sh"
+
+# 引入核心库以使用 get_config 函数
+if [ -f "${PROJECT_ROOT}/src/lib/core.sh" ]; then
+    source "${PROJECT_ROOT}/src/lib/core.sh"
+fi
 
 # 颜色定义
 GREEN='\033[0;32m'
@@ -217,7 +222,10 @@ main() {
     echo -e "${BLUE}$INPUT_JSON${NC}"
     print_separator
 
-    # 检查环境变量
+    # 检查环境变量（使用 get_config 从 .env 文件读取）
+    FEISHU_WEBHOOK_URL=$(get_config "FEISHU_WEBHOOK_URL" "$FEISHU_WEBHOOK_URL")
+    CALLBACK_SERVER_URL=$(get_config "CALLBACK_SERVER_URL" "$CALLBACK_SERVER_URL")
+
     if [ -z "$FEISHU_WEBHOOK_URL" ]; then
         print_warning "FEISHU_WEBHOOK_URL 未设置，将回退到终端交互模式"
     fi
@@ -228,7 +236,7 @@ main() {
     fi
 
     # 执行测试
-    print_info "执行 permission-notify.sh..."
+    print_info "执行 hook-router.sh..."
     print_separator
 
     echo "$INPUT_JSON" | "$HOOK_SCRIPT"

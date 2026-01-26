@@ -4,7 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added - 2026-01-27
+
+#### 权限请求卡片会话信息 (permission-card-session-info)
+
+- 权限请求卡片新增会话信息显示
+- 显示 session_id 前 8 位，便于区分不同会话的权限请求
+- 更新 `permission-card.json` 和 `permission-card-static.json` 模板
+
+### Fixed - 2026-01-26
+
+#### 用户响应时连接状态检测 (socket-state-realtime-check)
+
+- 修复用户点击按钮响应时可能因清理线程延迟而导致响应失败的问题
+- 用户点击按钮时实时检测 socket 连接状态，不再依赖后台清理线程的延迟检测
+- 确保用户响应时能立即获得准确的连接状态
+
 ### Added - 2026-01-26
+
+#### Stop 事件完成通知 (stop-event-notification)
+
+- 新增 `src/hooks/stop.sh` 独立 Stop 事件处理器
+- 从 transcript 文件中提取 Claude 最终响应内容
+- 支持显示会话标识（session slug）
+- 新增 `STOP_MESSAGE_MAX_LENGTH` 配置（默认 2000 字符）
+- 新增 `stop-card.json` 飞书卡片模板
+- 任务完成后自动发送飞书通知，包含 Claude 响应摘要
+- `src/hooks/webhook.sh` 重构：移除内联飞书卡片，统一使用 `feishu.sh` 函数
+- `install.sh` 更新：同时配置 PermissionRequest 和 Stop 两个事件的 Hook
 
 #### 飞书 @所有人配置 (feishu-at-all-config)
 
@@ -14,7 +41,7 @@ All notable changes to this project will be documented in this file.
 
 #### 权限通知延迟发送 (permission-notify-delay)
 
-- 新增 `PERMISSION_NOTIFY_DELAY` 环境变量配置（默认 0，立即发送）
+- 新增 `PERMISSION_NOTIFY_DELAY` 环境变量配置（默认 60 秒）
 - 支持在权限请求后延迟指定秒数再发送飞书通知
 - 延迟期间用户在终端响应时，自动取消通知发送（Claude Code 会 SIGKILL 终止 hook）
 - 延迟期间每秒检测父进程状态，父进程退出时跳过发送

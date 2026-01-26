@@ -60,7 +60,7 @@ CALLBACK_SERVER_URL=http://localhost:8080
 ### 2. 启动回调服务（交互模式需要）
 
 ```bash
-./callback-server/callback-server.py
+./src/start-server.sh start
 ```
 
 ## 测试模式说明

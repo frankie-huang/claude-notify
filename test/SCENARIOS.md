@@ -30,7 +30,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
         "hooks": [
           {
             "type": "command",
-            "command": "bash /root/claude/claude-notify/hooks/permission-notify.sh"
+            "command": "bash /root/claude/claude-notify/src/hook-router.sh"
           }
         ]
       }
@@ -98,8 +98,7 @@ tail -20 log/permission_$(date +%Y%m%d).log
 
 1. 启动回调服务：
 ```bash
-cd callback-server
-./start-server.sh start
+./src/start-server.sh start
 ```
 
 2. 验证服务运行：
@@ -163,8 +162,7 @@ tail -30 log/callback_$(date +%Y%m%d).log
 1. 设置默认超时（或确认使用默认值 300s）：
 ```bash
 export REQUEST_TIMEOUT=300
-cd callback-server
-./start-server.sh restart
+./src/start-server.sh restart
 ```
 
 2. 触发一个权限请求
@@ -198,8 +196,7 @@ grep "Request.*resolved" log/callback_$(date +%Y%m%d).log
 1. 设置较短的超时用于测试（如 60 秒）：
 ```bash
 export REQUEST_TIMEOUT=60
-cd callback-server
-./start-server.sh restart
+./src/start-server.sh restart
 ```
 
 2. 触发一个权限请求
@@ -246,8 +243,7 @@ Claude Code 的 hook 超时时间由 Claude 内部控制（通常较短，约 10
 1. 使用默认服务端超时（300s）：
 ```bash
 export REQUEST_TIMEOUT=300
-cd callback-server
-./start-server.sh restart
+./src/start-server.sh restart
 ```
 
 2. 触发一个权限请求
@@ -295,8 +291,7 @@ grep "Cleaned up dead connection" log/callback_$(date +%Y%m%d).log
 1. 设置极短的服务端超时（如 5 秒）：
 ```bash
 export REQUEST_TIMEOUT=5
-cd callback-server
-./start-server.sh restart
+./src/start-server.sh restart
 ```
 
 2. 触发权限请求
@@ -318,8 +313,7 @@ cd callback-server
 1. 禁用超时：
 ```bash
 export REQUEST_TIMEOUT=0
-cd callback-server
-./start-server.sh restart
+./src/start-server.sh restart
 ```
 
 2. 验证配置：
@@ -488,8 +482,7 @@ grep -A 2 "Already resolved" log/callback_$(date +%Y%m%d).log
 
 2. 在用户未操作前，手动杀掉回调服务：
 ```bash
-cd callback-server
-./start-server.sh stop
+./src/start-server.sh stop
 ```
 
 3. 尝试点击飞书按钮

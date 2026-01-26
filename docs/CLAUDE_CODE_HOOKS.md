@@ -896,7 +896,7 @@ if assistant_messages:
       "hooks": [
         {
           "type": "command",
-          "command": "bash $HOME/.claude/hooks/webhook/webhook-notify.sh",
+          "command": "bash /path/to/claude-notify/src/hook-router.sh",
           "timeout": 5
         }
       ]
@@ -905,7 +905,7 @@ if assistant_messages:
 }
 ```
 
-功能: 任务完成时发送通知
+功能: 任务完成时发送通知，包含 Claude 最终响应摘要和会话标识
 
 ---
 
@@ -994,6 +994,94 @@ if assistant_messages:
 ### 5. UserPromptSubmit - 敏感词过滤
 
 用途: 防止在提示词中意外输入敏感信息（API Key 等）
+
+---
+
+## Hook 进程生命周期与信号处理
+
+### 进程组结构
+
+Hook 进程运行在 Claude 的进程组中：
+
+```
+Claude (PID=98437, PGID=98437)  ← 进程组长
+  └── hook-router.sh (PID=100540, PGID=98437)  ← 在 Claude 的进程组中
+      └── permission.sh (通过 source 加载，同一进程)
+```
+
+**关键发现**：
+- Hook 进程的 `PGID` 等于 Claude 的 `PID`
+- Hook 进程**不是进程组长**，无法脱离 Claude 的进程组
+
+### 信号处理限制
+
+当用户在终端直接响应权限请求时：
+
+| 事件 | 是否发生 | 说明 |
+|------|:--------:|------|
+| Hook 收到 SIGTERM/SIGINT | ❌ | 不会收到可捕获的信号 |
+| Hook 触发 EXIT trap | ❌ | EXIT trap 不会被触发 |
+| Hook 被 SIGKILL 杀死 | ✅ | **无法被捕获** |
+| 进程组被清理 | ✅ | Claude 向整个进程组发送信号 |
+
+**实验验证**：
+
+```bash
+# hook-router.sh 中设置的 trap
+trap '_handler' SIGINT SIGTERM SIGHUP
+trap 'log "EXIT"' EXIT
+
+# 当用户在终端响应时，以上 trap 都不会被触发
+# 日志只显示：
+[hook-router] Starting (PID: 100540, PPID: 98437, PGID: 98437)
+# 之后没有任何日志，进程直接消失
+```
+
+### 结论
+
+**Claude 使用 SIGKILL 向整个进程组发送信号**，导致：
+1. Hook 进程无法捕获信号（SIGKILL 不可捕获）
+2. 无法在 hook 脚本中检测到"用户在终端响应"事件
+3. Hook 进程直接消失，不执行任何清理代码
+
+### 解决方案：PID 注册检测
+
+由于无法在 hook 脚本中检测中断，采用 **PID 注册 + 实时检测** 方案：
+
+**工作原理**：
+
+1. Hook 脚本启动时将自己的进程 ID (`$$) 发送给后端
+2. 用户在终端响应 → Claude kill hook 进程
+3. 用户点击飞书按钮 → 后端检测 hook PID 是否存活
+4. PID 不存在 → 返回"用户已在终端响应"提示
+
+**代码实现**：
+
+```bash
+# permission.sh - 发送请求时注册 PID
+request_json=$(jq -n \
+    --arg rid "$REQUEST_ID" \
+    --arg pdir "$PROJECT_DIR" \
+    --arg enc "$encoded_input" \
+    --arg hpid "$$" \
+    '{request_id: $rid, project_dir: $pdir, raw_input_encoded: $enc, hook_pid: $hpid}')
+```
+
+```python
+# callback.py - 按钮点击时检测 PID
+hook_pid = req_data.get('hook_pid')
+if hook_pid:
+    try:
+        os.kill(int(hook_pid), 0)  # 检测进程是否存在
+    except OSError:
+        # hook 进程已死，用户已在终端响应
+        return send_html_response(200, '用户已在终端响应', ...)
+```
+
+**优势**：
+- 无需等待超时，点击按钮时实时检测
+- 不依赖复杂的信号处理
+- 用户体验更好，响应更快
 
 ---
 

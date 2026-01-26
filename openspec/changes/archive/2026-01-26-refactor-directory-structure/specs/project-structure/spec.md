@@ -1,9 +1,4 @@
-# Spec: 项目结构规范
-
-## Purpose
-定义 claude-notify 项目的目录结构组织规范，确保跨语言组件（Shell 和 Python）的代码组织清晰、易于维护。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 根目录简洁性
 根目录 SHALL 只保留入口级文件、必要的配置文件和顶级目录。

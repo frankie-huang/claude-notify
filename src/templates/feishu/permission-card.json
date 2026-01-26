@@ -1,0 +1,112 @@
+{
+  "msg_type": "interactive",
+  "card": {
+    "schema": "2.0",
+    "config": {
+      "update_multi": true,
+      "style": {
+        "text_size": {
+          "normal_v2": {
+            "default": "normal",
+            "pc": "normal",
+            "mobile": "heading"
+          }
+        }
+      }
+    },
+    "header": {
+      "template": "{{template_color}}",
+      "title": {
+        "tag": "plain_text",
+        "content": "Claude Code 权限请求"
+      },
+      "padding": "12px 8px 12px 8px"
+    },
+    "body": {
+      "direction": "vertical",
+      "elements": [
+        {
+          "tag": "markdown",
+          "content": "**{{at_all}}Claude Code 请求使用 {{tool_name}} 工具**",
+          "text_align": "left",
+          "text_size": "normal_v2",
+          "margin": "0px 0px 0px 0px"
+        },
+        {
+          "tag": "hr",
+          "margin": "0px 0px 0px 0px"
+        },
+        {
+          "tag": "column_set",
+          "columns": [
+            {
+              "tag": "column",
+              "width": "weighted",
+              "elements": [
+                {
+                  "tag": "markdown",
+                  "content": "**项目：**\n{{project_name}}",
+                  "text_align": "left",
+                  "text_size": "normal_v2"
+                }
+              ],
+              "vertical_align": "top",
+              "weight": 1
+            },
+            {
+              "tag": "column",
+              "width": "weighted",
+              "elements": [
+                {
+                  "tag": "markdown",
+                  "content": "**会话：**\n`{{session_slug}}`",
+                  "text_align": "left",
+                  "text_size": "normal_v2"
+                }
+              ],
+              "vertical_align": "top",
+              "weight": 1
+            },
+            {
+              "tag": "column",
+              "width": "weighted",
+              "elements": [
+                {
+                  "tag": "markdown",
+                  "content": "**时间：**\n{{timestamp}}",
+                  "text_align": "left",
+                  "text_size": "normal_v2"
+                }
+              ],
+              "vertical_align": "top",
+              "weight": 1
+            }
+          ]
+        },
+        {{detail_elements}}
+        {
+          "tag": "hr",
+          "margin": "0px 0px 0px 0px"
+        },
+        {
+          "tag": "column_set",
+          "flex_mode": "stretch",
+          "horizontal_spacing": "10px",
+          "horizontal_align": "left",
+          "columns": {{buttons_json}},
+          "margin": "0px 0px 0px 0px"
+        },
+        {
+          "tag": "div",
+          "text": {
+            "tag": "plain_text",
+            "content": "请尽快操作以避免 Claude 超时等待",
+            "text_size": "notation",
+            "text_align": "left",
+            "text_color": "grey"
+          }
+        }
+      ]
+    }
+  }
+}

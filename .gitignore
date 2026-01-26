@@ -12,7 +12,14 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+venv/
+.venv/
+env/
+.env/
+# 只忽略 Python 虚拟环境中的 lib，不忽略 src/lib
+**/venv/lib/
+**/.venv/lib/
+**/env/lib/
 lib64/
 parts/
 sdist/

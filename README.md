@@ -6,62 +6,52 @@
 
 本项目为 Claude Code 提供飞书通知功能，允许用户远程响应权限请求，无需返回终端操作。项目包含以下主要组件：
 
-1. **权限通知脚本** (`hooks/permission-notify.sh`) - Claude Code PermissionRequest hook，负责发送飞书卡片和处理用户决策
-2. **回调服务** (`server/main.py`) - HTTP 服务接收飞书卡片按钮操作，通过 Unix Socket 传递给通知脚本
-3. **通用通知脚本** (`hooks/webhook-notify.sh`) - Notification/Stop hook，用于任务暂停等通用通知
-4. **飞书卡片模板系统** (`templates/feishu/`) - 模块化的卡片模板，支持自定义扩展
+1. **统一 Hook 路由** (`src/hook-router.sh`) - Claude Code Hook 统一入口，根据事件类型分发到对应处理脚本
+2. **权限处理脚本** (`src/hooks/permission.sh`) - PermissionRequest 事件处理，发送飞书卡片和处理用户决策
+3. **通用通知脚本** (`src/hooks/webhook.sh`) - Notification 事件处理，用于任务暂停等通用通知
+4. **任务完成通知脚本** (`src/hooks/stop.sh`) - Stop 事件处理，从 transcript 提取响应内容并发送飞书通知
+5. **回调服务** (`src/server/main.py`) - HTTP 服务接收飞书卡片按钮操作，通过 Unix Socket 传递决策
+6. **飞书卡片模板系统** (`src/templates/feishu/`) - 模块化的卡片模板，支持自定义扩展
 
 ## 项目结构
 
 ```
 claude-notify/
 ├── install.sh                  # 安装配置脚本
-├── hooks/                      # Hook 脚本
-│   ├── permission-notify.sh    # 权限请求通知脚本（可交互）
-│   └── webhook-notify.sh       # 通用通知脚本
-├── server/                     # Python 回调服务
-│   ├── main.py                 # 主服务入口
-│   ├── start.sh                # 启动脚本
-│   ├── config.py               # 配置管理
-│   ├── socket-client.py        # Socket 客户端
-│   ├── models/                 # 数据模型
-│   │   ├── decision.py         # 决策模型
-│   │   └── tool_config.py      # 工具配置模型
-│   ├── services/               # 业务服务
-│   │   ├── request_manager.py  # 请求管理服务
-│   │   └── rule_writer.py      # 规则写入服务
-│   └── handlers/               # HTTP 处理器
-│       └── callback.py         # 回调请求处理器
-├── shell-lib/                  # Shell 函数库
-│   ├── project.sh              # 项目路径管理（解析软链接）
-│   ├── log.sh                  # 日志记录函数
-│   ├── json.sh                 # JSON 解析函数
-│   ├── tool.sh                 # 工具详情格式化
-│   ├── feishu.sh               # 飞书卡片构建和发送
-│   └── socket.sh               # Socket 通信函数
-├── templates/                  # 飞书卡片模板
-│   └── feishu/                 # 飞书卡片模板文件
-│       ├── permission-card.json           # 权限请求卡片(带按钮)
-│       ├── permission-card-static.json    # 权限请求卡片(无按钮)
-│       ├── notification-card.json         # 通用通知卡片
-│       ├── buttons.json                   # 交互按钮模板
-│       ├── command-detail-bash.json       # Bash 命令详情模板
-│       ├── command-detail-file.json       # 文件操作详情模板
-│       ├── description-element.json       # 描述元素模板
-│       └── README.md                      # 模板使用说明
-├── shared/                     # 跨语言共享资源
-│   ├── protocol.md             # Socket 通信协议规范
-│   ├── logging.json            # 统一日志配置
-│   └── logging_config.py       # Python 日志配置模块
-├── config/                     # 配置文件
-│   └── tools.json              # 工具类型配置
+├── .env.example                # 环境变量模板
+├── src/                        # 源代码目录
+│   ├── hook-router.sh          # Hook 统一入口（配置到 Claude Code）
+│   ├── start-server.sh         # 回调服务启动脚本
+│   ├── hooks/                  # Hook 事件处理脚本
+│   │   ├── permission.sh       # 权限请求处理（可交互）
+│   │   ├── webhook.sh          # 通用通知处理（Notification 事件）
+│   │   └── stop.sh             # 任务完成通知处理（Stop 事件）
+│   ├── lib/                    # Shell 函数库
+│   │   ├── core.sh             # 核心库（路径、环境、日志）
+│   │   ├── json.sh             # JSON 解析（jq/python3/grep 降级）
+│   │   ├── tool.sh             # 工具详情格式化
+│   │   ├── feishu.sh           # 飞书卡片构建和发送
+│   │   ├── socket.sh           # Socket 通信函数
+│   │   └── vscode-proxy.sh     # VSCode 代理客户端
+│   ├── server/                 # Python 回调服务
+│   │   ├── main.py             # 主服务入口
+│   │   ├── config.py           # 配置管理
+│   │   ├── socket-client.py    # Socket 客户端
+│   │   ├── models/             # 数据模型
+│   │   ├── services/           # 业务服务
+│   │   └── handlers/           # HTTP 处理器
+│   ├── config/                 # 配置文件
+│   │   └── tools.json          # 工具类型配置
+│   ├── templates/              # 飞书卡片模板
+│   │   └── feishu/             # 飞书卡片模板文件
+│   ├── shared/                 # 跨语言共享资源
+│   │   ├── protocol.md         # Socket 通信协议规范
+│   │   └── logging.json        # 统一日志配置
+│   └── proxy/                  # 本地代理服务
+│       └── vscode-ssh-proxy.py # VSCode SSH 反向隧道代理
 ├── openspec/                   # OpenSpec 规范管理
-│   ├── specs/                  # 当前规范
-│   ├── changes/                # 变更提案
-│   └── project.md              # 项目上下文
 ├── docs/                       # 文档
-│   ├── AGENTS.md               # AI 助手指南
-│   └── TEST.md                 # 测试文档
+├── test/                       # 测试脚本
 └── log/                        # 日志目录
 ```
 
@@ -94,7 +84,7 @@ vim .env
 ### 3. 启动回调服务
 
 ```bash
-./server/start.sh
+./src/start-server.sh
 ```
 
 > **注意**：脚本会自动从 `.env` 文件读取配置，无需手动 `source .env`。
@@ -109,15 +99,15 @@ vim .env
 
 ```
 ┌─────────────────┐         ┌──────────────────┐         ┌─────────────────┐
-│  Claude Code    │────────▶│ hooks/permission │────────▶│   飞书 Webhook   │
-│                 │  Hook   │    -notify.sh    │  Card   │                 │
+│  Claude Code    │────────▶│ src/hook-router  │────────▶│   飞书 Webhook   │
+│                 │  Hook   │  → permission.sh │  Card   │                 │
 └─────────────────┘         └────────┬─────────┘         └─────────────────┘
                                      │
                                      │ Unix Socket
                                      │ (注册请求)
                                      ▼
                             ┌──────────────────┐
-                            │     server/      │
+                            │   src/server/    │
                             │   HTTP Server    │
                             └────────┬─────────┘
                                      │
@@ -125,8 +115,8 @@ vim .env
                                      │ (用户点击按钮)
                                      ▼
                             ┌──────────────────┐         ┌─────────────────┐
-                            │     server/      │────────▶│ hooks/permission│
-                            │   (resolve)      │  Socket │    -notify.sh   │
+                            │   src/server/    │────────▶│ src/hooks/      │
+                            │   (resolve)      │  Socket │  permission.sh  │
                             └──────────────────┘         └────────┬─────────┘
                                                               │
                                                               │ Decision JSON
@@ -139,11 +129,13 @@ vim .env
 
 ### 关键设计点
 
-1. **飞书卡片由前端发送**: `permission-notify.sh` 负责构造和发送飞书卡片，回调服务只处理用户决策
-2. **Unix Socket 双向通信**: 请求注册和决策返回通过同一个 Socket 连接
-3. **长度前缀协议**: 使用 4 字节长度前缀确保数据完整性（详见 `shared/protocol.md`）
-4. **连接状态驱动**: 请求有效性由 Socket 连接状态决定，支持死连接检测和超时处理
-5. **优雅降级**: 回调服务不可用时自动降级为仅通知模式
+1. **统一 Hook 路由**: `src/hook-router.sh` 统一处理所有 Hook 事件，根据事件类型分发到对应脚本
+2. **stdin 一次读取**: Hook 路由脚本读取 stdin 到 `$INPUT` 变量，子脚本共享此变量
+3. **飞书卡片由前端发送**: `permission.sh` 负责构造和发送飞书卡片，回调服务只处理用户决策
+4. **Unix Socket 双向通信**: 请求注册和决策返回通过同一个 Socket 连接
+5. **长度前缀协议**: 使用 4 字节长度前缀确保数据完整性（详见 `src/shared/protocol.md`）
+6. **连接状态驱动**: 请求有效性由 Socket 连接状态决定，支持死连接检测和超时处理
+7. **优雅降级**: 回调服务不可用时自动降级为仅通知模式
 
 ## 功能特性
 
@@ -157,8 +149,6 @@ vim .env
 - **多工具支持**: 支持 Bash、Edit、Write、Read、Glob、Grep、WebSearch、WebFetch 等 Claude Code 工具
 
 ## 待实现功能
-- **Session 标识**: 发送飞书卡片时附带 session 标识，以便用户知道是哪个会话发起的权限请求
-- **任务完成通知**: 除了权限通知之外，当 Claude 处理完成之后，同样支持发送飞书卡片通知
 - **决策页面增强**:
   - 显示具体批准/拒绝的指令内容
   - ✅ 支持定时自动关闭页面（已实现）
@@ -168,28 +158,29 @@ vim .env
 - ✅ **飞书卡片模板化**: 支持模块化的飞书卡片模板，便于自定义和扩展
 - ✅ **决策页面自动关闭**: 支持定时自动关闭决策页面（通过 `CLOSE_PAGE_TIMEOUT` 配置）
 - ✅ **VSCode 自动跳转**: 点击飞书按钮后从浏览器页面自动跳转到 VSCode（通过 `VSCODE_URI_PREFIX` 配置）
+- ✅ **任务完成通知**: Claude 处理完成后自动发送飞书通知，包含响应摘要和会话标识（通过 `src/hooks/stop.sh` 实现）
 
 ## 脚本说明
 
 | 脚本 | 用途 | Hook 类型 |
 |------|------|-----------|
-| `hooks/webhook-notify.sh` | 通用通知（任务暂停等） | Notification, Stop |
-| `hooks/permission-notify.sh` | 权限请求通知（可交互） | PermissionRequest |
-| `server/main.py` | 权限回调服务（HTTP + Socket） | - |
-| `server/socket-client.py` | Socket 客户端（替代 socat） | - |
+| `src/hook-router.sh` | Hook 统一入口（配置到 Claude Code） | 所有 Hook 事件 |
+| `src/hooks/permission.sh` | 权限请求处理（可交互） | PermissionRequest |
+| `src/hooks/webhook.sh` | 通用通知（任务暂停等） | Notification |
+| `src/hooks/stop.sh` | 任务完成通知（含响应摘要） | Stop |
+| `src/server/main.py` | 权限回调服务（HTTP + Socket） | - |
+| `src/server/socket-client.py` | Socket 客户端（替代 socat） | - |
 
 ## Shell 函数库说明
 
 | 函数库 | 功能 |
 |--------|------|
-| `shell-lib/project.sh` | 项目路径管理，自动解析软链接，导出 `PROJECT_ROOT` 变量 |
-| `shell-lib/env.sh` | 环境配置读取，自动从 `.env` 文件加载配置（带缓存） |
-| `shell-lib/log.sh` | 日志记录函数 |
-| `shell-lib/json.sh` | JSON 解析函数（支持 jq/python3/grep+sed 多级降级） |
-| `shell-lib/tool.sh` | 工具详情格式化 |
-| `shell-lib/feishu.sh` | 飞书卡片构建和发送 |
-| `shell-lib/socket.sh` | Socket 通信函数 |
-| `shell-lib/vscode-proxy.sh` | VSCode 本地代理客户端，通过反向 SSH 隧道唤起本地 VSCode |
+| `src/lib/core.sh` | 核心库：路径管理、环境配置、日志记录（合并了原 project.sh、env.sh、log.sh） |
+| `src/lib/json.sh` | JSON 解析函数（支持 jq/python3/grep+sed 多级降级） |
+| `src/lib/tool.sh` | 工具详情格式化 |
+| `src/lib/feishu.sh` | 飞书卡片构建和发送 |
+| `src/lib/socket.sh` | Socket 通信函数 |
+| `src/lib/vscode-proxy.sh` | VSCode 本地代理客户端，通过反向 SSH 隧道唤起本地 VSCode |
 
 ## VSCode SSH 远程开发代理
 
@@ -200,7 +191,7 @@ vim .env
 1. **在本地电脑启动代理服务**：
 
 ```bash
-python3 local-proxy/vscode-ssh-proxy.py --vps myserver
+python3 src/proxy/vscode-ssh-proxy.py --vps myserver
 ```
 
 参数说明：
@@ -244,7 +235,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 #### 2. 启动回调服务
 
 ```bash
-./server/start.sh
+./src/start-server.sh
 ```
 
 #### 3. 配置 Claude Code Hooks
@@ -260,7 +251,19 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
         "hooks": [
           {
             "type": "command",
-            "command": "/path/to/claude-notify/hooks/permission-notify.sh"
+            "command": "/path/to/claude-notify/src/hook-router.sh",
+            "timeout": 360
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/claude-notify/src/hook-router.sh"
           }
         ]
       }
@@ -268,6 +271,8 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
   }
 }
 ```
+
+> **注意**：PermissionRequest hook 的 `timeout`（秒）建议配置为大于服务端 `REQUEST_TIMEOUT`（默认 300 秒）的值，确保服务端超时先触发，避免 hook 被 Claude Code 强制终止。上例配置为 360 秒。
 
 ### 环境变量
 
@@ -285,9 +290,10 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `PERMISSION_SOCKET_PATH` | Unix Socket 路径 | `/tmp/claude-permission.sock` |
 | `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
 | `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
-| `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 0（立即发送） |
+| `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 60 |
 | `FEISHU_AT_ALL` | 飞书权限通知是否 @所有人 | `false` |
-| `FEISHU_TEMPLATE_PATH` | 自定义飞书卡片模板目录 | `templates/feishu` |
+| `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 2000 |
+| `FEISHU_TEMPLATE_PATH` | 自定义飞书卡片模板目录 | `src/templates/feishu` |
 
 **VSCode 自动跳转/激活配置**（以下两种模式二选一）
 
@@ -353,8 +359,8 @@ brew install python3 curl
 ## 文档
 
 - [Claude Code Hooks 事件调研](docs/CLAUDE_CODE_HOOKS.md) - 所有 hooks 事件类型、触发时机和配置方式
-- [Socket 通信协议](shared/protocol.md)
-- [飞书卡片模板说明](templates/feishu/README.md)
+- [Socket 通信协议](src/shared/protocol.md)
+- [飞书卡片模板说明](src/templates/feishu/README.md)
 - [测试文档](test/README.md) - 测试脚本使用说明
 - [测试指令集](test/PROMPTS.md) - 权限请求测试指令
 - [测试场景](test/SCENARIOS.md) - 详细测试场景文档
