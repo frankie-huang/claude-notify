@@ -291,8 +291,8 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
 | `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
 | `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 60 |
-| `FEISHU_AT_ALL` | 飞书权限通知是否 @所有人 | `false` |
-| `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 2000 |
+| `FEISHU_AT_USER` | 飞书权限通知 @ 用户（`all` / `ou_xxx` / user_id） | 空（不 @） |
+| `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 5000 |
 | `FEISHU_TEMPLATE_PATH` | 自定义飞书卡片模板目录 | `src/templates/feishu` |
 
 **VSCode 自动跳转/激活配置**（以下两种模式二选一）

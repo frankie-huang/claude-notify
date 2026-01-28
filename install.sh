@@ -353,14 +353,18 @@ CLOSE_PAGE_TIMEOUT=3
 # 设为 0 表示立即发送
 PERMISSION_NOTIFY_DELAY=60
 
-# 飞书权限通知是否 @所有人 (可选，默认 false)
-# 设为 true 时会在消息中 @所有人
-FEISHU_AT_ALL=false
+# 飞书权限通知 @ 用户配置 (可选，默认为空)
+# 支持以下格式:
+#   - 空: 不 @ 任何人（默认）
+#   - all: @ 所有人
+#   - ou_xxxx: @ 指定用户（open_id）
+#   - xxxxxxxx: @ 指定用户（user_id）
+FEISHU_AT_USER=
 
-# Stop 事件消息最大长度，字符数 (可选，默认 2000)
+# Stop 事件消息最大长度，字符数 (可选，默认 5000)
 # 主 Agent 完成时，发送飞书通知中显示的响应内容最大长度
 # 超过此长度会被截断并添加 "..."
-STOP_MESSAGE_MAX_LENGTH=2000
+STOP_MESSAGE_MAX_LENGTH=5000
 
 # =============================================================================
 # VSCode 自动跳转/激活配置 (可选，以下两种模式二选一)

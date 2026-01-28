@@ -15,6 +15,15 @@
 #   vscode_proxy_open "/path/to/project"
 #   vscode_proxy_activate "/path/to/project"
 #
+# 测试代理服务是否可用:
+#   source .env && curl --noproxy "*" -s http://localhost:${VSCODE_SSH_PROXY_PORT}/
+#   # 预期返回: {"status":"ok"}
+#
+# 服务端检测端口占用 (先 source .env 加载配置):
+#   - lsof -i :${VSCODE_SSH_PROXY_PORT}              # macOS/Linux，查看占用进程
+#   - ss -tuln | grep :${VSCODE_SSH_PROXY_PORT}      # Linux，检查监听状态
+#   - netstat -an | grep ${VSCODE_SSH_PROXY_PORT}    # 通用，检查端口状态
+#
 
 # =============================================================================
 # 内部配置

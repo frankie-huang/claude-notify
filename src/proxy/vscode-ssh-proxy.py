@@ -6,10 +6,22 @@ VSCode SSH 代理服务
 VPS 可以发送请求来唤起本地 VSCode 窗口打开远程项目。
 
 使用方法:
+    # 简单模式（使用默认端口 9527）
     python3 vscode-ssh-proxy.py --vps myserver
+
+    # 从 .env 加载端口配置
+    source .env && python3 vscode-ssh-proxy.py --vps myserver --port ${VSCODE_SSH_PROXY_PORT} --remote-port ${VSCODE_SSH_PROXY_PORT}
 
 生成的 URI 格式:
     vscode-remote://ssh-remote+myserver/path/to/project
+
+检测本地代理服务是否已启动:
+    source .env && curl -s http://127.0.0.1:${VSCODE_SSH_PROXY_PORT}/
+    # 预期返回: {"status":"ok", ...}
+
+检测端口占用 (先 source .env 加载配置):
+    - lsof -i :${VSCODE_SSH_PROXY_PORT}              # macOS/Linux，查看占用进程
+    - netstat -an | grep ${VSCODE_SSH_PROXY_PORT}    # 通用，检查端口状态
 """
 
 import argparse

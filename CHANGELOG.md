@@ -33,11 +33,10 @@ All notable changes to this project will be documented in this file.
 - `src/hooks/webhook.sh` 重构：移除内联飞书卡片，统一使用 `feishu.sh` 函数
 - `install.sh` 更新：同时配置 PermissionRequest 和 Stop 两个事件的 Hook
 
-#### 飞书 @所有人配置 (feishu-at-all-config)
+#### 飞书 @ 用户配置 (feishu-at-user-config)
 
-- 新增 `FEISHU_AT_ALL` 环境变量配置（默认 `false`）
-- 权限通知消息可通过配置决定是否 `@所有人`
-- 设为 `true` 时在消息开头添加 `<at id=all></at>`
+- 新增 `FEISHU_AT_USER` 环境变量配置（默认为空）
+- 支持 `all`（@ 所有人）、`ou_xxx`（open_id）、user_id
 
 #### 权限通知延迟发送 (permission-notify-delay)
 

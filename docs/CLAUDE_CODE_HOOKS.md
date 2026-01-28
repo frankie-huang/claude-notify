@@ -1074,8 +1074,9 @@ if hook_pid:
     try:
         os.kill(int(hook_pid), 0)  # 检测进程是否存在
     except OSError:
-        # hook 进程已死，用户已在终端响应
-        return send_html_response(200, '用户已在终端响应', ...)
+        # hook 进程已死，可能原因：用户在终端响应、Ctrl+C 中断、关闭终端等
+        # 决策无法送达，返回 410 错误
+        return send_html_response(410, '请求已失效', ...)
 ```
 
 **优势**：

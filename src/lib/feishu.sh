@@ -50,6 +50,9 @@ json_init >/dev/null 2>&1 || true
 # 默认模板目录
 DEFAULT_TEMPLATE_DIR="${TEMPLATES_DIR}/feishu"
 
+# HTTP 请求超时时间（秒）
+FEISHU_HTTP_TIMEOUT=10
+
 # =============================================================================
 # 模板验证函数
 # =============================================================================
@@ -467,10 +470,12 @@ build_permission_card() {
     fi
 
     # 渲染主模板
-    # 根据 FEISHU_AT_ALL 环境变量决定是否 @所有人
-    local at_all=""
-    if [ "$(get_config "FEISHU_AT_ALL" "false")" = "true" ]; then
-        at_all="<at id=all></at> "
+    # 根据 FEISHU_AT_USER 环境变量决定 @ 用户
+    local at_user=""
+    local at_user_config
+    at_user_config=$(get_config "FEISHU_AT_USER" "")
+    if [ -n "$at_user_config" ]; then
+        at_user="<at id=${at_user_config}></at> "
     fi
 
     local card
@@ -483,7 +488,7 @@ build_permission_card() {
             "session_slug=$session_slug" \
             "detail_elements=$detail_elements" \
             "buttons_json=$buttons_json" \
-            "at_all=$at_all")
+            "at_user=$at_user")
     else
         card=$(render_card_template "$card_type" \
             "template_color=$template_color" \
@@ -492,7 +497,7 @@ build_permission_card() {
             "timestamp=$timestamp" \
             "session_slug=$session_slug" \
             "detail_elements=$detail_elements" \
-            "at_all=$at_all")
+            "at_user=$at_user")
     fi
 
     if [ $? -ne 0 ]; then
@@ -662,7 +667,7 @@ send_feishu_card() {
     response=$(curl -X POST "$webhook_url" \
         -H "Content-Type: application/json" \
         -d "$card_json" \
-        --max-time 5 \
+        --max-time "$FEISHU_HTTP_TIMEOUT" \
         --silent \
         --show-error 2>&1)
 
@@ -745,7 +750,7 @@ EOF
     if curl -X POST "$webhook_url" \
         -H "Content-Type: application/json" \
         -d "$text_json" \
-        --max-time 3 \
+        --max-time "$FEISHU_HTTP_TIMEOUT" \
         --silent \
         --show-error >/dev/null 2>&1; then
         if type log &> /dev/null; then

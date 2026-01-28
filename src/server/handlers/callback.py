@@ -279,11 +279,16 @@ class CallbackHandler(BaseHTTPRequestHandler):
             try:
                 os.kill(int(hook_pid), 0)  # 检测进程是否存在
             except OSError:
-                # hook 进程已死，说明用户已在终端响应
-                # 此时 socket 连接已断开，不需要再发送任何数据，直接返回成功响应
+                # hook 进程已死，可能的原因：
+                # 1. 用户已在终端响应（y/n/a）
+                # 2. 用户按 Ctrl+C 中断了 Claude Code 会话
+                # 3. 用户关闭了终端窗口
+                # 4. Socket 客户端超时后脚本退出
+                # 5. Claude Code 主进程被杀死
+                # 此时 socket 连接已断开，决策无法送达，返回错误提示
                 session_id = req_data.get('session_id', 'unknown')
-                logger.info(f"[callback] Hook process {hook_pid} died (Session: {session_id}), user responded in terminal")
-                self.send_html_response(200, '用户已在终端响应', '权限请求已在终端处理，请返回终端查看结果。', success=True)
+                logger.info(f"[callback] Hook process {hook_pid} not alive (Session: {session_id}), cannot deliver decision")
+                self.send_html_response(410, '请求已失效', '无法传递决策：权限请求已超时或被取消。请返回终端查看当前状态。', success=False)
                 return
         else:
             # 没有 hook_pid 信息，可能是旧版本客户端
