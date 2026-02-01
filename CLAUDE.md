@@ -19,6 +19,40 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 ## 开发注意事项
 
+### Python 版本要求
+
+本项目 Python 代码需兼容 **Python 3.6+**，编写代码时注意：
+
+| 特性 | Python 3.6+ 兼容写法 | 不要使用 |
+|------|---------------------|----------|
+| 类型注解 | `from typing import Dict, List, Tuple`<br>`Dict[str, Any]`<br>`Tuple[bool, dict]` | 小写内置泛型 `dict[str, Any]` (3.9+) |
+| 空泛型 | `Optional[Dict[str, Any]]` | `Optional[Dict]` (需要完整参数) |
+| 联合类型 | `Optional[int]`<br>`Union[int, None]`<br>`Union[str, int]` | `int \| None` (3.10+) |
+| subprocess | `stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True` | `capture_output=True, text=True` (3.7+) |
+| 运算符 | 普通赋值 `x = foo()` | `:=` walrus (3.8+) |
+
+**常见错误示例：**
+
+```python
+# ❌ 错误 - Python 3.6 不支持
+def foo() -> Optional[Dict]:  # 空泛型
+    pass
+result = subprocess.run(cmd, capture_output=True, text=True)
+if (n := len(data)) > 0:  # walrus
+    pass
+x: int | None = None  # 联合类型语法
+
+# ✅ 正确 - Python 3.6 兼容
+from typing import Optional, Dict, Any, Union
+def foo() -> Optional[Dict[str, Any]]:
+    pass
+result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+n = len(data)
+if n > 0:
+    pass
+x: Optional[int] = None  # 或 Union[int, None]
+```
+
 ### 配置文件同步
 
 修改 `.env.example` 时，需要同步更新 `install.sh` 中的 `generate_env_template()` 函数，确保两处配置保持一致。

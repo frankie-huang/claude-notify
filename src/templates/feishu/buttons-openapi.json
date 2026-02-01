@@ -1,0 +1,116 @@
+[
+  {
+    "tag": "column",
+    "width": "auto",
+    "elements": [
+      {
+        "tag": "button",
+        "text": {
+          "tag": "plain_text",
+          "content": "批准运行"
+        },
+        "type": "primary_filled",
+        "width": "fill",
+        "behaviors": [
+          {
+            "type": "callback",
+            "value": {
+              "action": "allow",
+              "request_id": "{{request_id}}",
+              "callback_url": "{{callback_url}}"
+            }
+          }
+        ],
+        "margin": "4px 0px 4px 0px"
+      }
+    ],
+    "vertical_spacing": "8px",
+    "horizontal_align": "left",
+    "vertical_align": "top"
+  },
+  {
+    "tag": "column",
+    "width": "auto",
+    "elements": [
+      {
+        "tag": "button",
+        "text": {
+          "tag": "plain_text",
+          "content": "始终允许"
+        },
+        "type": "primary",
+        "width": "fill",
+        "behaviors": [
+          {
+            "type": "callback",
+            "value": {
+              "action": "always",
+              "request_id": "{{request_id}}",
+              "callback_url": "{{callback_url}}"
+            }
+          }
+        ],
+        "margin": "4px 0px 4px 0px"
+      }
+    ],
+    "vertical_spacing": "8px",
+    "horizontal_align": "left",
+    "vertical_align": "top"
+  },
+  {
+    "tag": "column",
+    "width": "auto",
+    "elements": [
+      {
+        "tag": "button",
+        "text": {
+          "tag": "plain_text",
+          "content": "拒绝运行"
+        },
+        "type": "danger",
+        "width": "fill",
+        "size": "medium",
+        "behaviors": [
+          {
+            "type": "callback",
+            "value": {
+              "action": "deny",
+              "request_id": "{{request_id}}",
+              "callback_url": "{{callback_url}}"
+            }
+          }
+        ],
+        "margin": "4px 0px 4px 0px"
+      }
+    ],
+    "vertical_align": "top"
+  },
+  {
+    "tag": "column",
+    "width": "auto",
+    "elements": [
+      {
+        "tag": "button",
+        "text": {
+          "tag": "plain_text",
+          "content": "拒绝并中断"
+        },
+        "type": "danger_filled",
+        "width": "fill",
+        "size": "medium",
+        "behaviors": [
+          {
+            "type": "callback",
+            "value": {
+              "action": "interrupt",
+              "request_id": "{{request_id}}",
+              "callback_url": "{{callback_url}}"
+            }
+          }
+        ],
+        "margin": "4px 0px 4px 0px"
+      }
+    ],
+    "vertical_align": "top"
+  }
+]

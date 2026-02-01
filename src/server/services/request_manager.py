@@ -28,6 +28,12 @@ class RequestManager:
     STATUS_RESOLVED = 'resolved'        # 已处理（用户已决策）
     STATUS_DISCONNECTED = 'disconnected' # 连接已断开
 
+    # 错误码常量
+    ERR_NOT_FOUND = 'not_found'         # 请求不存在
+    ERR_ALREADY_RESOLVED = 'already_resolved'  # 请求已被处理
+    ERR_DISCONNECTED = 'disconnected'   # 连接已断开
+    ERR_UNKNOWN = 'unknown'             # 未知错误
+
     def __init__(self):
         self._requests = {}  # request_id -> {conn, data, timestamp, status, resolved_decision}
         self._lock = threading.Lock()
@@ -58,15 +64,16 @@ class RequestManager:
         except Exception:
             pass
 
-    def resolve(self, request_id: str, decision: dict) -> Tuple[bool, str]:
-        """处理用户决策，返回 (是否成功, 错误信息)
+    def resolve(self, request_id: str, decision: dict) -> Tuple[bool, str, str]:
+        """处理用户决策，返回 (是否成功, 错误码, 错误信息)
 
         Args:
             request_id: 请求 ID
             decision: 决策内容（behavior, message, interrupt）
 
         Returns:
-            (成功标志, 错误信息)
+            (成功标志, 错误码, 错误信息)
+            错误码: '' / ERR_NOT_FOUND / ERR_ALREADY_RESOLVED / ERR_DISCONNECTED
 
         处理流程：
             1. 检查请求是否存在且状态有效
@@ -78,7 +85,7 @@ class RequestManager:
         with self._lock:
             if request_id not in self._requests:
                 logger.warning(f"[resolve] Request {request_id} not found")
-                return False, "请求不存在或已被清理"
+                return False, self.ERR_NOT_FOUND, "请求不存在或已被清理"
 
             req = self._requests[request_id]
             age = time.time() - req['timestamp']
@@ -89,11 +96,11 @@ class RequestManager:
             if req['status'] == self.STATUS_RESOLVED:
                 resolved_type = req.get('resolved_decision', '处理')
                 logger.info(f"[resolve] Already resolved: {resolved_type}")
-                return False, f"请求已被{resolved_type}，请勿重复操作"
+                return False, self.ERR_ALREADY_RESOLVED, f"请求已被{resolved_type}，请勿重复操作"
 
             if req['status'] == self.STATUS_DISCONNECTED:
                 logger.info(f"[resolve] Already disconnected")
-                return False, "连接已断开，Claude 可能已继续执行其他操作"
+                return False, self.ERR_DISCONNECTED, "连接已断开，Claude 可能已继续执行其他操作"
 
             # 发送决策给等待的进程
             try:
@@ -128,26 +135,38 @@ class RequestManager:
                 req['resolved_decision'] = '批准' if behavior == Decision.ALLOW else '拒绝'
                 session_id = req['data'].get('session_id', 'unknown')
                 logger.info(f"[resolve] Request {request_id} (Session: {session_id}) resolved: {behavior}")
-                return True, ""
+                return True, '', ''
 
             except (BrokenPipeError, ConnectionResetError, OSError) as e:
                 error_type = type(e).__name__
                 logger.error(f"[resolve] {error_type} for {request_id}: {e}")
                 req['status'] = self.STATUS_DISCONNECTED
                 self._close_connection(req['conn'])
-                return False, f"连接已断开（{error_type}），Claude 可能已超时或取消"
+                return False, self.ERR_DISCONNECTED, f"连接已断开（{error_type}），Claude 可能已超时或取消"
 
             except Exception as e:
                 logger.error(f"[resolve] Unexpected error: {type(e).__name__}: {e}")
                 import traceback
                 logger.error(f"[resolve] Traceback:\n{traceback.format_exc()}")
-                return False, f"发送决策失败: {str(e)}"
+                return False, self.ERR_UNKNOWN, f"发送决策失败: {str(e)}"
 
     def get_request_data(self, request_id: str) -> Optional[dict]:
         """获取请求数据（用于始终允许时写入规则）"""
         with self._lock:
             if request_id in self._requests:
                 return self._requests[request_id]['data']
+            return None
+
+    def get_request_status(self, request_id: str) -> Optional[str]:
+        """获取请求状态
+
+        Returns:
+            请求状态 (STATUS_PENDING/STATUS_RESOLVED/STATUS_DISCONNECTED)，
+            如果请求不存在返回 None
+        """
+        with self._lock:
+            if request_id in self._requests:
+                return self._requests[request_id]['status']
             return None
 
     def _send_fallback_response(self, request_id: str, req: dict, conn, age: float):

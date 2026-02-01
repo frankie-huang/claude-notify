@@ -48,11 +48,11 @@
 **用途**: Stop 事件完成通知卡片
 
 **变量**:
-- `{{title}}` - 卡片标题（默认："✅ Claude Code 完成"）
+- `{{at_user}}` - @ 用户标签（由 `FEISHU_AT_USER` 配置控制，默认为空）
 - `{{response_content}}` - Claude 最终响应内容（Markdown 格式）
 - `{{project_name}}` - 项目名称
 - `{{timestamp}}` - 时间戳
-- `{{session_slug}}` - 会话标识（如 "purring-floating-canyon"）
+- `{{session_id}}` - 会话标识（session_id）
 
 **使用场景**: 主 Agent 完成响应时的任务完成通知
 
@@ -112,13 +112,27 @@
 ```
 
 #### buttons.json
-**用途**: 权限请求卡片的交互按钮
+**用途**: 权限请求卡片的交互按钮（Webhook 模式）
 
 **变量**:
 - `{{callback_url}}` - 回调服务器 URL
 - `{{request_id}}` - 请求 ID
 
-**使用场景**: 与 `permission-card.json` 配合使用
+**按钮类型**: `open_url`（点击后跳转浏览器）
+
+**使用场景**: `FEISHU_SEND_MODE=webhook` 时与 `permission-card.json` 配合使用
+
+#### buttons-openapi.json
+**用途**: 权限请求卡片的交互按钮（OpenAPI 模式）
+
+**变量**:
+- `{{request_id}}` - 请求 ID
+
+**按钮类型**: `callback`（点击后飞书内直接响应，显示 toast 提示）
+
+**使用场景**: `FEISHU_SEND_MODE=openapi` 时与 `permission-card.json` 配合使用
+
+**注意**: 使用此模板需在飞书开放平台订阅 `card.action.trigger` 事件
 
 ## 子模板使用方法
 
@@ -177,7 +191,8 @@ export FEISHU_TEMPLATE_PATH=/path/to/custom/templates
 ├── permission-card-static.json    # 主模板:权限请求卡片(无按钮)
 ├── notification-card.json         # 主模板:通用通知卡片
 ├── stop-card.json                 # 主模板:Stop 事件完成通知卡片
-├── buttons.json                   # 子模板:交互按钮
+├── buttons.json                   # 子模板:交互按钮（Webhook 模式，open_url）
+├── buttons-openapi.json           # 子模板:交互按钮（OpenAPI 模式，callback）
 ├── command-detail-bash.json       # 子模板:Bash命令详情
 ├── command-detail-file.json       # 子模板:文件操作详情
 └── description-element.json       # 子模板:描述元素
@@ -197,6 +212,15 @@ export FEISHU_TEMPLATE_PATH=/path/to/custom/templates
 ### JSON 数组注入
 
 对于 `buttons.json` 等返回 JSON 数组的模板,变量替换后仍为有效的 JSON。
+
+### 按钮模板选择
+
+`build_permission_buttons()` 函数根据 `FEISHU_SEND_MODE` 自动选择按钮模板：
+
+| `FEISHU_SEND_MODE` | 使用的模板 | 按钮类型 | 用户体验 |
+|-------------------|-----------|---------|---------|
+| `webhook` | `buttons.json` | `open_url` | 点击跳转浏览器显示结果 |
+| `openapi` | `buttons-openapi.json` | `callback` | 点击飞书内直接显示 toast |
 
 示例:
 ```bash

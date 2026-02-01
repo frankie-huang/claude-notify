@@ -18,7 +18,7 @@
       "template": "{{template_color}}",
       "title": {
         "tag": "plain_text",
-        "content": "Claude Code 权限请求"
+        "content": "🙋 Claude Code 权限请求"
       },
       "padding": "12px 8px 12px 8px"
     },
@@ -59,7 +59,7 @@
               "elements": [
                 {
                   "tag": "markdown",
-                  "content": "**会话：**\n`{{session_slug}}`",
+                  "content": "**会话：**\n`{{session_id}}`",
                   "text_align": "left",
                   "text_size": "normal_v2"
                 }

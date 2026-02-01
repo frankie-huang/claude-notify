@@ -38,8 +38,8 @@ claude-notify/
 │   │   ├── config.py           # 配置管理
 │   │   ├── socket-client.py    # Socket 客户端
 │   │   ├── models/             # 数据模型
-│   │   ├── services/           # 业务服务
-│   │   └── handlers/           # HTTP 处理器
+│   │   ├── services/           # 业务服务（session_store 等）
+│   │   └── handlers/           # HTTP 处理器（callback、feishu、claude）
 │   ├── config/                 # 配置文件
 │   │   └── tools.json          # 工具类型配置
 │   ├── templates/              # 飞书卡片模板
@@ -52,6 +52,7 @@ claude-notify/
 ├── openspec/                   # OpenSpec 规范管理
 ├── docs/                       # 文档
 ├── test/                       # 测试脚本
+├── runtime/                    # 运行时数据（session 映射等）
 └── log/                        # 日志目录
 ```
 
@@ -77,9 +78,11 @@ cp .env.example .env
 vim .env
 ```
 
-必需配置：
+Webhook 模式最小配置（默认）：
 - `FEISHU_WEBHOOK_URL` - 飞书 Webhook URL
 - `CALLBACK_SERVER_URL` - 回调服务外部访问地址
+
+> 更多模式（OpenAPI、分离部署）请参考下方[环境变量](#环境变量)章节
 
 ### 3. 启动回调服务
 
@@ -95,12 +98,12 @@ vim .env
 
 ## 架构设计
 
-### 交互模式工作流程
+### 单机部署（Webhook / OpenAPI 模式）
 
 ```
 ┌─────────────────┐         ┌──────────────────┐         ┌─────────────────┐
-│  Claude Code    │────────▶│ src/hook-router  │────────▶│   飞书 Webhook   │
-│                 │  Hook   │  → permission.sh │  Card   │                 │
+│  Claude Code    │────────▶│ src/hook-router  │────────▶│  飞书 Webhook/   │
+│                 │  Hook   │  → permission.sh │  Card   │     OpenAPI     │
 └─────────────────┘         └────────┬─────────┘         └─────────────────┘
                                      │
                                      │ Unix Socket
@@ -127,6 +130,36 @@ vim .env
                                                          └─────────────────┘
 ```
 
+### 分离部署（OpenAPI 模式，多实例）
+
+OpenAPI 模式下配置 `FEISHU_GATEWAY_URL` 启用分离部署，支持多个 Claude Code 实例共享一个飞书应用：
+
+```
+                                                    ┌─────────────────────┐
+                                                    │   Feishu Gateway    │
+                                                    │  (飞书应用凭证)      │
+                                                    └──────────┬──────────┘
+                                                               │
+                              ┌─────────────────┬──────────────┼──────────────┐
+                              │                 │              │              │
+                              ▼                 ▼              ▼              │
+┌──────────────┐      ┌─────────────┐   ┌─────────────┐   ┌─────────────┐    │
+│ Claude Code  │─────▶│ Callback A  │   │ Callback B  │   │ Callback C  │    │
+│   实例 A     │      │ :8081       │   │ :8082       │   │ :8083       │    │
+└──────────────┘      └─────────────┘   └─────────────┘   └─────────────┘    │
+                              │                 │              │              │
+                              └─────────────────┴──────────────┴──────────────┘
+                                        按钮 value 携带 callback_url
+                                        网关自动路由到对应服务
+```
+
+**工作流程：**
+1. Claude Code 触发权限请求
+2. `permission.sh` 通过 `FEISHU_GATEWAY_URL` 发送卡片，按钮 value 中携带 `callback_url`
+3. 用户点击按钮，飞书事件发送到网关
+4. 网关从按钮 value 解析 `callback_url`，转发决策到对应的 Callback 服务
+5. Callback 服务处理决策，返回 toast 响应
+
 ### 关键设计点
 
 1. **统一 Hook 路由**: `src/hook-router.sh` 统一处理所有 Hook 事件，根据事件类型分发到对应脚本
@@ -136,12 +169,14 @@ vim .env
 5. **长度前缀协议**: 使用 4 字节长度前缀确保数据完整性（详见 `src/shared/protocol.md`）
 6. **连接状态驱动**: 请求有效性由 Socket 连接状态决定，支持死连接检测和超时处理
 7. **优雅降级**: 回调服务不可用时自动降级为仅通知模式
+8. **消息回复关联**: OpenAPI 模式下通过 `message_id` → `session` 映射实现回复继续会话（详见 `docs/feishu-reply-continue-session.md`）
 
 ## 功能特性
 
 - **可交互权限控制**: 用户可直接在飞书消息中点击按钮批准/拒绝权限请求
 - **四种操作模式**: 批准运行、始终允许、拒绝运行、拒绝并中断
 - **权限持久化**: 支持"始终允许"选项，自动写入项目权限规则
+- **飞书回复继续会话**: 用户可回复飞书消息在对应的 Claude session 中继续提问（仅 OpenAPI 模式）
 - **优雅降级**: 回调服务不可用时自动降级为仅通知模式
 - **模板化卡片**: 飞书卡片 2.0 格式，支持模块化模板和自定义扩展
 - **统一配置**: Shell 和 Python 共用 `config/tools.json` 工具配置
@@ -159,6 +194,7 @@ vim .env
 - ✅ **决策页面自动关闭**: 支持定时自动关闭决策页面（通过 `CLOSE_PAGE_TIMEOUT` 配置）
 - ✅ **VSCode 自动跳转**: 点击飞书按钮后从浏览器页面自动跳转到 VSCode（通过 `VSCODE_URI_PREFIX` 配置）
 - ✅ **任务完成通知**: Claude 处理完成后自动发送飞书通知，包含响应摘要和会话标识（通过 `src/hooks/stop.sh` 实现）
+- ✅ **飞书回复继续会话**: 用户可回复飞书消息在对应的 Claude session 中继续提问（仅 OpenAPI 模式，通过 `src/server/handlers/claude.py` 实现）
 
 ## 脚本说明
 
@@ -170,6 +206,8 @@ vim .env
 | `src/hooks/stop.sh` | 任务完成通知（含响应摘要） | Stop |
 | `src/server/main.py` | 权限回调服务（HTTP + Socket） | - |
 | `src/server/socket-client.py` | Socket 客户端（替代 socat） | - |
+| `src/server/handlers/claude.py` | Claude 会话继续处理器 | - |
+| `src/server/services/session_store.py` | Session 映射存储服务 | - |
 
 ## Shell 函数库说明
 
@@ -178,7 +216,7 @@ vim .env
 | `src/lib/core.sh` | 核心库：路径管理、环境配置、日志记录（合并了原 project.sh、env.sh、log.sh） |
 | `src/lib/json.sh` | JSON 解析函数（支持 jq/python3/grep+sed 多级降级） |
 | `src/lib/tool.sh` | 工具详情格式化 |
-| `src/lib/feishu.sh` | 飞书卡片构建和发送 |
+| `src/lib/feishu.sh` | 飞书卡片构建和发送（支持 session_id/project_dir/callback_url 参数用于继续会话） |
 | `src/lib/socket.sh` | Socket 通信函数 |
 | `src/lib/vscode-proxy.sh` | VSCode 本地代理客户端，通过反向 SSH 隧道唤起本地 VSCode |
 
@@ -280,20 +318,96 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 
 脚本会自动从项目根目录的 `.env` 文件读取配置，无需手动 `source`。如果 `.env` 中未配置某项，则从系统环境变量读取；如果仍未配置，则使用默认值。
 
-**基础配置**
+#### 发送模式
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `FEISHU_WEBHOOK_URL` | 飞书 Webhook URL | 必需 |
+| `FEISHU_SEND_MODE` | 发送模式：`webhook` / `openapi` | `webhook` |
+
+**模式对比**：
+
+| 特性 | Webhook 模式 | OpenAPI 模式 |
+|------|-------------|-------------|
+| 配置复杂度 | 简单 | 需要飞书应用 |
+| 按钮交互 | 跳转浏览器 | 飞书内 toast 响应 |
+| 多实例支持 | 不支持 | 支持（分离部署） |
+| 回复继续会话 | 不支持 | 支持 |
+
+#### Webhook 模式配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `FEISHU_WEBHOOK_URL` | 飞书 Webhook URL | - |
+
+#### OpenAPI 模式配置
+
+> **重要**：需要在飞书开放平台配置事件订阅「卡片回传交互」(`card.action.trigger`)
+
+OpenAPI 模式支持两种部署方式：
+
+**单机部署**：所有配置在同一台机器
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `FEISHU_APP_ID` | 飞书应用 App ID | **必需** |
+| `FEISHU_APP_SECRET` | 飞书应用 App Secret | **必需** |
+| `FEISHU_RECEIVE_ID` | 消息接收者 ID（支持 `ou_`/`oc_`/`on_`/邮箱/user_id） | **必需** |
+| `FEISHU_RECEIVE_ID_TYPE` | 接收者类型（可选，留空自动检测） | 自动检测 |
+
+**分离部署**：飞书网关与 Callback 服务分离（多实例场景）
+
+配置 `FEISHU_GATEWAY_URL` 后启用分离部署：
+
+- 网关服务配置：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`
+- Callback 服务配置：`FEISHU_GATEWAY_URL`、`FEISHU_RECEIVE_ID`
+- 每个 Callback 服务可以发给不同用户
+
+| 变量 | 网关服务 | Callback 服务 |
+|------|:-------:|:------------:|
+| `FEISHU_GATEWAY_URL` | - | ✓ |
+| `FEISHU_APP_ID` | ✓ | - |
+| `FEISHU_APP_SECRET` | ✓ | - |
+| `FEISHU_RECEIVE_ID` | - | ✓ |
+
+**分离部署配置示例**：
+
+```bash
+# === 飞书网关服务 ===
+FEISHU_SEND_MODE=openapi
+FEISHU_APP_ID=cli_xxxxxxxxx
+FEISHU_APP_SECRET=xxxxxxxxxxxx
+CALLBACK_SERVER_PORT=8080
+
+# === Callback 服务（每个实例独立配置）===
+FEISHU_SEND_MODE=openapi
+FEISHU_GATEWAY_URL=http://gateway-server:8080
+CALLBACK_SERVER_URL=http://callback-server-a:8081
+CALLBACK_SERVER_PORT=8081
+FEISHU_RECEIVE_ID=ou_user_a
+```
+
+#### 通用飞书配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `FEISHU_AT_USER` | 通知 @ 用户（空 / `all` / `ou_xxx` / user_id） | 空（不 @） |
+| `FEISHU_TEMPLATE_PATH` | 自定义卡片模板目录 | `src/templates/feishu` |
+
+> `FEISHU_AT_USER` 适用于所有飞书通知（权限请求、任务完成等），与发送模式无关
+
+#### 回调服务器配置
+
+> 分离部署时，仅 Callback 服务需要配置此部分，网关服务不需要
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
 | `CALLBACK_SERVER_URL` | 回调服务外部访问地址 | `http://localhost:8080` |
 | `CALLBACK_SERVER_PORT` | HTTP 服务端口 | 8080 |
 | `PERMISSION_SOCKET_PATH` | Unix Socket 路径 | `/tmp/claude-permission.sock` |
 | `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
 | `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
 | `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 60 |
-| `FEISHU_AT_USER` | 飞书权限通知 @ 用户（`all` / `ou_xxx` / user_id） | 空（不 @） |
 | `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 5000 |
-| `FEISHU_TEMPLATE_PATH` | 自定义飞书卡片模板目录 | `src/templates/feishu` |
 
 **VSCode 自动跳转/激活配置**（以下两种模式二选一）
 
@@ -359,6 +473,7 @@ brew install python3 curl
 ## 文档
 
 - [Claude Code Hooks 事件调研](docs/CLAUDE_CODE_HOOKS.md) - 所有 hooks 事件类型、触发时机和配置方式
+- [飞书消息回复继续会话方案](docs/feishu-reply-continue-session.md) - 飞书回复继续 Claude 会话的设计与实现
 - [Socket 通信协议](src/shared/protocol.md)
 - [飞书卡片模板说明](src/templates/feishu/README.md)
 - [测试文档](test/README.md) - 测试脚本使用说明

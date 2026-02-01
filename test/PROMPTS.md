@@ -168,7 +168,7 @@ cp ~/.claude/settings.json.bak ~/.claude/settings.json
 代码块符号: ```
 反引号: `backtick`
 引号嵌套: "包含'单'和\"双\""
-Shell元字符: $ENV `cmd` |pipe& ;cmd <redir>
+Shell元字符: $ENV `cmd` |pipe& ;cmd && and <redir>
 通配符: a{1,2} *glob [range] ?wild
 反斜杠: 单\\ 双\\\\ 三\\\\\\ 四\\\\\\\\path
 代码块(前有空格):

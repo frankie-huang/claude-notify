@@ -74,7 +74,7 @@ if [ $? -ne 0 ]; then
 fi
 
 log "Sending webhook notification to Feishu"
-send_feishu_card "$CARD" "$WEBHOOK_URL"
+send_feishu_card "$CARD" "{\"webhook_url\":\"$WEBHOOK_URL\"}"
 
 log "Webhook notification sent"
 

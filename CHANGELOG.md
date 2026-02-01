@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added - 2026-01-31
+
+#### 飞书卡片回传交互 (card-callback-handler)
+
+- 新增飞书卡片按钮回传交互支持，用户点击按钮后飞书内直接显示 toast 提示
+- 新增 `buttons-openapi.json` 模板，使用 `callback` 类型按钮
+- `build_permission_buttons()` 根据 `FEISHU_SEND_MODE` 自动选择按钮类型
+  - `webhook` 模式：使用 `open_url` 类型按钮（点击跳转浏览器）
+  - `openapi` 模式：使用 `callback` 类型按钮（飞书内直接响应）
+- 新增 `src/server/services/decision_handler.py` 统一决策处理逻辑
+- `RequestManager.resolve()` 返回值增加错误码，避免字符串匹配判断
+- 新增飞书事件 `card.action.trigger` 处理支持
+- 配置文档补充飞书事件订阅配置步骤
+
 ### Added - 2026-01-27
 
 #### 权限请求卡片会话信息 (permission-card-session-info)
@@ -26,7 +40,7 @@ All notable changes to this project will be documented in this file.
 
 - 新增 `src/hooks/stop.sh` 独立 Stop 事件处理器
 - 从 transcript 文件中提取 Claude 最终响应内容
-- 支持显示会话标识（session slug）
+- 支持显示会话标识（session_id 前8位）
 - 新增 `STOP_MESSAGE_MAX_LENGTH` 配置（默认 2000 字符）
 - 新增 `stop-card.json` 飞书卡片模板
 - 任务完成后自动发送飞书通知，包含 Claude 响应摘要

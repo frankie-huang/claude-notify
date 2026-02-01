@@ -18,13 +18,24 @@
       "template": "green",
       "title": {
         "tag": "plain_text",
-        "content": "{{title}}"
+        "content": "✅ Claude Code 处理完成"
       },
       "padding": "12px 8px 12px 8px"
     },
     "body": {
       "direction": "vertical",
       "elements": [
+        {
+          "tag": "markdown",
+          "content": "**{{at_user}}Claude Code 已完成处理，请引用该消息继续话题**",
+          "text_align": "left",
+          "text_size": "normal_v2",
+          "margin": "0px 0px 0px 0px"
+        },
+        {
+          "tag": "hr",
+          "margin": "0px 0px 0px 0px"
+        },
         {
           "tag": "column_set",
           "columns": [
@@ -48,7 +59,7 @@
               "elements": [
                 {
                   "tag": "markdown",
-                  "content": "**会话：**\n`{{session_slug}}`",
+                  "content": "**会话：**\n`{{session_id}}`",
                   "text_align": "left",
                   "text_size": "normal_v2"
                 }
@@ -78,7 +89,7 @@
         },
         {
           "tag": "markdown",
-          "content": "**响应内容：**",
+          "content": "**答复：**",
           "text_align": "left",
           "text_size": "normal_v2"
         },

@@ -16,21 +16,25 @@ Claude Code Permission Callback Server
 """
 
 import base64
+import http.server
 import json
 import os
 import socket
+import socketserver
 import threading
 import time
 import logging
-from http.server import HTTPServer
 
 from config import (
     REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT,
     get_config, get_config_int,
-    DEFAULT_SOCKET_PATH, DEFAULT_HTTP_PORT
+    DEFAULT_SOCKET_PATH, DEFAULT_HTTP_PORT,
+    FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_SEND_MODE
 )
 from models.decision import Decision
 from services.request_manager import RequestManager
+from services.feishu_api import FeishuAPIService
+from services.session_store import SessionStore
 from handlers.callback import CallbackHandler
 
 # =============================================================================
@@ -68,6 +72,11 @@ logger.info(f"Logging to: {log_file}")
 
 request_manager = RequestManager()
 CallbackHandler.request_manager = request_manager
+
+# Session 过期清理计数器：每 720 次断开连接清理后执行一次 session 过期清理
+# 5 秒 * 720 = 3600 秒 = 1 小时
+_SESSION_EXPIRATION_CLEANUP_COUNTER = 0
+_SESSION_EXPIRATION_CLEANUP_INTERVAL = 720  # 每 720 次循环清理一次
 
 
 # =============================================================================
@@ -209,11 +218,42 @@ def run_cleanup_thread():
     """运行断开连接清理线程
 
     功能：
-        定期清理断开连接和超时的请求
+        定期清理断开连接和超时的请求（每 5 秒）
+        定期清理过期的 session 映射（每 1 小时）
     """
+    global _SESSION_EXPIRATION_CLEANUP_COUNTER
+
     while True:
         time.sleep(CLEANUP_INTERVAL)
         request_manager.cleanup_disconnected()
+
+        # 每 _SESSION_EXPIRATION_CLEANUP_INTERVAL 次循环清理一次 session 过期数据
+        _SESSION_EXPIRATION_CLEANUP_COUNTER += 1
+        if _SESSION_EXPIRATION_CLEANUP_COUNTER >= _SESSION_EXPIRATION_CLEANUP_INTERVAL:
+            _SESSION_EXPIRATION_CLEANUP_COUNTER = 0
+            _cleanup_expired_sessions()
+
+
+def _cleanup_expired_sessions():
+    """清理过期的 session 映射"""
+    from services.session_store import SessionStore
+    store = SessionStore.get_instance()
+    if store:
+        expired_count = store.cleanup_expired()
+        if expired_count > 0:
+            logger.info(f"[cleanup] Cleaned {expired_count} expired session mappings")
+
+# =============================================================================
+# 多线程 HTTP 服务器
+# =============================================================================
+
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    """支持多线程的 HTTP Server
+
+    允许多个请求并发处理，避免飞书回调转发到 /callback/decision 时死锁。
+    """
+    allow_reuse_address = True
+    daemon_threads = True
 
 
 # =============================================================================
@@ -227,6 +267,7 @@ def main():
         1. Unix Socket 服务器 - 接收 permission-notify.sh 的连接
         2. 清理线程 - 定期清理断开连接
         3. HTTP 服务器 - 接收飞书按钮的回调请求
+        4. SessionStore - 维护 message_id 到 session 的映射
     """
     logger.info("Starting Claude Code Permission Callback Server")
     logger.info(f"HTTP Port: {HTTP_PORT}")
@@ -238,7 +279,22 @@ def main():
         logger.info(f"Request Timeout: {REQUEST_TIMEOUT}s (default: {DEFAULT_REQUEST_TIMEOUT}s)")
 
     if not FEISHU_WEBHOOK_URL:
-        logger.warning("FEISHU_WEBHOOK_URL not set - notifications will be skipped")
+        logger.warning("FEISHU_WEBHOOK_URL not set - webhook notifications will be skipped")
+
+    # 初始化 SessionStore（用于继续会话功能）
+    runtime_dir = os.path.join(project_root, 'runtime')
+    SessionStore.initialize(runtime_dir)
+    logger.info(f"SessionStore initialized with runtime_dir={runtime_dir}")
+
+    # 初始化飞书 OpenAPI 服务
+    if FEISHU_SEND_MODE == 'openapi':
+        if FEISHU_APP_ID and FEISHU_APP_SECRET:
+            FeishuAPIService.initialize()
+            logger.info(f"Feishu OpenAPI service initialized (mode: {FEISHU_SEND_MODE})")
+        else:
+            logger.warning("FEISHU_SEND_MODE requires FEISHU_APP_ID and FEISHU_APP_SECRET")
+    else:
+        logger.info(f"Feishu send mode: {FEISHU_SEND_MODE}")
 
     # 启动 Socket 服务器线程
     socket_thread = threading.Thread(target=run_socket_server)
@@ -250,9 +306,10 @@ def main():
     cleanup_thread.daemon = True
     cleanup_thread.start()
 
-    # 启动 HTTP 服务器
-    server = HTTPServer(('0.0.0.0', HTTP_PORT), CallbackHandler)
-    logger.info(f"HTTP server listening on port {HTTP_PORT}")
+    # 启动 HTTP 服务器（使用 ThreadedHTTPServer 支持并发请求）
+    # 这样飞书回调请求和转发到 /callback/decision 的请求可以并发处理
+    server = ThreadedHTTPServer(('0.0.0.0', HTTP_PORT), CallbackHandler)
+    logger.info(f"HTTP server listening on port {HTTP_PORT} (threading enabled)")
 
     try:
         server.serve_forever()

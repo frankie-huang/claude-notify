@@ -167,3 +167,21 @@ CLOSE_PAGE_TIMEOUT = get_close_page_timeout()
 # VSCode URI 前缀（可选，用于从浏览器页面跳转到 VSCode）
 # 示例: vscode://vscode-remote/ssh-remote+myserver 或 vscode://file
 VSCODE_URI_PREFIX = get_config('VSCODE_URI_PREFIX', '')
+
+# =============================================================================
+# 飞书 OpenAPI 配置
+# =============================================================================
+
+# 飞书应用凭证
+FEISHU_APP_ID = get_config('FEISHU_APP_ID', '')
+FEISHU_APP_SECRET = get_config('FEISHU_APP_SECRET', '')
+
+# 消息接收者 ID (支持 ou_xxx / oc_xxx / user_id)
+FEISHU_RECEIVE_ID = get_config('FEISHU_RECEIVE_ID', '')
+
+# 接收者 ID 类型 (可选，留空自动检测)
+# 可选值: open_id, user_id, union_id, email, chat_id
+FEISHU_RECEIVE_ID_TYPE = get_config('FEISHU_RECEIVE_ID_TYPE', '')
+
+# 发送模式: webhook / openapi
+FEISHU_SEND_MODE = get_config('FEISHU_SEND_MODE', 'webhook')
