@@ -94,7 +94,7 @@ class SessionStore:
                 }
                 result = self._save(data)
                 if result:
-                    logger.info(f"[session-store] Saved mapping: {message_id}... -> {session_id}...")
+                    logger.info(f"[session-store] Saved mapping: {message_id} -> {session_id}")
                 return result
             except Exception as e:
                 logger.error(f"[session-store] Failed to save mapping: {e}")
@@ -118,7 +118,7 @@ class SessionStore:
 
                 # 检查过期
                 if time.time() - item.get('created_at', 0) > self.EXPIRE_SECONDS:
-                    logger.info(f"[session-store] Mapping expired: {message_id}...")
+                    logger.info(f"[session-store] Mapping expired: {message_id}")
                     del data[message_id]
                     self._save(data)
                     return None

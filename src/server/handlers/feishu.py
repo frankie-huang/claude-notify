@@ -147,10 +147,25 @@ def _handle_message_event(data: dict):
     sender_id = sender.get('sender_id', {}).get('open_id', '')
     parent_id = message.get('parent_id', '')  # 是否是回复消息
 
-    # 解析消息内容
+    # 解析消息纯文本内容
     try:
         content_obj = json.loads(content)
         text = content_obj.get('text', '')
+        # post 类型：从 content 二维数组中提取文本，段落间用 \n 分隔
+        if not text and message_type == 'post':
+            content_list = content_obj.get('content', [])
+            paragraphs = []
+            for paragraph in content_list if isinstance(content_list, list) else []:
+                if isinstance(paragraph, list):
+                    para_text = ''
+                    for elem in paragraph:
+                        if isinstance(elem, dict) and elem.get('tag') == 'text':
+                            elem_text = elem.get('text', '')
+                            if elem_text:
+                                para_text += elem_text
+                    if para_text:
+                        paragraphs.append(para_text)
+            text = '\n'.join(paragraphs)
     except json.JSONDecodeError:
         text = content
 
@@ -165,13 +180,16 @@ def _handle_message_event(data: dict):
         'message_type': message_type,
         'sender_id': sender_id,
         'content': _sanitize_user_content(content),
-        'text': _sanitize_user_content(text)
+        'text': _sanitize_user_content(text),
+        'raw_data': data  # 记录完整的原始数据
     }, ensure_ascii=False))
 
     logger.info(f"[feishu] Message received: chat_type={chat_type}, message_type={message_type}, parent_id={parent_id if parent_id else ''}, text={_sanitize_user_content(text)}")
 
     # 清理消息中的 @_user_1 提及（带或不带尾随空格）
     text = _AT_USER_PATTERN.sub('', text)
+    # 将清理后的纯文本写入 message['plain_text']，供下游直接使用
+    message['plain_text'] = text
 
     # 检查是否是回复消息（用于继续会话）
     if parent_id:
@@ -203,14 +221,8 @@ def _handle_reply_message(data: dict, parent_id: str):
 
     message_id = message.get('message_id', '')
     chat_id = message.get('chat_id', '')
-    content = message.get('content', '{}')
-
-    # 解析回复内容
-    try:
-        content_obj = json.loads(content)
-        prompt = content_obj.get('text', '')
-    except json.JSONDecodeError:
-        prompt = content
+    # 直接使用上游解析好的 plain_text（已清理 @_user_1）
+    prompt = message.get('plain_text', '')
 
     if not prompt:
         logger.warning(f"[feishu] Reply message has no text content, parent_id={parent_id}")

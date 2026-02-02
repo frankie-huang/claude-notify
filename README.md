@@ -408,6 +408,7 @@ FEISHU_RECEIVE_ID=ou_user_a
 | `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
 | `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 60 |
 | `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 5000 |
+| `CLAUDE_COMMAND` | Claude 命令（支持参数、shell 别名，如 `claude --setting opus`） | `claude` |
 
 **VSCode 自动跳转/激活配置**（以下两种模式二选一）
 

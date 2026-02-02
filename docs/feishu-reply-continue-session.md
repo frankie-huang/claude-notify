@@ -596,6 +596,8 @@ def claude_continue():
 
 ## 十、配置项
 
+### 10.1 Callback 服务地址
+
 本方案复用现有配置 `CALLBACK_SERVER_URL`（已在权限通知场景中使用）：
 
 ```bash
@@ -610,6 +612,51 @@ CALLBACK_SERVER_URL=http://localhost:8080
 CALLBACK_URL=$(get_config "CALLBACK_SERVER_URL" "http://localhost:8080")
 send_feishu_card "$CARD" "$WEBHOOK_URL" "$SESSION_ID" "$PROJECT_DIR" "$CALLBACK_URL"
 ```
+
+### 10.2 Claude 命令配置
+
+通过 `CLAUDE_COMMAND` 环境变量可以自定义使用的 Claude 命令。
+
+**默认值**：`claude`
+
+**配置示例**：
+
+```bash
+# .env 文件中配置
+# 使用默认 claude 命令
+CLAUDE_COMMAND=claude
+
+# 使用其他变体命令
+CLAUDE_COMMAND=claude-glm
+
+# 带参数的命令（需要用引号包裹）
+CLAUDE_COMMAND="claude --setting opus"
+```
+
+**支持 shell 别名**：
+
+命令通过登录 shell（`bash -lc`）执行，会自动加载 shell 配置文件（如 `~/.bashrc`），因此支持使用定义在配置文件中的别名：
+
+```bash
+# ~/.bashrc 中定义别名
+alias claude-glm='claude --setting opus'
+
+# .env 中直接使用别名
+CLAUDE_COMMAND=claude-glm
+```
+
+**适用场景**：
+
+- 使用其他 Claude 变体（如 `claude-glm`）
+- 指定模型参数（如 `--setting opus`）
+- 使用 shell 配置文件中定义的别名
+- 使用自定义脚本路径
+
+**注意**：
+
+- 配置带参数的命令时需要用引号包裹
+- 命令会在项目工作目录下执行
+- 继续会话和新建会话功能都会使用此配置
 
 ## 十一、推荐的实现优先级
 

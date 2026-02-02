@@ -6,6 +6,7 @@
 import json
 import logging
 import os
+import shlex
 import subprocess
 import threading
 from typing import Tuple, Dict, Any
@@ -81,9 +82,33 @@ def handle_continue_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]
     return _execute_and_check(session_id, project_dir, prompt, chat_id)
 
 
+def _get_shell() -> str:
+    """获取用户默认 shell
+
+    Returns:
+        shell 路径，如 '/bin/bash'，默认 '/bin/bash'
+    """
+    return os.environ.get('SHELL', '/bin/bash')
+
+
+def _get_claude_command() -> str:
+    """获取 Claude 命令配置
+
+    从环境变量 CLAUDE_COMMAND 读取命令配置。
+    返回字符串，支持 shell 别名（因为会通过登录 shell 执行）。
+
+    Returns:
+        命令字符串，如 'claude' 或 'claude --setting opus'
+    """
+    from config import get_config
+    return get_config('CLAUDE_COMMAND', 'claude')
+
+
 def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: str = '') -> Tuple[bool, Dict[str, Any]]:
     """
     执行命令并检查启动状态
+
+    通过登录 shell 执行命令，支持 shell 配置文件中的别名和环境变量。
 
     Args:
         session_id: Claude 会话 ID
@@ -94,8 +119,14 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
     Returns:
         (success, response)
     """
-    cmd = ['claude', '-p', prompt, '--resume', session_id]
-    logger.info(f"[claude-continue] Executing: cd {project_dir} && claude -p '<prompt>' --resume {session_id}")
+    shell = _get_shell()
+    claude_cmd = _get_claude_command()
+    # 使用 shlex.quote 安全处理 prompt 中的特殊字符
+    safe_prompt = shlex.quote(prompt)
+    safe_session = shlex.quote(session_id)
+    cmd_str = f'{claude_cmd} -p {safe_prompt} --resume {safe_session}'
+    cmd = [shell, '-lc', cmd_str]
+    logger.info(f"[claude-continue] Executing: cd {project_dir} && {claude_cmd} -p '<prompt>' --resume {session_id}")
 
     # 启动进程
     try:
