@@ -11,13 +11,15 @@
 #   3. 日志记录 - 统一的日志接口
 #
 # 导出变量:
-#   PROJECT_ROOT  - 项目根目录
-#   SRC_DIR       - 源代码目录 (src/)
-#   LIB_DIR       - Shell 库目录 (src/lib/)
-#   CONFIG_DIR    - 配置目录 (src/config/)
-#   TEMPLATES_DIR - 模板目录 (src/templates/)
-#   SHARED_DIR    - 共享资源目录 (src/shared/)
-#   LOG_DIR       - 日志目录 (log/)
+#   PROJECT_ROOT    - 项目根目录
+#   SRC_DIR         - 源代码目录 (src/)
+#   LIB_DIR         - Shell 库目录 (src/lib/)
+#   CONFIG_DIR      - 配置目录 (src/config/)
+#   TEMPLATES_DIR   - 模板目录 (src/templates/)
+#   SHARED_DIR      - 共享资源目录 (src/shared/)
+#   LOG_DIR         - 日志目录 (log/)
+#   RUNTIME_DIR     - 运行时目录 (runtime/)
+#   AUTH_TOKEN_FILE - 认证令牌文件 (runtime/auth_token.json)
 #
 # 函数:
 #   get_project_root()    - 获取项目根目录
@@ -70,8 +72,10 @@ CONFIG_DIR="$SRC_DIR/config"
 TEMPLATES_DIR="$SRC_DIR/templates"
 SHARED_DIR="$SRC_DIR/shared"
 LOG_DIR="$PROJECT_ROOT/log"
+RUNTIME_DIR="$PROJECT_ROOT/runtime"
+AUTH_TOKEN_FILE="$RUNTIME_DIR/auth_token.json"
 
-export SRC_DIR LIB_DIR CONFIG_DIR TEMPLATES_DIR SHARED_DIR LOG_DIR
+export SRC_DIR LIB_DIR CONFIG_DIR TEMPLATES_DIR SHARED_DIR LOG_DIR RUNTIME_DIR AUTH_TOKEN_FILE
 
 # =============================================================================
 # 第二部分：环境配置

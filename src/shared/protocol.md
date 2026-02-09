@@ -39,7 +39,7 @@ Client (permission-notify.sh)           Server (callback server)
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| request_id | string | 是 | 唯一请求标识 (格式: {timestamp}-{uuid8}) |
+| request_id | string | 是 | 唯一请求标识 (32 位随机字符) |
 | project_dir | string | 是 | 项目目录路径 |
 | raw_input_encoded | string | 是 | Base64 编码的原始 PermissionRequest 输入（包含 session_id、tool_name、tool_input） |
 
@@ -54,7 +54,7 @@ Client (permission-notify.sh)           Server (callback server)
 **示例**:
 ```json
 {
-  "request_id": "1705555200-a1b2c3d4",
+  "request_id": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
   "project_dir": "/home/user/myproject",
   "raw_input_encoded": "eyJzZXNzaW9uX2lkIjoic2Vzc18xMjMiLCJ0b29sX25hbWUiOiJCYXNoIiwidG9vbF9pbnB1dCI6eyJjb21tYW5kIjoiZWNobyBoZWxsbyJ9fQ=="
 }
@@ -180,3 +180,4 @@ Client (permission-notify.sh)           Server (callback server)
 |------|------|------|
 | v1 | 2026-01-18 | 初始版本 |
 | v1.1 | 2026-01-26 | 新增 session_id 字段用于请求追踪，所有日志输出包含 session_id |
+| v1.2 | 2026-02-04 | request_id 格式从 {timestamp}-{uuid8} 改为 32 位随机字符，提升不可预测性 |

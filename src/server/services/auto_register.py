@@ -1,0 +1,174 @@
+"""Auto Register - Callback 后端启动时自动向飞书网关注册
+
+Callback 后端使用，启动时自动向飞书网关注册获取 auth_token。
+
+OpenAPI 模式下：
+  - 分离部署（配置 FEISHU_GATEWAY_URL）：向远端网关注册
+  - 单机部署（未配置 FEISHU_GATEWAY_URL）：向本地网关注册（CALLBACK_SERVER_URL）
+
+需配置：CALLBACK_SERVER_URL、FEISHU_OWNER_ID
+注册接口：{FEISHU_GATEWAY_URL}/register
+"""
+
+import json
+import logging
+import threading
+import urllib.request
+import urllib.error
+from typing import Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+# HTTP 请求超时（秒）
+HTTP_TIMEOUT = 10
+
+
+class AutoRegister:
+    """自动注册服务（单例模式）
+
+    Callback 后端启动时自动向飞书网关注册获取 auth_token。
+    """
+
+    _instance = None  # type: Optional[AutoRegister]
+    _lock = threading.Lock()
+
+    def __init__(self, callback_url: str, owner_id: str, gateway_url: str):
+        """初始化自动注册服务
+
+        Args:
+            callback_url: Callback 后端 URL
+            owner_id: 飞书用户 ID
+            gateway_url: 飞书网关地址
+        """
+        self._callback_url = callback_url
+        self._owner_id = owner_id
+        self._gateway_url = gateway_url
+
+        # 启用条件：三个参数都存在
+        self._enabled = bool(callback_url and owner_id and gateway_url)
+
+        if self._enabled:
+            logger.info(
+                f"[auto-register] Initialized: owner_id={owner_id}, "
+                f"callback_url={callback_url}, gateway={gateway_url}"
+            )
+        else:
+            logger.warning("[auto-register] Disabled (missing configuration)")
+
+    @classmethod
+    def initialize(cls, callback_url: str, owner_id: str, gateway_url: str) -> 'AutoRegister':
+        """初始化单例实例
+
+        Args:
+            callback_url: Callback 后端 URL
+            owner_id: 飞书用户 ID
+            gateway_url: 飞书网关地址
+
+        Returns:
+            AutoRegister 实例
+        """
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls(callback_url, owner_id, gateway_url)
+            return cls._instance
+
+    @classmethod
+    def get_instance(cls) -> Optional['AutoRegister']:
+        """获取单例实例
+
+        Returns:
+            AutoRegister 实例，未初始化返回 None
+        """
+        return cls._instance
+
+    @property
+    def enabled(self) -> bool:
+        """服务是否启用"""
+        return self._enabled
+
+    def register_in_background(self):
+        """在后台线程中执行注册"""
+        if not self._enabled:
+            logger.warning("[auto-register] Cannot register: service not enabled")
+            return
+
+        thread = threading.Thread(target=self._register, daemon=True)
+        thread.start()
+
+    def _register(self):
+        """执行注册"""
+        logger.info(
+            f"[auto-register] Starting registration in background: "
+            f"owner_id={self._owner_id}, callback_url={self._callback_url}, gateway={self._gateway_url}"
+        )
+
+        register_url = self._gateway_url.rstrip('/') + '/register'
+        success, message = self._do_register(
+            self._callback_url,
+            self._owner_id,
+            register_url
+        )
+
+        if success:
+            logger.info(f"[auto-register] Registration successful: {message}")
+        else:
+            logger.warning(f"[auto-register] Registration failed: {message}")
+
+    def _do_register(
+        self,
+        callback_url: str,
+        owner_id: str,
+        register_url: str
+    ) -> Tuple[bool, str]:
+        """向飞书网关注册
+
+        Args:
+            callback_url: Callback 后端 URL
+            owner_id: 飞书用户 ID
+            register_url: 飞书网关注册接口完整 URL（已包含 /register）
+
+        Returns:
+            (success, message): success 表示是否成功，message 是响应消息或错误信息
+        """
+        api_url = register_url.rstrip('/')
+
+        request_data = {
+            'callback_url': callback_url,
+            'owner_id': owner_id
+        }
+
+        logger.info(f"[auto-register] Registering to gateway: {api_url}")
+
+        try:
+            req = urllib.request.Request(
+                api_url,
+                data=json.dumps(request_data).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+
+            # 创建无代理的 opener
+            no_proxy_handler = urllib.request.ProxyHandler({})
+            opener = urllib.request.build_opener(no_proxy_handler)
+            with opener.open(req, timeout=HTTP_TIMEOUT) as response:
+                response_data = json.loads(response.read().decode('utf-8'))
+                if response_data.get('success'):
+                    logger.info(f"[auto-register] Registration accepted")
+                    return True, response_data.get('message', 'Accepted')
+                else:
+                    error = response_data.get('error', 'Unknown error')
+                    logger.warning(f"[auto-register] Registration failed: {error}")
+                    return False, error
+
+        except urllib.error.HTTPError as e:
+            error_msg = f"HTTP {e.code}: {e.reason}"
+            logger.error(f"[auto-register] HTTP error: {error_msg}")
+            return False, error_msg
+        except urllib.error.URLError as e:
+            error_msg = f"URL error: {e.reason}"
+            logger.error(f"[auto-register] URL error: {error_msg}")
+            return False, error_msg
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"[auto-register] Error: {error_msg}")
+            return False, error_msg

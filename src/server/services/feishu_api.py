@@ -16,16 +16,14 @@ from typing import Optional, Tuple, Dict, Any
 
 # Python 3.6 兼容: 使用 urllib 而非 requests
 try:
-    from urllib.request import Request, urlopen
+    from urllib.request import Request, build_opener, ProxyHandler
     from urllib.error import URLError, HTTPError
 except ImportError:
-    from urllib2 import Request, urlopen, URLError, HTTPError
+    from urllib2 import Request, URLError, HTTPError, build_opener, ProxyHandler
 
 from config import (
     FEISHU_APP_ID,
     FEISHU_APP_SECRET,
-    FEISHU_RECEIVE_ID,
-    FEISHU_RECEIVE_ID_TYPE,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,7 +105,10 @@ def _http_request(
 
     try:
         req = Request(url, data=data, headers=headers, method=method)
-        with urlopen(req, timeout=timeout) as resp:
+        # 创建无代理的 opener（飞书 API 直连）
+        no_proxy_handler = ProxyHandler({})
+        opener = build_opener(no_proxy_handler)
+        with opener.open(req, timeout=timeout) as resp:
             body = resp.read().decode('utf-8')
             return True, json.loads(body)
     except HTTPError as e:
@@ -213,6 +214,8 @@ class MessageSender:
     功能:
         - 发送卡片消息
         - 发送文本消息
+        - 回复卡片消息
+        - 回复文本消息
         - 支持指定接收者
     """
 
@@ -225,21 +228,19 @@ class MessageSender:
         receive_id: Optional[str] = None,
         receive_id_type: Optional[str] = None
     ) -> Tuple[bool, str]:
-        """发送卡片消息
+        """发送卡片消息（新消息）
 
         Args:
             card_json: 卡片 JSON 字符串
-            receive_id: 接收者 ID，默认使用配置
+            receive_id: 接收者 ID（必需）
             receive_id_type: 接收者类型，默认自动检测
 
         Returns:
             (success, message_id or error)
         """
-        # 使用默认值
-        if not receive_id:
-            receive_id = FEISHU_RECEIVE_ID
+        # 自动检测类型
         if not receive_id_type:
-            receive_id_type = FEISHU_RECEIVE_ID_TYPE or detect_receive_id_type(receive_id)
+            receive_id_type = detect_receive_id_type(receive_id)
 
         if not receive_id:
             return False, "No receive_id specified"
@@ -287,26 +288,86 @@ class MessageSender:
         logger.info(f"[feishu-api] Message sent: {message_id}")
         return True, message_id
 
+    def reply_card(
+        self,
+        card_json: str,
+        message_id: str
+    ) -> Tuple[bool, str]:
+        """回复卡片消息
+
+        使用飞书回复消息 API: POST /open-apis/im/v1/messages/:message_id/reply
+
+        Args:
+            card_json: 卡片 JSON 字符串
+            message_id: 要回复的消息 ID（必需）
+
+        Returns:
+            (success, new_message_id or error)
+        """
+        if not message_id:
+            return False, "No message_id specified for reply"
+
+        token = self._token_manager.get_token()
+        if not token:
+            return False, "Failed to get access token"
+
+        # 解析卡片 JSON
+        try:
+            card_data = json.loads(card_json)
+        except json.JSONDecodeError as e:
+            return False, f"Invalid card JSON: {e}"
+
+        # 使用回复消息 API
+        url = f"{FEISHU_API_BASE}/im/v1/messages/{message_id}/reply"
+        headers = {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Authorization': f'Bearer {token}'
+        }
+
+        payload = {
+            'msg_type': 'interactive',
+            'content': json.dumps(card_data, ensure_ascii=False)
+        }
+
+        success, resp = _http_request(
+            url,
+            method='POST',
+            headers=headers,
+            data=json.dumps(payload).encode('utf-8')
+        )
+
+        if not success:
+            return False, str(resp.get('error', 'Unknown error'))
+
+        code = resp.get('code', -1)
+        if code != 0:
+            error_msg = resp.get('msg', 'Unknown error')
+            logger.error(f"[feishu-api] Reply message failed: code={code}, msg={error_msg}")
+            return False, f"API error: {error_msg}"
+
+        new_message_id = resp.get('data', {}).get('message_id', '')
+        logger.info(f"[feishu-api] Message replied: {new_message_id}, parent_id={message_id}")
+        return True, new_message_id
+
     def send_text(
         self,
         text: str,
         receive_id: Optional[str] = None,
         receive_id_type: Optional[str] = None
     ) -> Tuple[bool, str]:
-        """发送文本消息
+        """发送文本消息（新消息）
 
         Args:
             text: 文本内容
-            receive_id: 接收者 ID
-            receive_id_type: 接收者类型
+            receive_id: 接收者 ID（必需）
+            receive_id_type: 接收者类型，默认自动检测
 
         Returns:
             (success, message_id or error)
         """
-        if not receive_id:
-            receive_id = FEISHU_RECEIVE_ID
+        # 自动检测类型
         if not receive_id_type:
-            receive_id_type = FEISHU_RECEIVE_ID_TYPE or detect_receive_id_type(receive_id)
+            receive_id_type = detect_receive_id_type(receive_id)
 
         if not receive_id:
             return False, "No receive_id specified"
@@ -346,6 +407,61 @@ class MessageSender:
         message_id = resp.get('data', {}).get('message_id', '')
         logger.info(f"[feishu-api] Text sent: {message_id}")
         return True, message_id
+
+    def reply_text(
+        self,
+        text: str,
+        message_id: str
+    ) -> Tuple[bool, str]:
+        """回复文本消息
+
+        使用飞书回复消息 API: POST /open-apis/im/v1/messages/:message_id/reply
+
+        Args:
+            text: 文本内容
+            message_id: 要回复的消息 ID（必需）
+
+        Returns:
+            (success, new_message_id or error)
+        """
+        if not message_id:
+            return False, "No message_id specified for reply"
+
+        token = self._token_manager.get_token()
+        if not token:
+            return False, "Failed to get access token"
+
+        # 使用回复消息 API
+        url = f"{FEISHU_API_BASE}/im/v1/messages/{message_id}/reply"
+        headers = {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Authorization': f'Bearer {token}'
+        }
+
+        payload = {
+            'msg_type': 'text',
+            'content': json.dumps({'text': text})
+        }
+
+        success, resp = _http_request(
+            url,
+            method='POST',
+            headers=headers,
+            data=json.dumps(payload).encode('utf-8')
+        )
+
+        if not success:
+            return False, str(resp.get('error', 'Unknown error'))
+
+        code = resp.get('code', -1)
+        if code != 0:
+            error_msg = resp.get('msg', 'Unknown error')
+            logger.error(f"[feishu-api] Reply text failed: code={code}, msg={error_msg}")
+            return False, f"API error: {error_msg}"
+
+        new_message_id = resp.get('data', {}).get('message_id', '')
+        logger.info(f"[feishu-api] Text replied: {new_message_id}, parent_id={message_id}")
+        return True, new_message_id
 
 
 # =============================================================================
@@ -421,7 +537,7 @@ class FeishuAPIService:
         receive_id: Optional[str] = None,
         receive_id_type: Optional[str] = None
     ) -> Tuple[bool, str]:
-        """发送卡片消息
+        """发送卡片消息（新消息）
 
         Args:
             card_json: 卡片 JSON 字符串
@@ -436,13 +552,34 @@ class FeishuAPIService:
 
         return self._message_sender.send_card(card_json, receive_id, receive_id_type)
 
+    def reply_card(
+        self,
+        card_json: str,
+        message_id: str
+    ) -> Tuple[bool, str]:
+        """回复卡片消息
+
+        使用飞书回复消息 API
+
+        Args:
+            card_json: 卡片 JSON 字符串
+            message_id: 要回复的消息 ID
+
+        Returns:
+            (success, new_message_id or error)
+        """
+        if not self._enabled:
+            return False, "Feishu API service not enabled"
+
+        return self._message_sender.reply_card(card_json, message_id)
+
     def send_text(
         self,
         text: str,
         receive_id: Optional[str] = None,
         receive_id_type: Optional[str] = None
     ) -> Tuple[bool, str]:
-        """发送文本消息
+        """发送文本消息（新消息）
 
         Args:
             text: 文本内容
@@ -456,3 +593,24 @@ class FeishuAPIService:
             return False, "Feishu API service not enabled"
 
         return self._message_sender.send_text(text, receive_id, receive_id_type)
+
+    def reply_text(
+        self,
+        text: str,
+        message_id: str
+    ) -> Tuple[bool, str]:
+        """回复文本消息
+
+        使用飞书回复消息 API
+
+        Args:
+            text: 文本内容
+            message_id: 要回复的消息 ID
+
+        Returns:
+            (success, new_message_id or error)
+        """
+        if not self._enabled:
+            return False, "Feishu API service not enabled"
+
+        return self._message_sender.reply_text(text, message_id)

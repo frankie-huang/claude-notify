@@ -6,14 +6,17 @@ Callback Handler - HTTP 请求处理器
 
 import json
 import logging
+import os
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 from services.request_manager import RequestManager
 from services.decision_handler import handle_decision
+from services.auth_token import verify_global_auth_token, verify_owner_based_auth_token
 from config import CLOSE_PAGE_TIMEOUT, VSCODE_URI_PREFIX
 from handlers.feishu import handle_feishu_request, handle_send_message
-from handlers.claude import handle_continue_session
+from handlers.claude import handle_continue_session, handle_new_session
+from handlers.register import handle_register_request, handle_register_callback, handle_check_owner_id
 
 # Action 到 HTML 响应的映射
 ACTION_HTML_RESPONSES = {
@@ -297,7 +300,9 @@ class CallbackHandler(BaseHTTPRequestHandler):
         vscode_uri = self._build_vscode_uri(request_id)
 
         # 调用纯决策接口
-        success, decision, message = handle_decision(self.request_manager, request_id, action)
+        success, decision, message = handle_decision(
+            self.request_manager, request_id, action
+        )
 
         # 根据结果渲染 HTML 响应
         if success:
@@ -362,9 +367,14 @@ class CallbackHandler(BaseHTTPRequestHandler):
         """处理 POST 请求
 
         路由:
-            - /callback/decision: 接收飞书网关转发的决策请求（分离部署）
+            - /register: 网关注册接口（Callback 后端调用）
+            - /register-callback: 网关回调通知 auth_token
+            - /check-owner-id: 验证 owner_id 是否属于该 Callback 后端
+            - /get-chat-id: 根据 session_id 获取对应的 chat_id
+            - /callback/decision: 接收飞书网关转发的决策请求（分离部署，需 auth_token）
             - /feishu/send: 发送飞书消息（OpenAPI）
-            - /claude/continue: 继续 Claude 会话
+            - /claude/continue: 飞书端触发，继续 Claude 会话
+            - /claude/new: 飞书端触发，新建 Claude 会话
             - 其他: 飞书事件回调（URL验证、消息事件、卡片回传交互）
         """
         parsed = urlparse(self.path)
@@ -390,12 +400,75 @@ class CallbackHandler(BaseHTTPRequestHandler):
             return
 
         # 路由分发
+        if path == '/register':
+            # 网关注册接口（Callback 后端调用）
+            client_ip = self.client_address[0] if self.client_address else ''
+            handled, response = handle_register_request(data, client_ip)
+            status = 200 if response.get('success') else 400
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+            return
+
+        if path == '/register-callback':
+            # 网关回调通知 auth_token
+            handled, response = handle_register_callback(data)
+            status = 200 if response.get('success') else 400
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+            return
+
+        if path == '/check-owner-id':
+            # 验证 owner_id 是否属于该 Callback 后端
+            handled, response = handle_check_owner_id(data)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+            return
+
+        if path == '/get-chat-id':
+            # 根据 session_id 获取对应的 chat_id（客户端调用）
+            # 验证 auth_token
+            from handlers.register import ChatIdStore
+
+            if not verify_global_auth_token(self, '/get-chat-id'):
+                return
+
+            session_id = data.get('session_id', '')
+            if not session_id:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'chat_id': None}).encode())
+                return
+
+            store = ChatIdStore.get_instance()
+            chat_id = ''
+            if store:
+                chat_id = store.get(session_id) or ''
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'chat_id': chat_id}).encode())
+            return
+
         if path == '/callback/decision':
             # 接收飞书网关转发的决策请求（分离部署）
             return self._handle_callback_decision(data)
 
         if path == '/feishu/send':
             # 发送飞书消息（OpenAPI）
+            # 验证逻辑：客户端在 body 中提供 owner_id，网关从 BindingStore 查找对应的 auth_token 比对
+            owner_id = verify_owner_based_auth_token(self, data, '/feishu/send')
+            if owner_id is None:
+                return  # 验证失败，已发送响应
+
+            # 验证通过，调用处理函数
             handled, response = handle_send_message(data)
             status = 200 if response.get('success') else 400
             self.send_response(status)
@@ -406,6 +479,10 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
         if path == '/claude/continue':
             # 继续 Claude 会话
+            # 验证 auth_token（飞书网关调用）
+            if not verify_global_auth_token(self, '/claude/continue'):
+                return
+
             success, response = handle_continue_session(data)
             status = 200 if success else 400
             self.send_response(status)
@@ -414,8 +491,121 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(response).encode())
             return
 
+        if path == '/claude/new':
+            # 新建 Claude 会话
+            # 验证 auth_token（飞书网关调用）
+            if not verify_global_auth_token(self, '/claude/new'):
+                return
+
+            success, response = handle_new_session(data)
+            status = 200 if success else 400
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+            return
+
+        if path == '/claude/recent-dirs':
+            # 获取近期常用工作目录列表
+            # 验证 auth_token（飞书网关调用）
+            if not verify_global_auth_token(self, '/claude/recent-dirs'):
+                return
+
+            try:
+                limit = int(data.get('limit', 5))
+            except (TypeError, ValueError):
+                limit = 5
+
+            from services.dir_history_store import DirHistoryStore
+            store = DirHistoryStore.get_instance()
+            recent_dirs = store.get_recent_dirs(limit) if store else []
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'dirs': recent_dirs}).encode())
+            return
+
+        if path == '/claude/browse-dirs':
+            # 浏览指定路径下的子目录
+            # 验证 auth_token（飞书网关调用）
+            if not verify_global_auth_token(self, '/claude/browse-dirs'):
+                return
+
+            # 解析参数
+            request_path = data.get('path', '')
+            try:
+                limit = int(data.get('limit', 20))
+            except (TypeError, ValueError):
+                limit = 20
+
+            # 默认起始路径为根目录
+            if not request_path:
+                request_path = '/'
+
+            # 验证路径必须是绝对路径
+            if not request_path.startswith('/'):
+                logger.warning(f"[browse-dirs] Path must be absolute: {request_path}")
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'path must be absolute'}).encode())
+                return
+
+            # 验证路径存在且可访问
+            if not os.path.isdir(request_path):
+                logger.warning(f"[browse-dirs] Path not found or not accessible: {request_path}")
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'path not found or not accessible'}).encode())
+                return
+
+            try:
+                # 获取父目录路径（去除末尾斜杠）
+                current_path = request_path.rstrip('/')
+                parent_path = os.path.dirname(current_path) if current_path != '/' else ''
+
+                # 列出子目录，过滤隐藏目录和文件
+                dirs = []
+                try:
+                    entries = os.listdir(request_path)
+                    for entry in entries:
+                        # 跳过隐藏目录（以 . 开头）
+                        if entry.startswith('.'):
+                            continue
+                        # 只保留目录
+                        full_path = os.path.join(request_path, entry)
+                        if os.path.isdir(full_path):
+                            dirs.append(full_path)
+                            if len(dirs) >= limit:
+                                break
+                except PermissionError:
+                    logger.warning(f"[browse-dirs] Permission denied: {request_path}")
+                    dirs = []
+
+                # 按目录名字母排序
+                dirs.sort()
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'dirs': dirs,
+                    'parent': parent_path,
+                    'current': current_path
+                }).encode())
+                return
+            except Exception as e:
+                logger.error(f"[browse-dirs] Error listing directory: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'internal server error'}).encode())
+                return
+
         # 飞书事件回调（URL验证、消息事件、卡片回传交互）
-        handled, response = handle_feishu_request(data, self.request_manager)
+        handled, response = handle_feishu_request(data)
         if handled:
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -439,6 +629,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         HTTP 状态码语义：
             - 200: 接口正常处理（业务成功/失败通过 success 字段区分）
             - 400: 请求格式错误（缺少必要参数）
+            - 401: 身份验证失败（auth_token 无效）
 
         Args:
             data: 请求数据
@@ -452,6 +643,14 @@ class CallbackHandler(BaseHTTPRequestHandler):
                 - decision: 决策类型 ("allow"/"deny")，失败时为 null
                 - message: 状态消息
         """
+        # 验证 auth_token（飞书网关调用）
+        if not verify_global_auth_token(self, '/callback/decision', error_body={
+            'success': False,
+            'decision': None,
+            'message': 'Unauthorized'
+        }):
+            return
+
         action = data.get('action', '')
         request_id = data.get('request_id', '')
         project_dir = data.get('project_dir', '')

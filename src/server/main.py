@@ -29,13 +29,17 @@ from config import (
     REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT,
     get_config, get_config_int,
     DEFAULT_SOCKET_PATH, DEFAULT_HTTP_PORT,
-    FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_SEND_MODE
+    FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_SEND_MODE,
+    CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL
 )
 from models.decision import Decision
 from services.request_manager import RequestManager
 from services.feishu_api import FeishuAPIService
 from services.session_store import SessionStore
+from services.dir_history_store import DirHistoryStore
+from services.binding_store import BindingStore
 from handlers.callback import CallbackHandler
+from handlers.register import AuthTokenStore, ChatIdStore
 
 # =============================================================================
 # 配置 (优先级: .env > 环境变量 > 默认值)
@@ -265,9 +269,13 @@ def main():
 
     服务组件：
         1. Unix Socket 服务器 - 接收 permission-notify.sh 的连接
-        2. 清理线程 - 定期清理断开连接
+        2. 清理线程 - 定期清理断开连接和过期 session
         3. HTTP 服务器 - 接收飞书按钮的回调请求
         4. SessionStore - 维护 message_id 到 session 的映射
+        5. BindingStore - 维护 owner_id 到 callback_url 的绑定（网关专用）
+        6. AuthTokenStore - 存储网关注册的 auth_token（Callback 后端专用）
+        7. FeishuAPIService - 飞书 OpenAPI 服务（OpenAPI 模式）
+        8. AutoRegister - 启动时自动向飞书网关注册（可选）
     """
     logger.info("Starting Claude Code Permission Callback Server")
     logger.info(f"HTTP Port: {HTTP_PORT}")
@@ -286,6 +294,22 @@ def main():
     SessionStore.initialize(runtime_dir)
     logger.info(f"SessionStore initialized with runtime_dir={runtime_dir}")
 
+    # 初始化 DirHistoryStore（用于记录目录使用历史）
+    DirHistoryStore.initialize(runtime_dir)
+    logger.info(f"DirHistoryStore initialized with runtime_dir={runtime_dir}")
+
+    # 初始化 BindingStore（用于网关注册功能）
+    BindingStore.initialize(runtime_dir)
+    logger.info(f"BindingStore initialized with runtime_dir={runtime_dir}")
+
+    # 初始化 AuthTokenStore（用于存储网关注册的 auth_token）
+    AuthTokenStore.initialize(runtime_dir)
+    logger.info(f"AuthTokenStore initialized with runtime_dir={runtime_dir}")
+
+    # 初始化 ChatIdStore（callback 后端存储 session_id -> chat_id 映射）
+    ChatIdStore.initialize(runtime_dir)
+    logger.info(f"ChatIdStore initialized with runtime_dir={runtime_dir}")
+
     # 初始化飞书 OpenAPI 服务
     if FEISHU_SEND_MODE == 'openapi':
         if FEISHU_APP_ID and FEISHU_APP_SECRET:
@@ -295,6 +319,15 @@ def main():
             logger.warning("FEISHU_SEND_MODE requires FEISHU_APP_ID and FEISHU_APP_SECRET")
     else:
         logger.info(f"Feishu send mode: {FEISHU_SEND_MODE}")
+
+    # 自动注册到飞书网关
+    from services.auto_register import AutoRegister
+    AutoRegister.initialize(CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL)
+    auto_register = AutoRegister.get_instance()
+    if auto_register and auto_register.enabled:
+        auto_register.register_in_background()
+    else:
+        logger.info("Auto-registration disabled (missing CALLBACK_SERVER_URL, FEISHU_OWNER_ID, or FEISHU_GATEWAY_URL)")
 
     # 启动 Socket 服务器线程
     socket_thread = threading.Thread(target=run_socket_server)

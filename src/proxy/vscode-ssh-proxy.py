@@ -12,6 +12,14 @@ VPS 可以发送请求来唤起本地 VSCode 窗口打开远程项目。
     # 从 .env 加载端口配置
     source .env && python3 vscode-ssh-proxy.py --vps myserver --port ${VSCODE_SSH_PROXY_PORT} --remote-port ${VSCODE_SSH_PROXY_PORT}
 
+自动重连:
+    脚本会自动检测并使用 autossh（如果已安装），实现断线自动重连。
+    安装 autossh:
+    - macOS:   brew install autossh
+    - Linux:   apt install autossh / yum install autossh
+
+    未安装 autossh 时会回退到普通 ssh，连接断开后需要手动重启。
+
 生成的 URI 格式:
     vscode-remote://ssh-remote+myserver/path/to/project
 
@@ -32,12 +40,39 @@ import os
 import platform
 import signal
 import socketserver
+import shutil
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
 from datetime import datetime
+
+
+# 终端颜色
+class Colors:
+    """终端颜色常量"""
+    RESET = "\033[0m"
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    CYAN = "\033[96m"
+    GRAY = "\033[90m"
+    BOLD = "\033[1m"
+
+
+def style(text: str, color: str) -> str:
+    """给文本添加颜色样式"""
+    return f"{color}{text}{Colors.RESET}"
+
+
+def cprint(text: str, color: str = ""):
+    """打印带颜色的文本"""
+    if color:
+        print(f"{color}{text}{Colors.RESET}")
+    else:
+        print(text)
 
 
 # 全局配置
@@ -129,10 +164,10 @@ class VSCodeProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def open_vscode(self, path: str) -> dict:
         """打开 VSCode Remote 项目"""
-        print(f"  → 打开项目: {path}")
+        cprint(f"  → 打开项目: {path}", Colors.CYAN)
 
         folder_uri = self.build_remote_uri(path)
-        print(f"  → URI: {folder_uri}")
+        cprint(f"  → URI: {folder_uri}", Colors.GRAY)
 
         try:
             cmd = ["code", "--folder-uri", folder_uri]
@@ -149,20 +184,22 @@ class VSCodeProxyHandler(http.server.BaseHTTPRequestHandler):
                 )
 
             if result.returncode == 0:
-                print("  ✓ 成功")
+                cprint("  ✓ 成功", Colors.GREEN)
                 return {"success": True, "path": path, "uri": folder_uri}
             else:
                 error = result.stderr.decode().strip() if result.stderr else "未知错误"
-                print("  ✗ 失败: {}".format(error))
+                cprint(f"  ✗ 失败: {error}", Colors.RED)
                 return {"success": False, "path": path, "uri": folder_uri, "error": error}
 
         except FileNotFoundError:
             error = "'code' 命令未找到"
-            print(f"  ✗ {error}")
+            cprint(f"  ✗ {error}", Colors.RED)
             return {"success": False, "error": error}
         except subprocess.TimeoutExpired:
+            cprint("  ✗ 命令超时", Colors.RED)
             return {"success": False, "error": "命令超时"}
         except Exception as e:
+            cprint(f"  ✗ 错误: {e}", Colors.RED)
             return {"success": False, "error": str(e)}
 
 
@@ -173,12 +210,16 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def start_ssh_tunnel():
-    """启动 SSH 反向隧道"""
+    """启动 SSH 反向隧道（优先使用 autossh 实现自动重连）"""
     global ssh_process
 
-    cmd = [
-        "ssh",
-        "-o", "ServerAliveInterval=60",
+    # 检测 autossh 是否可用
+    use_autossh = check_autossh()
+    ssh_command = "autossh" if use_autossh else "ssh"
+
+    # 构建 SSH 命令参数
+    ssh_args = [
+        "-o", "ServerAliveInterval=30",
         "-o", "ServerAliveCountMax=3",
         "-o", "ExitOnForwardFailure=yes",
         "-N",
@@ -187,20 +228,41 @@ def start_ssh_tunnel():
 
     # 如果指定了 SSH 端口，添加 -p 参数
     if CONFIG["ssh_port"]:
-        cmd.extend(["-p", str(CONFIG["ssh_port"])])
+        ssh_args.extend(["-p", str(CONFIG["ssh_port"])])
 
-    cmd.append(CONFIG["ssh_host"])
+    ssh_args.append(CONFIG["ssh_host"])
+
+    # 构建 autossh 完整命令
+    if use_autossh:
+        # -M 0 表示禁用传统端口监控，使用 SSH 内部心跳机制
+        cmd = ["autossh", "-M", "0"] + ssh_args
+    else:
+        cmd = ["ssh"] + ssh_args
 
     port_info = f":{CONFIG['ssh_port']}" if CONFIG["ssh_port"] else ""
-    print(f"[SSH] 连接到 {CONFIG['ssh_host']}{port_info}...")
-    print(f"[SSH] 隧道: VPS:{CONFIG['remote_port']} -> localhost:{CONFIG['local_port']}")
-    print(f"[SSH] 命令: {' '.join(cmd)}")
+    mode_desc = style("autossh (自动重连)", Colors.GREEN) if use_autossh else "ssh"
+
+    cprint(f"[SSH] 使用 {mode_desc} 模式", Colors.CYAN)
+    cprint(f"[SSH] 连接到 {CONFIG['ssh_host']}{port_info}...", Colors.CYAN)
+    cprint(f"[SSH] 隧道: VPS:{CONFIG['remote_port']} -> localhost:{CONFIG['local_port']}", Colors.CYAN)
+
+    # 设置环境变量
+    env = os.environ.copy()
+    if use_autossh:
+        env.update({
+            "AUTOSSH_GATETIME": "0",      # 立即启动重连，不等待 30 秒
+            "AUTOSSH_POLL": "30",         # 每 30 秒检查连接状态
+            "AUTOSSH_FIRST_POLL": "30",   # 首次检查时间
+        })
+
+    cprint(f"[SSH] 命令: {' '.join(cmd)}", Colors.GRAY)
 
     try:
         ssh_process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            env=env
         )
 
         # 等待一下检查是否启动成功
@@ -208,17 +270,24 @@ def start_ssh_tunnel():
 
         if ssh_process.poll() is not None:
             stderr = ssh_process.stderr.read().decode() if ssh_process.stderr else ""
-            print(f"[SSH] ✗ 连接失败: {stderr}")
+            cprint(f"[SSH] ✗ 连接失败: {stderr}", Colors.RED)
             return False
 
-        print(f"[SSH] ✓ 隧道已建立 (PID: {ssh_process.pid})")
+        reconnect_note = style(" (断线自动重连)", Colors.GREEN) if use_autossh else ""
+        cprint(f"[SSH] ✓ 隧道已建立{reconnect_note} (PID: {ssh_process.pid})", Colors.GREEN)
+
+        if not use_autossh:
+            cprint("[SSH] 提示: 安装 autossh 可实现断线自动重连", Colors.YELLOW)
+            cprint("[SSH]   macOS: brew install autossh", Colors.GRAY)
+            cprint("[SSH]   Linux: apt install autossh / yum install autossh", Colors.GRAY)
+
         return True
 
     except FileNotFoundError:
-        print("[SSH] ✗ 未找到 ssh 命令")
+        cprint(f"[SSH] ✗ 未找到 {ssh_command} 命令", Colors.RED)
         return False
     except Exception as e:
-        print(f"[SSH] ✗ 启动失败: {e}")
+        cprint(f"[SSH] ✗ 启动失败: {e}", Colors.RED)
         return False
 
 
@@ -226,13 +295,13 @@ def cleanup():
     """清理资源"""
     global ssh_process
     if ssh_process and ssh_process.poll() is None:
-        print("\n[SSH] 关闭隧道...")
+        cprint("\n[SSH] 关闭隧道...", Colors.CYAN)
         ssh_process.terminate()
         try:
             ssh_process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             ssh_process.kill()
-        print("[SSH] 隧道已关闭")
+        cprint("[SSH] 隧道已关闭", Colors.GRAY)
 
 
 def signal_handler(signum, frame):
@@ -246,6 +315,26 @@ def check_code_command():
     try:
         result = subprocess.run(
             ["code", "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def check_autossh():
+    """检查 autossh 命令是否可用
+
+    优先使用 shutil.which 检测命令是否存在（更快且不受版本返回码差异影响），
+    若 PATH 查找成功则进一步调用 autossh -V 验证可执行性。
+    """
+    if shutil.which("autossh") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["autossh", "-V"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=5
@@ -315,11 +404,11 @@ VPS 端测试:
 
     # 打印启动信息
     print()
-    print("=" * 60)
-    print("  VSCode SSH 代理服务")
-    print("=" * 60)
+    cprint("=" * 60, Colors.BOLD)
+    cprint("  VSCode SSH 代理服务", Colors.BOLD)
+    cprint("=" * 60, Colors.BOLD)
     print()
-    print(f"  VPS Host:    {CONFIG['ssh_host']}")
+    print(f"  VPS Host:    {style(CONFIG['ssh_host'], Colors.CYAN)}")
     print(f"  SSH 端口:    {CONFIG['ssh_port'] or '默认 22 (别名时从 ~/.ssh/config 读取)'}")
     print(f"  本地端口:    {CONFIG['local_port']}")
     print(f"  远程端口:    {CONFIG['remote_port']}")
@@ -328,37 +417,37 @@ VPS 端测试:
 
     # 检查 code 命令
     if not check_code_command():
-        print("⚠ 警告: 'code' 命令未找到，请确保 VSCode 已安装并添加到 PATH")
+        cprint("⚠ 警告: 'code' 命令未找到，请确保 VSCode 已安装并添加到 PATH", Colors.YELLOW)
         print()
 
     # 启动 SSH 隧道
     if not start_ssh_tunnel():
-        print("\n启动失败，请检查 SSH 配置")
+        cprint("\n启动失败，请检查 SSH 配置", Colors.RED)
         sys.exit(1)
 
     print()
-    print("=" * 60)
-    print("  服务已就绪")
-    print("=" * 60)
+    cprint("=" * 60, Colors.BOLD)
+    cprint("  服务已就绪", Colors.GREEN + Colors.BOLD)
+    cprint("=" * 60, Colors.BOLD)
     print()
-    print("VPS 端测试命令:")
-    print(f"  curl --noproxy localhost \"http://localhost:{CONFIG['remote_port']}/open?path=/path/to/project\"")
+    cprint("VPS 端测试命令:", Colors.BOLD)
+    cprint(f"  curl --noproxy localhost \"http://localhost:{CONFIG['remote_port']}/open?path=/path/to/project\"", Colors.GRAY)
     print()
-    print("URI 格式:")
-    print(f"  vscode-remote://ssh-remote+{CONFIG['ssh_host']}/<path>")
+    cprint("URI 格式:", Colors.BOLD)
+    cprint(f"  vscode-remote://ssh-remote+{CONFIG['ssh_host']}/<path>", Colors.GRAY)
     print()
-    print("按 Ctrl+C 退出")
-    print("=" * 60)
+    cprint("按 Ctrl+C 退出", Colors.YELLOW)
+    cprint("=" * 60, Colors.BOLD)
     print()
 
     # 启动 HTTP 服务
     try:
         with ThreadedHTTPServer(("127.0.0.1", CONFIG["local_port"]), VSCodeProxyHandler) as httpd:
-            print(f"[HTTP] 服务已启动: http://127.0.0.1:{CONFIG['local_port']}")
+            cprint(f"[HTTP] 服务已启动: http://127.0.0.1:{CONFIG['local_port']}", Colors.BLUE)
             print()
             httpd.serve_forever()
     except OSError as e:
-        print(f"[HTTP] 启动失败: {e}")
+        cprint(f"[HTTP] 启动失败: {e}", Colors.RED)
         cleanup()
         sys.exit(1)
 

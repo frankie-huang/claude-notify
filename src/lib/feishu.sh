@@ -24,7 +24,7 @@
 #
 # 使用示例:
 #   source "$LIB_DIR/feishu.sh"
-#   buttons=$(build_permission_buttons "http://localhost:8080" "req-123")
+#   buttons=$(build_permission_buttons "http://localhost:8080" "req-123" "$owner_id")
 #   card=$(build_permission_card "Bash" "myproject" "2024-01-01 12:00:00" \
 #       "npm install" "安装依赖" "orange" "$buttons")
 #   send_feishu_card "$card"
@@ -393,7 +393,7 @@ render_card_template() {
 #
 # 示例:
 #   # Bash 工具 (带按钮)
-#   buttons=$(build_permission_buttons "http://localhost:8080" "req-123")
+#   buttons=$(build_permission_buttons "http://localhost:8080" "req-123" "$owner_id")
 #   card=$(build_permission_card "Bash" "myproject" "2024-01-01 12:00:00" \
 #       "npm install" "安装依赖" "orange" "$buttons" "abc12345")
 #
@@ -507,6 +507,7 @@ build_permission_card() {
 # 参数:
 #   $1 - callback_url  回调服务器 URL (用于路由或 webhook 模式)
 #   $2 - request_id    请求 ID
+#   $3 - owner_id      飞书用户 ID（用于验证操作者身份）
 #
 # 输出:
 #   按钮 JSON 数组字符串
@@ -516,17 +517,19 @@ build_permission_card() {
 #   1 - 构建失败
 #
 # 示例:
-#   buttons=$(build_permission_buttons "http://localhost:8080" "req-123")
+#   buttons=$(build_permission_buttons "http://localhost:8080" "req-123" "$owner_id")
 #
 # 注意:
 #   根据 FEISHU_SEND_MODE 选择按钮类型:
 #   - webhook: open_url 类型按钮（点击跳转浏览器）
 #   - openapi: callback 类型按钮（飞书内直接响应）
 #             分离部署时 value 中的 callback_url 用于网关路由
+#   owner_id 用于验证点击按钮的用户是否为本人
 # ----------------------------------------------------------------------------
 build_permission_buttons() {
     local callback_url="$1"
     local request_id="$2"
+    local owner_id="$3"
     local send_mode
     send_mode=$(get_config "FEISHU_SEND_MODE" "webhook")
 
@@ -536,9 +539,11 @@ build_permission_buttons() {
     if [ "$send_mode" = "openapi" ]; then
         # OpenAPI 模式：使用 callback 类型按钮
         # 分离部署时 value 中的 callback_url 用于网关路由到正确的 Callback 服务
+        # owner_id 用于验证操作者身份
         render_card_template "buttons-openapi" \
             "callback_url=$callback_url" \
-            "request_id=$request_id"
+            "request_id=$request_id" \
+            "owner_id=$owner_id"
     else
         # Webhook 模式（默认）：使用 open_url 类型按钮
         render_card_template "buttons" \
@@ -631,6 +636,92 @@ build_stop_card() {
 # =============================================================================
 
 # ----------------------------------------------------------------------------
+# _get_auth_token - 获取存储的 auth_token
+# ----------------------------------------------------------------------------
+# 功能: 从 runtime/auth_token.json 读取存储的 auth_token
+#
+# 输出:
+#   echos 返回: auth_token 字符串，不存在则返回空字符串
+#
+# 说明:
+#   用于飞书网关注册后的双向认证
+# ----------------------------------------------------------------------------
+_get_auth_token() {
+    # AUTH_TOKEN_FILE 由 core.sh 定义，指向 runtime/auth_token.json
+
+    if [ ! -f "$AUTH_TOKEN_FILE" ]; then
+        log "auth_token file not found: $AUTH_TOKEN_FILE"
+        echo ""
+        return 0
+    fi
+
+    # 使用 json_get 读取 auth_token
+    local token_data
+    token_data=$(cat "$AUTH_TOKEN_FILE" 2>/dev/null)
+    if [ -z "$token_data" ]; then
+        echo ""
+        return 0
+    fi
+
+    local token
+    token=$(json_get "$token_data" "auth_token")
+    echo "$token"
+}
+
+# ----------------------------------------------------------------------------
+# _get_chat_id - 根据 session_id 获取对应的 chat_id
+# ----------------------------------------------------------------------------
+# 功能: 调用 Callback 后端的 /get-chat-id 接口查询 session_id 对应的 chat_id
+#
+# 参数:
+#   $1 - session_id  Claude 会话 ID
+#
+# 输出:
+#   echos 返回: chat_id 字符串，查询失败返回空字符串
+#
+# 说明:
+#   用于确定会话消息发送的目标群聊
+#   查询失败时，调用方可使用 FEISHU_CHAT_ID 配置作为兜底
+# ----------------------------------------------------------------------------
+_get_chat_id() {
+    local session_id="$1"
+
+    if [ -z "$session_id" ]; then
+        echo ""
+        return 0
+    fi
+
+    # 调用 Callback 后端的 /get-chat-id 接口查询
+    local callback_url="${CALLBACK_SERVER_URL:-http://localhost:${CALLBACK_SERVER_PORT:-8080}}"
+    callback_url=$(echo "$callback_url" | sed 's:/*$::')
+
+    local response
+    response=$(_do_curl_post "${callback_url}/get-chat-id" \
+        "{\"session_id\":\"$session_id\"}" \
+        "get-chat-id" \
+        "$(_get_auth_token)")
+
+    local http_code
+    http_code=$(echo "$response" | head -n 1)
+    response=$(echo "$response" | sed '1d')
+
+    if [ "$http_code" != "200" ]; then
+        return 0
+    fi
+
+    local chat_id
+    chat_id=$(json_get "$response" "chat_id")
+    # 移除可能的引号
+    chat_id=$(echo "$chat_id" | sed 's/^"//;s/"$//')
+
+    if [ -n "$chat_id" ] && [ "$chat_id" != "null" ] && [ "$chat_id" != "''" ]; then
+        echo "$chat_id"
+    else
+        echo ""
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # _do_curl_post - 执行 POST 请求的通用函数
 # ----------------------------------------------------------------------------
 # 功能: 执行 JSON POST 请求，并解析响应
@@ -639,6 +730,7 @@ build_stop_card() {
 #   $1 - url           请求 URL
 #   $2 - request_body  请求 JSON 字符串
 #   $3 - log_prefix    日志前缀 (可选)
+#   $4 - auth_token    认证令牌 (可选，会添加到 X-Auth-Token header)
 #
 # 输出:
 #   echos 返回: http_code 响应体
@@ -649,11 +741,13 @@ build_stop_card() {
 #
 # 说明:
 #   调用方需要根据 http_code 和响应内容判断业务逻辑是否成功
+#   auth_token 用于飞书网关注册后的双向认证
 # ----------------------------------------------------------------------------
 _do_curl_post() {
     local url="$1"
     local request_body="$2"
     local log_prefix="${3:-curl}"
+    local auth_token="${4:-}"
 
     # 构建 curl 命令用于日志（请求体截断避免过长）
     local curl_log_cmd
@@ -661,16 +755,27 @@ _do_curl_post() {
 curl -X POST "$url" \
     -H "Content-Type: application/json" \
     -d "${request_body:0:200}${request_body:200:+...}" \
-    --max-time "$FEISHU_HTTP_TIMEOUT"
+    --max-time "$FEISHU_HTTP_TIMEOUT" \
+    --noproxy "*"
 EOF
 )
 
     local response
     local http_code
+
+    # 构建 headers
+    local headers="-H \"Content-Type: application/json\""
+    if [ -n "$auth_token" ]; then
+        headers="$headers -H \"X-Auth-Token: $auth_token\""
+    fi
+
+    # 执行 curl 请求
     response=$(curl -X POST "$url" \
         -H "Content-Type: application/json" \
+        ${auth_token:+-H "X-Auth-Token: $auth_token"} \
         -d "$request_body" \
         --max-time "$FEISHU_HTTP_TIMEOUT" \
+        --noproxy "*" \
         --silent \
         --show-error \
         -w "\n%{http_code}" 2>&1)
@@ -701,8 +806,8 @@ EOF
 # 功能: 通过飞书 Webhook URL 发送消息
 #
 # 参数:
-#   $1 - webhook_url   Webhook URL
-#   $2 - request_body  请求 JSON 字符串
+#   $1 - request_body  请求 JSON 字符串
+#   $2 - target_url    Webhook URL
 #   $3 - log_prefix    日志前缀 (可选，默认 "webhook")
 #
 # 返回:
@@ -710,19 +815,19 @@ EOF
 #   1 - 发送失败
 # ----------------------------------------------------------------------------
 _send_via_webhook() {
-    local webhook_url="$1"
-    local request_body="$2"
+    local request_body="$1"
+    local target_url="$2"
     local log_prefix="${3:-webhook}"
 
-    if [ -z "$webhook_url" ]; then
-        log_error "${log_prefix}: webhook_url not set"
+    if [ -z "$target_url" ]; then
+        log_error "${log_prefix}: target_url not set"
         return 1
     fi
 
     log "Sending via ${log_prefix}..."
 
     local http_code response
-    response=$(_do_curl_post "$webhook_url" "$request_body" "$log_prefix")
+    response=$(_do_curl_post "$target_url" "$request_body" "$log_prefix")
     local curl_status=$?
     http_code=$(echo "$response" | head -n 1)
     response=$(echo "$response" | sed '1d')
@@ -760,6 +865,7 @@ _send_via_webhook() {
 #
 # 说明:
 #   兼容 callback 服务和飞书网关的 /feishu/send 接口
+#   会自动从 runtime/auth_token.json 读取并传递 auth_token 进行双向认证
 # ----------------------------------------------------------------------------
 _send_via_http_endpoint() {
     local request_body="$1"
@@ -775,8 +881,15 @@ _send_via_http_endpoint() {
 
     log "Sending via ${log_prefix}: $api_url"
 
+    # 获取 auth_token（用于双向认证）
+    local auth_token
+    auth_token=$(_get_auth_token)
+    if [ -n "$auth_token" ]; then
+        log "Using auth_token for authentication"
+    fi
+
     local http_code response
-    response=$(_do_curl_post "$api_url" "$request_body" "$log_prefix")
+    response=$(_do_curl_post "$api_url" "$request_body" "$log_prefix" "$auth_token")
     local curl_status=$?
     http_code=$(echo "$response" | head -n 1)
     response=$(echo "$response" | sed '1d')
@@ -828,12 +941,10 @@ _send_via_http_endpoint() {
 #
 # 发送模式:
 #   - webhook: 直接发送到 FEISHU_WEBHOOK_URL
-#   - openapi: 通过 OpenAPI 发送
-#       - 单机部署: 通过本机 /feishu/send 接口发送
-#       - 分离部署 (FEISHU_GATEWAY_URL): 通过飞书网关发送
+#   - openapi: 通过 {FEISHU_GATEWAY_URL:-$CALLBACK_SERVER_URL}/feishu/send 发送
 #
 # 说明:
-#   - openapi 模式自动读取 FEISHU_RECEIVE_ID 配置
+#   - openapi 模式下 FEISHU_GATEWAY_URL 为空时默认使用 CALLBACK_SERVER_URL
 #   - 发送失败时，会发送降级文本消息通知用户
 # ----------------------------------------------------------------------------
 send_feishu_card() {
@@ -856,35 +967,31 @@ send_feishu_card() {
         log_raw "$card_json"
     fi
 
-    # 检查是否使用分离部署（飞书网关）
-    local gateway_url
-    gateway_url=$(get_config "FEISHU_GATEWAY_URL" "")
+    local send_mode
+    send_mode=$(get_config "FEISHU_SEND_MODE" "webhook")
 
     local result=1
 
-    # 构建传递给 _send_feishu_card_http_endpoint 的 options
-    local http_options=""
-    if [ -n "$session_id" ] || [ -n "$project_dir" ] || [ -n "$callback_url" ]; then
-        http_options=$(json_build_object "session_id" "$session_id" "project_dir" "$project_dir" "callback_url" "$callback_url")
-    fi
+    if [ "$send_mode" = "openapi" ]; then
+        # OpenAPI 模式：通过 /feishu/send 发送
+        # 目标：FEISHU_GATEWAY_URL 或 CALLBACK_SERVER_URL
+        local gateway_url
+        gateway_url=$(get_config "FEISHU_GATEWAY_URL" "")
 
-    if [ -n "$gateway_url" ]; then
-        # 分离部署：通过飞书网关发送
-        _send_feishu_card_http_endpoint "$card_json" "$gateway_url" "$http_options"
+        local target_url="${gateway_url:-$CALLBACK_SERVER_URL}"
+
+        # 构建传递给 _send_feishu_card_http_endpoint 的 options
+        local http_options=""
+        if [ -n "$session_id" ] || [ -n "$project_dir" ] || [ -n "$callback_url" ]; then
+            http_options=$(json_build_object "session_id" "$session_id" "project_dir" "$project_dir" "callback_url" "$callback_url")
+        fi
+
+        _send_feishu_card_http_endpoint "$card_json" "$target_url" "$http_options"
         result=$?
     else
-        # 单机模式：根据 FEISHU_SEND_MODE 选择发送方式
-        local send_mode
-        send_mode=$(get_config "FEISHU_SEND_MODE" "webhook")
-
-        if [ "$send_mode" = "openapi" ]; then
-            _send_feishu_card_http_endpoint "$card_json" "" "$http_options"
-            result=$?
-        else
-            # webhook 模式（默认）
-            _send_feishu_card_webhook "$card_json" "$webhook_url"
-            result=$?
-        fi
+        # Webhook 模式（默认）
+        _send_feishu_card_webhook "$card_json" "$webhook_url"
+        result=$?
     fi
 
     # 失败时发送降级文本消息（send_feishu_text 会根据模式选择发送方式）
@@ -918,7 +1025,7 @@ send_feishu_card() {
 _send_feishu_card_webhook() {
     local card_json="$1"
     local webhook_url="$2"
-    _send_via_webhook "$webhook_url" "$card_json" "webhook-card"
+    _send_via_webhook "$card_json" "$webhook_url" "webhook-card"
 }
 
 # ----------------------------------------------------------------------------
@@ -941,8 +1048,9 @@ _send_feishu_card_webhook() {
 #   1 - 发送失败
 #
 # 说明:
-#   自动读取 FEISHU_RECEIVE_ID 配置并传递给服务端
+#   自动读取 FEISHU_OWNER_ID 配置并作为 owner_id 传递给服务端
 #   session_id/project_dir/callback_url 用于支持回复继续会话功能
+#   如果有 session_id，会自动查询对应的 chat_id，优先使用 chat_id 发送
 # ----------------------------------------------------------------------------
 _send_feishu_card_http_endpoint() {
     local card_json="$1"
@@ -959,27 +1067,49 @@ _send_feishu_card_http_endpoint() {
     local card_content
     card_content=$(json_get_object "$card_json" "card")
 
-    # 读取接收者配置
-    local receive_id receive_id_type
-    receive_id=$(get_config "FEISHU_RECEIVE_ID" "")
-    receive_id_type=$(get_config "FEISHU_RECEIVE_ID_TYPE" "")
+    # 读取 owner_id 配置（作为接收者/备用）
+    local owner_id
+    owner_id=$(get_config "FEISHU_OWNER_ID" "")
+
+    if [ -z "$owner_id" ]; then
+        log "Error: FEISHU_OWNER_ID not configured"
+        return 1
+    fi
+
+    # 获取 chat_id（优先使用 session 对应的 chat_id）
+    local chat_id=""
+    if [ -n "$session_id" ]; then
+        chat_id=$(_get_chat_id "$session_id")
+        if [ -n "$chat_id" ]; then
+            log "Found chat_id for session: $chat_id"
+        fi
+    fi
+
+    # 如果没有找到 chat_id，使用配置的 FEISHU_CHAT_ID
+    if [ -z "$chat_id" ]; then
+        chat_id=$(get_config "FEISHU_CHAT_ID" "")
+        if [ -n "$chat_id" ]; then
+            log "Using configured FEISHU_CHAT_ID: $chat_id"
+        fi
+    fi
 
     local request_body
-    # 如果提供了 session 相关参数，包含在请求体中
+    # 构建 JSON 转义函数
+    _json_escape() {
+        printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+    }
+
+    # 构建请求体，chat_id 可以为空，后端会自动判断优先级
     if [ -n "$session_id" ] && [ -n "$project_dir" ] && [ -n "$callback_url" ]; then
-        # 转义 project_dir 中的特殊字符
-        local escaped_project_dir
-        escaped_project_dir=$(printf '%s' "$project_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
-        # 转义 callback_url 中的特殊字符
-        local escaped_callback_url
-        escaped_callback_url=$(printf '%s' "$callback_url" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        local escaped_project_dir=$(_json_escape "$project_dir")
+        local escaped_callback_url=$(_json_escape "$callback_url")
 
         request_body=$(cat <<-EOF
 		{
 		  "msg_type": "interactive",
 		  "content": $card_content,
-		  "receive_id": "$receive_id",
-		  "receive_id_type": "$receive_id_type",
+		  "owner_id": "$owner_id",
+		  "chat_id": "$chat_id",
 		  "session_id": "$session_id",
 		  "project_dir": "$escaped_project_dir",
 		  "callback_url": "$escaped_callback_url"
@@ -991,21 +1121,14 @@ _send_feishu_card_http_endpoint() {
 		{
 		  "msg_type": "interactive",
 		  "content": $card_content,
-		  "receive_id": "$receive_id",
-		  "receive_id_type": "$receive_id_type"
+		  "owner_id": "$owner_id",
+		  "chat_id": "$chat_id"
 		}
 		EOF
         )
     fi
 
-    local log_prefix
-    if [ -n "$target_url" ]; then
-        log_prefix="gateway-card"
-    else
-        log_prefix="openapi-card"
-    fi
-
-    _send_via_http_endpoint "$request_body" "$target_url" "$log_prefix"
+    _send_via_http_endpoint "$request_body" "$target_url" "openapi-card"
 }
 
 # ----------------------------------------------------------------------------
@@ -1026,61 +1149,54 @@ _send_feishu_card_http_endpoint() {
 #
 # 发送模式:
 #   - webhook: 直接发送到 FEISHU_WEBHOOK_URL
-#   - openapi: 通过 OpenAPI 发送
-#       - 单机部署: 通过本机 /feishu/send 接口发送
-#       - 分离部署 (FEISHU_GATEWAY_URL): 通过飞书网关发送
+#   - openapi: 通过 {FEISHU_GATEWAY_URL:-$CALLBACK_SERVER_URL}/feishu/send 发送
 #
 # 说明:
-#   - openapi 模式自动读取 FEISHU_RECEIVE_ID 配置
+#   - openapi 模式自动读取 FEISHU_OWNER_ID 配置
 # ----------------------------------------------------------------------------
 send_feishu_text() {
     local message_text="$1"
     local webhook_url="${2:-$(get_config "FEISHU_WEBHOOK_URL" "")}"
 
-    # 检查是否使用分离部署（飞书网关）
-    local gateway_url
-    gateway_url=$(get_config "FEISHU_GATEWAY_URL" "")
+    local send_mode
+    send_mode=$(get_config "FEISHU_SEND_MODE" "webhook")
 
-    # 读取接收者配置
-    local receive_id receive_id_type
-    receive_id=$(get_config "FEISHU_RECEIVE_ID" "")
-    receive_id_type=$(get_config "FEISHU_RECEIVE_ID_TYPE" "")
+    if [ "$send_mode" = "openapi" ]; then
+        # OpenAPI 模式：通过 /feishu/send 发送
+        local gateway_url
+        gateway_url=$(get_config "FEISHU_GATEWAY_URL" "")
+        local target_url="${gateway_url:-$CALLBACK_SERVER_URL}"
 
-    # 构建 JSON 转义后的文本
-    local escaped_text
-    escaped_text=$(echo "$message_text" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        # 读取 owner_id 配置（作为接收者）
+        local owner_id
+        owner_id=$(get_config "FEISHU_OWNER_ID" "")
 
-    # 构建文本消息 JSON
-    local text_json
-    text_json=$(cat <<-EOF
+        if [ -z "$owner_id" ]; then
+            log "Error: FEISHU_OWNER_ID not configured"
+            return 1
+        fi
+
+        # 构建 JSON 转义后的文本
+        local escaped_text
+        escaped_text=$(echo "$message_text" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
+        # 构建文本消息 JSON
+        local text_json
+        text_json=$(cat <<-EOF
 		{
 		  "msg_type": "text",
 		  "content": {
 		    "text": "$escaped_text"
 		  },
-		  "receive_id": "$receive_id",
-		  "receive_id_type": "$receive_id_type"
+		  "owner_id": "$owner_id"
 		}
 		EOF
-    )
+        )
 
-    log "Sending text message: ${message_text}"
-
-    if [ -n "$gateway_url" ]; then
-        # 分离部署：通过飞书网关发送
-        _send_via_http_endpoint "$text_json" "$gateway_url" "gateway-text"
-        return $?
+        log "Sending text message: ${message_text}"
+        _send_via_http_endpoint "$text_json" "$target_url" "openapi-text"
     else
-        # 单机模式：根据 FEISHU_SEND_MODE 选择
-        local send_mode
-        send_mode=$(get_config "FEISHU_SEND_MODE" "webhook")
-
-        if [ "$send_mode" = "openapi" ]; then
-            _send_via_http_endpoint "$text_json" "" "openapi-text"
-            return $?
-        else
-            _send_via_webhook "$webhook_url" "$text_json" "webhook-text"
-            return $?
-        fi
+        # Webhook 模式（默认）
+        _send_via_webhook "$message_text" "$webhook_url" "webhook-text"
     fi
 }

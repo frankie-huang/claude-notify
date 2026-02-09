@@ -176,12 +176,23 @@ VSCODE_URI_PREFIX = get_config('VSCODE_URI_PREFIX', '')
 FEISHU_APP_ID = get_config('FEISHU_APP_ID', '')
 FEISHU_APP_SECRET = get_config('FEISHU_APP_SECRET', '')
 
-# 消息接收者 ID (支持 ou_xxx / oc_xxx / user_id)
-FEISHU_RECEIVE_ID = get_config('FEISHU_RECEIVE_ID', '')
+# Verification Token (用于验证飞书事件请求)
+FEISHU_VERIFICATION_TOKEN = get_config('FEISHU_VERIFICATION_TOKEN', '')
 
-# 接收者 ID 类型 (可选，留空自动检测)
-# 可选值: open_id, user_id, union_id, email, chat_id
-FEISHU_RECEIVE_ID_TYPE = get_config('FEISHU_RECEIVE_ID_TYPE', '')
+# 消息接收者不再通过配置指定，由客户端在请求中通过 owner_id 参数提供
 
 # 发送模式: webhook / openapi
 FEISHU_SEND_MODE = get_config('FEISHU_SEND_MODE', 'webhook')
+
+# Callback 服务对外访问地址（用于网关注册）
+CALLBACK_SERVER_URL = get_config('CALLBACK_SERVER_URL', '')
+
+# 飞书用户 ID（用于网关注册）
+FEISHU_OWNER_ID = get_config('FEISHU_OWNER_ID', '')
+
+# 飞书网关地址（分离部署时配置，网关注册接口为 {FEISHU_GATEWAY_URL}/register）
+# OpenAPI 模式下未配置时，默认使用 CALLBACK_SERVER_URL（单机模式）
+_FEISHU_GATEWAY_URL = get_config('FEISHU_GATEWAY_URL', '')
+FEISHU_GATEWAY_URL = _FEISHU_GATEWAY_URL if _FEISHU_GATEWAY_URL else (
+    CALLBACK_SERVER_URL if FEISHU_SEND_MODE == 'openapi' else ''
+)

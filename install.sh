@@ -356,16 +356,17 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
 # OpenAPI 模式支持两种部署方式：
 #
 # 【单机部署】所有配置在同一台机器
-#   - 配置 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_RECEIVE_ID
+#   - 配置 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_OWNER_ID
 #   - 不配置 FEISHU_GATEWAY_URL
 #
 # 【分离部署】飞书网关与 Callback 服务分离（多实例场景）
-#   - 网关服务: 配置 FEISHU_APP_ID、FEISHU_APP_SECRET
-#   - Callback 服务: 配置 FEISHU_GATEWAY_URL、FEISHU_RECEIVE_ID
-#   - 每个 Callback 服务可以发给不同用户
+#   - 网关服务: 配置 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_VERIFICATION_TOKEN
+#   - Callback 服务: 配置 FEISHU_GATEWAY_URL、FEISHU_OWNER_ID
+#   - 每个 Callback 服务可以发给不同用户（通过各自的 FEISHU_OWNER_ID）
 
 # --- 飞书网关地址（分离部署时配置）---
 # 配置后，消息通过飞书网关发送，本机无需配置飞书应用凭证
+# 同时用于网关注册功能（注册接口为 {FEISHU_GATEWAY_URL}/register）
 FEISHU_GATEWAY_URL=
 
 # --- 飞书应用凭证（单机部署或网关服务配置）---
@@ -374,19 +375,10 @@ FEISHU_GATEWAY_URL=
 FEISHU_APP_ID=
 FEISHU_APP_SECRET=
 
-# --- 消息接收者（单机部署或 Callback 服务配置）---
-# 分离部署时由 Callback 服务配置，每个实例可以发给不同用户
-# 支持格式:
-#   - ou_xxxx: 用户 open_id
-#   - oc_xxxx: 群聊 chat_id
-#   - on_xxxx: 用户 union_id
-#   - xxx@xxx: 用户邮箱
-#   - 其他: 用户 user_id
-FEISHU_RECEIVE_ID=
-
-# 接收者 ID 类型 (可选，留空自动检测)
-# 可选值: open_id, user_id, union_id, email, chat_id
-FEISHU_RECEIVE_ID_TYPE=
+# --- 安全验证配置（网关服务必填）---
+# Verification Token，从飞书开放平台 -> 应用管理 -> 事件订阅 -> 加密与签名 获取
+# 用于验证事件请求是否来自飞书，建议生产环境配置
+FEISHU_VERIFICATION_TOKEN=
 
 # =============================================================================
 # 四、回调服务器配置
@@ -396,6 +388,7 @@ FEISHU_RECEIVE_ID_TYPE=
 # 回调服务器外部访问地址
 # 用于飞书卡片按钮的回调 URL
 # 如果使用内网穿透，填写穿透后的公网地址
+# 启用网关注册功能时必填
 CALLBACK_SERVER_URL=http://localhost:8080
 
 # 回调服务器端口 (可选，默认 8080)
@@ -409,6 +402,23 @@ PERMISSION_SOCKET_PATH=/tmp/claude-permission.sock
 # 用户点击按钮后，回调页面显示的倒计时秒数
 # 建议范围: 1-10 秒
 CLOSE_PAGE_TIMEOUT=3
+
+# --- 飞书网关注册配置（可选）---
+# 启用后，Callback 后端启动时自动向飞书网关注册，实现双向认证
+#
+# 飞书用户 ID（网关注册时必填，同时作为 OpenAPI 消息接收者）
+# 支持格式:
+#   - ou_xxxx: 用户 open_id
+#   - oc_xxxx: 群聊 chat_id
+#   - on_xxxx: 用户 union_id
+#   - xxx@xxx: 用户邮箱
+#   - 其他: 用户 user_id
+FEISHU_OWNER_ID=
+
+# 飞书群聊 ID (可选，默认为空)
+# 由客户端读取，用于发送消息到指定群聊
+# 客户端调用 /feishu/send 时可将 chat_id 作为参数传入
+FEISHU_CHAT_ID=
 
 # =============================================================================
 # 五、飞书通知配置

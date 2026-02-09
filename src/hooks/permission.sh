@@ -41,6 +41,7 @@ SOCKET_PATH=$(get_config "PERMISSION_SOCKET_PATH" "/tmp/claude-permission.sock")
 WEBHOOK_URL=$(get_config "FEISHU_WEBHOOK_URL" "")
 CALLBACK_SERVER_URL=$(get_config "CALLBACK_SERVER_URL" "http://localhost:8080")
 NOTIFY_DELAY=$(get_config "PERMISSION_NOTIFY_DELAY" "60")
+OWNER_ID=$(get_config "FEISHU_OWNER_ID" "")
 
 # 时间戳
 TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")
@@ -84,21 +85,24 @@ delay_with_parent_check() {
 }
 
 # =============================================================================
-# 生成请求 ID
+# 生成请求 ID（安全增强）
 # =============================================================================
+# 生成 32 字符的随机 request_id（192 位熵，降低可预测性）
 generate_request_id() {
-    local ts=$(date +%s)
-    local uuid=""
-
+    # 优先使用 uuidgen 生成完整的 UUID，再取 32 字符
     if command -v uuidgen &> /dev/null; then
-        uuid=$(uuidgen | tr '[:upper:]' '[:lower:]' | cut -c1-8)
+        # 生成两个 UUID 拼接，去除横线，得到 32 字符
+        local uuid1=$(uuidgen | tr -d '-')
+        local uuid2=$(uuidgen | tr -d '-')
+        echo "${uuid1:0:16}${uuid2:0:16}"
     elif [ -f /proc/sys/kernel/random/uuid ]; then
-        uuid=$(cat /proc/sys/kernel/random/uuid | cut -c1-8)
+        local uuid1=$(cat /proc/sys/kernel/random/uuid | tr -d '-')
+        local uuid2=$(cat /proc/sys/kernel/random/uuid | tr -d '-')
+        echo "${uuid1:0:16}${uuid2:0:16}"
     else
-        uuid=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-8)
+        # 从 urandom 读取 24 字节，base64 编码得到 32 字符
+        head -c 24 /dev/urandom | base64 | tr -d '=+/'
     fi
-
-    echo "${ts}-${uuid}"
 }
 
 REQUEST_ID=$(generate_request_id)
@@ -134,7 +138,7 @@ run_interactive_mode() {
 
     # 构建交互按钮（根据 FEISHU_SEND_MODE 自动选择按钮类型）
     local buttons
-    buttons=$(build_permission_buttons "$CALLBACK_SERVER_URL" "$REQUEST_ID")
+    buttons=$(build_permission_buttons "$CALLBACK_SERVER_URL" "$REQUEST_ID" "$OWNER_ID")
 
     # 构建飞书卡片
     local card

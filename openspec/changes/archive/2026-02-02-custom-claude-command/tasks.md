@@ -20,5 +20,5 @@
 
 ## 4. 文档更新
 
-- [x] 4.1 更新 `docs/feishu-reply-continue-session.md`，新增配置说明章节
+- [x] 4.1 更新 `docs/FEISHU_SESSION_CONTINUE.md`，新增配置说明章节
 - [x] 4.2 更新说明支持 shell 别名的特性

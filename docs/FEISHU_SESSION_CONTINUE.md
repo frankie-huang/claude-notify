@@ -1,28 +1,31 @@
-# 飞书消息回复继续 Claude 会话方案
+# 飞书回复继续 Claude 会话方案
 
-## 一、需求概述
+## 1. 需求概述
 
-当 Claude 触发 stop 事件后，stop.sh 发送一条完成消息到飞书。用户可以通过回复这条消息，在对应的 Claude session 中继续发起提问。
+当 Claude 触发 Stop 事件后，`stop.sh` 发送一条完成消息到飞书。用户可以通过回复这条消息，在对应的 Claude Session 中继续发起提问。
 
-## 二、架构背景
+## 2. 架构背景
 
 本方案基于**分离模式**设计：
-- **飞书网关**：独立服务，负责接收飞书事件、发送消息、维护映射表
-- **Callback 后端**：可能有多个，每个对应不同的项目/机器，负责运行 Claude
 
-## 三、核心问题分析
+| 组件 | 职责 |
+|------|------|
+| **飞书网关** | 接收飞书事件、发送消息、维护映射表 |
+| **Callback 后端** | 运行 Claude，可能有多个，每个对应不同的项目/机器 |
+
+## 3. 核心问题分析
 
 | 问题 | 描述 |
 |------|------|
-| **1. 消息关联** | 如何知道用户引用回复了哪条消息 |
-| **2. Session 映射** | 如何知道这条消息对应哪个 Claude session、哪个 Callback 后端 |
-| **3. 消息注入** | 如何将用户的提问发送给 Claude 会话 |
+| **消息关联** | 如何知道用户引用回复了哪条消息 |
+| **Session 映射** | 如何知道这条消息对应哪个 Claude Session、哪个 Callback 后端 |
+| **消息注入** | 如何将用户的提问发送给 Claude 会话 |
 
-## 四、各问题的解决方案
+## 4. 问题 1：检测用户回复了哪条消息
 
-### 问题 1：如何检测用户回复了哪条消息
+### 飞书机制
 
-**飞书机制**：当用户回复一条消息时，`im.message.receive_v1` 事件的消息体中包含 `parent_id` 字段：
+当用户回复一条消息时，`im.message.receive_v1` 事件的消息体中包含 `parent_id` 字段：
 
 ```json
 {
@@ -38,23 +41,35 @@
 }
 ```
 
-**现有代码位置**：`src/server/handlers/feishu.py` 的 `_handle_message_event` 已处理此事件，但目前只记录日志。
+### 现有代码
 
-### 问题 2：如何建立 message_id → session 的映射
+`src/server/handlers/feishu.py` 的 `_handle_message_event` 已处理此事件，但目前只记录日志。
 
-**时机**：发送消息时同步注册映射。
+## 5. 问题 2：建立 message_id → Session 的映射
 
-**前提条件**：本方案基于 **OpenAPI 模式**，发送消息时会返回 `message_id`。
+### 映射时机
+
+发送消息时同步注册映射。
+
+### 前提条件
+
+本方案基于 **OpenAPI 模式**，发送消息时会返回 `message_id`。
 
 现有代码 `feishu_api.py` 已经返回 message_id：
+
 ```python
 message_id = resp.get('data', {}).get('message_id', '')
 return True, message_id
 ```
 
-**映射存储位置**：飞书网关本地，JSON 文件 `runtime/session_messages.json`
+### 映射存储
 
-**映射表结构**：
+| 项目 | 说明 |
+|------|------|
+| **存储位置** | 飞书网关本地，JSON 文件 `runtime/session_messages.json` |
+| **过期时间** | 默认 7 天 |
+
+### 映射表结构
 
 ```json
 {
@@ -74,7 +89,7 @@ return True, message_id
 | `callback_url` | Callback 后端地址 |
 | `created_at` | 创建时间戳，用于过期清理 |
 
-### 问题 3：如何将提问发送给 Claude 会话
+## 6. 问题 3：将提问发送给 Claude 会话
 
 飞书网关收到回复消息后，调用对应 Callback 后端的 `/claude/continue` 接口：
 
@@ -95,16 +110,16 @@ Callback 后端执行：
 cd <project_dir> && claude -p "<prompt>" --resume "<session_id>"
 ```
 
-Claude 完成后，通过 hook 事件自行决定发送结果到哪里。
+Claude 完成后，通过 Hook 事件自行决定发送结果到哪里。
 
-## 五、完整架构设计
+## 7. 完整架构设计
 
-### 5.1 注册映射流程（发送消息时）
+### 7.1 注册映射流程（发送消息时）
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         Callback 后端 (stop.sh)                              │
-│  Claude stop 事件触发                                                        │
+│  Claude Stop 事件触发                                                        │
 │  调用 send_feishu_card，传递 session_id, project_dir, callback_url          │
 └─────────────────────────────────────────────────────────────────────────────┘
                                                │
@@ -130,7 +145,7 @@ Claude 完成后，通过 hook 事件自行决定发送结果到哪里。
                                     └─────────────────────┘
 ```
 
-### 5.2 继续会话流程（用户回复时）
+### 7.2 继续会话流程（用户回复时）
 
 ```
                                     ┌─────────────────────┐
@@ -159,11 +174,11 @@ Claude 完成后，通过 hook 事件自行决定发送结果到哪里。
 │                         Callback 后端                                        │
 │  1. 接收请求                                                                 │
 │  2. 执行: cd <project_dir> && claude -p "<prompt>" --resume <session_id>    │
-│  3. Claude 完成后，hook 事件自行决定发送结果到哪里                             │
+│  3. Claude 完成后，Hook 事件自行决定发送结果到哪里                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 六、需要修改的文件
+## 8. 需要修改的文件
 
 | 文件 | 修改内容 |
 |------|----------|
@@ -175,9 +190,9 @@ Claude 完成后，通过 hook 事件自行决定发送结果到哪里。
 | `src/server/handlers/claude.py` | **新增** `/claude/continue` 接口 |
 | `src/server/services/claude_invoker.py` | **新增** 封装 Claude 调用 |
 
-## 七、详细实现说明
+## 9. 详细实现说明
 
-### 7.1 注册映射数据流
+### 9.1 注册映射数据流
 
 ```
 stop.sh
@@ -210,9 +225,9 @@ handle_send_message()  [src/server/handlers/feishu.py]
 完成
 ```
 
-### 7.2 各文件修改详情
+### 9.2 各文件修改详情
 
-#### 7.2.1 `src/hooks/stop.sh`
+#### 9.2.1 `src/hooks/stop.sh`
 
 修改 `send_stop_notification_async` 函数，传递 session_id、project_dir 和 callback_url：
 
@@ -227,7 +242,7 @@ send_feishu_card "$CARD" "$WEBHOOK_URL" >/dev/null 2>&1
 send_feishu_card "$CARD" "$WEBHOOK_URL" "$SESSION_ID" "$PROJECT_DIR" "$CALLBACK_URL" >/dev/null 2>&1
 ```
 
-#### 7.2.2 `src/lib/feishu.sh`
+#### 9.2.2 `src/lib/feishu.sh`
 
 **修改 `send_feishu_card` 函数签名**：
 
@@ -279,7 +294,7 @@ _send_feishu_card_openapi() {
     fi
 ```
 
-#### 7.2.3 `src/server/handlers/feishu.py`
+#### 9.2.3 `src/server/handlers/feishu.py`
 
 **修改 `handle_send_message` 函数**：
 
@@ -370,7 +385,7 @@ def _handle_reply_message(event: dict, parent_id: str) -> Tuple[bool, dict]:
         return False, {'error': str(e)}
 ```
 
-#### 7.2.4 新增 `src/server/services/session_store.py`
+#### 9.2.4 新增 `src/server/services/session_store.py`
 
 ```python
 """Session-Message 映射存储"""
@@ -468,7 +483,7 @@ class SessionStore:
             return False
 ```
 
-#### 7.2.5 新增 `src/server/handlers/claude.py`
+#### 9.2.5 新增 `src/server/handlers/claude.py`
 
 ```python
 """Claude 会话相关接口"""
@@ -515,17 +530,18 @@ def _run_claude_async(session_id: str, project_dir: str, prompt: str):
         subprocess.run(
             cmd,
             cwd=project_dir,
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
             timeout=600  # 10 分钟超时
         )
     except Exception as e:
-        # Claude 完成后会触发 hook，由 hook 发送结果
+        # Claude 完成后会触发 Hook，由 Hook 发送结果
         # 这里只记录错误
         print(f"Claude execution error: {e}")
 ```
 
-#### 7.2.6 路由注册
+#### 9.2.6 路由注册
 
 在 `src/server/app.py` 中注册新路由：
 
@@ -540,7 +556,7 @@ def claude_continue():
     return jsonify(result), status_code
 ```
 
-#### 7.2.7 错误通知机制
+#### 9.2.7 错误通知机制
 
 当 Claude 命令执行异常时，Callback 后端会通过飞书发送错误通知（前提是请求中包含 `chat_id` 参数）：
 
@@ -557,19 +573,19 @@ def claude_continue():
 - 通知通过 `FeishuAPIService.send_text()` 发送到群聊
 - 延迟导入 `FeishuAPIService` 以避免循环依赖
 
-## 八、潜在问题与解决方案
+## 10. 潜在问题与解决方案
 
 | 问题 | 影响 | 解决方案 |
 |------|------|----------|
-| **会话已过期/删除** | 恢复失败 | Claude 会返回错误，hook 可以发送友好提示 |
+| **会话已过期/删除** | 恢复失败 | Claude 会返回错误，Hook 可以发送友好提示 |
 | **长时间运行** | 飞书回调超时 | 异步执行 Claude，先返回 "processing" |
-| **多人回复不同消息** | 不同 session 并发 | 每次回复创建独立调用，不同 session 互不影响 |
+| **多人回复不同消息** | 不同 Session 并发 | 每次回复创建独立调用，不同 Session 互不影响 |
 | **项目目录不存在** | 执行失败 | 执行前检查目录，返回错误提示 |
 | **Callback 不可达** | 无法继续会话 | 飞书网关记录错误日志，可考虑重试机制 |
 
-## 九、已知问题
+## 11. 已知问题
 
-### 同一 session 并发调用 ⚠️
+### 同一 Session 并发调用
 
 **问题描述：**
 
@@ -580,9 +596,9 @@ def claude_continue():
 | 影响 | 描述 |
 |------|------|
 | **竞态条件** | 多个进程同时读写 `~/.claude/sessions/<session_id>.json` |
-| **状态覆盖** | 后完成的请求会覆盖先完成请求的 session 状态 |
+| **状态覆盖** | 后完成的请求会覆盖先完成请求的 Session 状态 |
 | **对话历史混乱** | 可能导致对话历史丢失或交错 |
-| **文件损坏** | 极端情况下可能导致 session JSON 文件损坏 |
+| **文件损坏** | 极端情况下可能导致 Session JSON 文件损坏 |
 
 **当前状态：** 暂未处理，允许并发执行
 
@@ -591,12 +607,12 @@ def claude_continue():
 | 方案 | 复杂度 | 说明 |
 |------|--------|------|
 | **文件锁** | 低 | 执行前创建 `runtime/session_<id>.lock`，存在则拒绝或等待 |
-| **内存锁** | 中 | 在 `SessionStore` 中维护"正在使用的 session"集合 |
+| **内存锁** | 中 | 在 `SessionStore` 中维护"正在使用的 Session"集合 |
 | **任务队列** | 高 | 引入队列系统（如 Redis），严格排队处理 |
 
-## 十、配置项
+## 12. 配置项
 
-### 10.1 Callback 服务地址
+### 12.1 Callback 服务地址
 
 本方案复用现有配置 `CALLBACK_SERVER_URL`（已在权限通知场景中使用）：
 
@@ -613,7 +629,7 @@ CALLBACK_URL=$(get_config "CALLBACK_SERVER_URL" "http://localhost:8080")
 send_feishu_card "$CARD" "$WEBHOOK_URL" "$SESSION_ID" "$PROJECT_DIR" "$CALLBACK_URL"
 ```
 
-### 10.2 Claude 命令配置
+### 12.2 Claude 命令配置
 
 通过 `CLAUDE_COMMAND` 环境变量可以自定义使用的 Claude 命令。
 
@@ -633,9 +649,9 @@ CLAUDE_COMMAND=claude-glm
 CLAUDE_COMMAND="claude --setting opus"
 ```
 
-**支持 shell 别名**：
+**支持 Shell 别名：**
 
-命令通过登录 shell（`bash -lc`）执行，会自动加载 shell 配置文件（如 `~/.bashrc`），因此支持使用定义在配置文件中的别名：
+命令通过登录 Shell（`bash -lc`）执行，会自动加载 Shell 配置文件（如 `~/.bashrc`），因此支持使用定义在配置文件中的别名：
 
 ```bash
 # ~/.bashrc 中定义别名
@@ -649,7 +665,7 @@ CLAUDE_COMMAND=claude-glm
 
 - 使用其他 Claude 变体（如 `claude-glm`）
 - 指定模型参数（如 `--setting opus`）
-- 使用 shell 配置文件中定义的别名
+- 使用 Shell 配置文件中定义的别名
 - 使用自定义脚本路径
 
 **注意**：
@@ -658,20 +674,23 @@ CLAUDE_COMMAND=claude-glm
 - 命令会在项目工作目录下执行
 - 继续会话和新建会话功能都会使用此配置
 
-## 十一、推荐的实现优先级
+## 13. 实现优先级建议
 
-1. **第一阶段**：实现映射注册
-   - 新增 `session_store.py`
-   - 修改 `stop.sh` 传递 session_id、project_dir、callback_url
-   - 修改 `feishu.sh` 在请求体中添加这些字段
-   - 修改 `feishu.py` 发送成功后保存映射
+### 第一阶段：映射注册
 
-2. **第二阶段**：实现消息处理
-   - 扩展 `_handle_message_event` 识别回复消息
-   - 新增 `/claude/continue` 接口
-   - 实现 Claude 异步调用
+- 新增 `session_store.py`
+- 修改 `stop.sh` 传递 session_id、project_dir、callback_url
+- 修改 `feishu.sh` 在请求体中添加这些字段
+- 修改 `feishu.py` 发送成功后保存映射
 
-3. **第三阶段**：优化体验
-   - 错误处理和友好提示
-   - 过期清理机制
-   - 监控和日志
+### 第二阶段：消息处理
+
+- 扩展 `_handle_message_event` 识别回复消息
+- 新增 `/claude/continue` 接口
+- 实现 Claude 异步调用
+
+### 第三阶段：优化体验
+
+- 错误处理和友好提示
+- 过期清理机制
+- 监控和日志

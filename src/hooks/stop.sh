@@ -51,7 +51,7 @@ find_last_assistant_in_file() {
     while [ $retry_count -lt $max_retries ]; do
         if [ "$JSON_HAS_JQ" = "true" ]; then
             # 先找到最后一条 assistant 消息
-            last_assistant=$(jq -r 'select(.type=="assistant")' "$transcript_file" 2>/dev/null | tail -1)
+            last_assistant=$(jq -s 'map(select(.type=="assistant")) | .[-1]' "$transcript_file" 2>/dev/null)
             # 检查是否包含 text 类型内容，不包含则清空
             if [ -n "$last_assistant" ]; then
                 local has_text=$(echo "$last_assistant" | jq -r '.message.content | map(select(.type=="text")) | length > 0' 2>/dev/null)
