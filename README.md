@@ -524,13 +524,12 @@ OpenAPI 模式支持将群聊与用户绑定，实现多群聊消息路由：
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `FEISHU_OWNER_ID` | 默认消息接收者 / 通知 @ 用户（支持 `ou_`/`oc_`/`on_`/邮箱/user_id） | 空 |
+| `FEISHU_AT_USER` | 通知 @ 用户配置：空=@ `FEISHU_OWNER_ID`，`all`=@ 所有人，`off`=禁用 | 空 |
 | `FEISHU_TEMPLATE_PATH` | 自定义卡片模板目录 | `src/templates/feishu` |
 
 > `FEISHU_OWNER_ID` 的双重作用：
 > 1. 作为首次会话消息的默认接收者
-> 2. 在通知消息中 @ 此用户
->
-> 兼容旧配置项 `FEISHU_AT_USER`（优先读取 `FEISHU_OWNER_ID`）
+> 2. 在通知消息中默认 @ 此用户（可通过 `FEISHU_AT_USER` 覆盖）
 
 #### 回调服务器配置
 

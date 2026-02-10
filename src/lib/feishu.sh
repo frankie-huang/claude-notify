@@ -363,6 +363,49 @@ render_card_template() {
 }
 
 # =============================================================================
+# 辅助函数
+# =============================================================================
+
+# ----------------------------------------------------------------------------
+# _build_at_user_tag - 构建 @ 用户标签
+# ----------------------------------------------------------------------------
+# 功能: 根据 FEISHU_AT_USER 配置构建飞书 @ 用户标签
+#
+# 输出:
+#   飞书 @ 用户标签字符串（含尾部空格），或空字符串
+#
+# 配置规则:
+#   - FEISHU_AT_USER 为空:   默认 @ FEISHU_OWNER_ID
+#   - FEISHU_AT_USER=all:    @ 所有人
+#   - FEISHU_AT_USER=off:    不 @ 任何人
+# ----------------------------------------------------------------------------
+_build_at_user_tag() {
+    local at_user_config
+    at_user_config=$(get_config "FEISHU_AT_USER" "")
+
+    if [ "$at_user_config" = "off" ]; then
+        # 禁用 @ 功能
+        echo ""
+        return 0
+    fi
+
+    if [ -n "$at_user_config" ]; then
+        # 使用指定的值（包括 "all"）
+        echo "<at id=${at_user_config}></at> "
+        return 0
+    fi
+
+    # 默认 @ FEISHU_OWNER_ID
+    local owner_id
+    owner_id=$(get_config "FEISHU_OWNER_ID" "")
+    if [ -n "$owner_id" ]; then
+        echo "<at id=${owner_id}></at> "
+    else
+        echo ""
+    fi
+}
+
+# =============================================================================
 # 卡片构建函数
 # =============================================================================
 
@@ -462,13 +505,8 @@ build_permission_card() {
     fi
 
     # 渲染主模板
-    # 根据 FEISHU_AT_USER 环境变量决定 @ 用户
-    local at_user=""
-    local at_user_config
-    at_user_config=$(get_config "FEISHU_AT_USER" "")
-    if [ -n "$at_user_config" ]; then
-        at_user="<at id=${at_user_config}></at> "
-    fi
+    local at_user
+    at_user=$(_build_at_user_tag)
 
     local card
     if [ -n "$buttons_json" ]; then
@@ -616,12 +654,8 @@ build_stop_card() {
     local session_id="${4:-}"
 
     # 获取 @ 用户配置
-    local at_user=""
-    local at_user_config
-    at_user_config=$(get_config "FEISHU_AT_USER" "")
-    if [ -n "$at_user_config" ]; then
-        at_user="<at id=${at_user_config}></at> "
-    fi
+    local at_user
+    at_user=$(_build_at_user_tag)
 
     render_card_template "stop" \
         "response_content=$response_content" \

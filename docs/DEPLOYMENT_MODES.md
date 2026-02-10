@@ -424,7 +424,8 @@ EOF
 | `ACTIVATE_VSCODE_ON_CALLBACK` | 否 | `false` | 回调时激活 VSCode |
 | `VSCODE_URI_PREFIX` | 否 | - | VSCode URI 前缀 |
 | `VSCODE_SSH_PROXY_PORT` | 否 | - | VSCode SSH 代理端口 |
-| `FEISHU_OWNER_ID` | 否 | - | 默认接收者 / @ 用户（兼容 `FEISHU_AT_USER`） |
+| `FEISHU_OWNER_ID` | 否 | - | 默认接收者 / 通知 @ 用户 |
+| `FEISHU_AT_USER` | 否 | 空(@ owner) | 通知 @ 配置：空=@ owner，`all`=@ 所有人，`off`=禁用 |
 | `CLAUDE_COMMAND` | 否 | `claude` | Claude 命令路径 |
 | `STOP_MESSAGE_MAX_LENGTH` | 否 | `5000` | 任务完成通知最大长度 |
 

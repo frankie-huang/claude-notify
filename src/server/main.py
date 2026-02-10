@@ -320,15 +320,6 @@ def main():
     else:
         logger.info(f"Feishu send mode: {FEISHU_SEND_MODE}")
 
-    # 自动注册到飞书网关
-    from services.auto_register import AutoRegister
-    AutoRegister.initialize(CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL)
-    auto_register = AutoRegister.get_instance()
-    if auto_register and auto_register.enabled:
-        auto_register.register_in_background()
-    else:
-        logger.info("Auto-registration disabled (missing CALLBACK_SERVER_URL, FEISHU_OWNER_ID, or FEISHU_GATEWAY_URL)")
-
     # 启动 Socket 服务器线程
     socket_thread = threading.Thread(target=run_socket_server)
     socket_thread.daemon = True
@@ -343,6 +334,15 @@ def main():
     # 这样飞书回调请求和转发到 /callback/decision 的请求可以并发处理
     server = ThreadedHTTPServer(('0.0.0.0', HTTP_PORT), CallbackHandler)
     logger.info(f"HTTP server listening on port {HTTP_PORT} (threading enabled)")
+
+    # 自动注册到飞书网关（需在 HTTP 服务启动后执行）
+    from services.auto_register import AutoRegister
+    AutoRegister.initialize(CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL)
+    auto_register = AutoRegister.get_instance()
+    if auto_register and auto_register.enabled:
+        auto_register.register_in_background()
+    else:
+        logger.info("Auto-registration disabled (missing CALLBACK_SERVER_URL, FEISHU_OWNER_ID, or FEISHU_GATEWAY_URL)")
 
     try:
         server.serve_forever()

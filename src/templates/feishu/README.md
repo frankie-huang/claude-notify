@@ -10,7 +10,7 @@
 **用途**: 交互式权限请求卡片(带操作按钮)
 
 **变量**:
-- `{{at_user}}` - @ 用户标签(由 `FEISHU_AT_USER` 配置控制,默认为空)
+- `{{at_user}}` - @ 用户标签(由 `FEISHU_AT_USER` 配置控制,默认 @ `FEISHU_OWNER_ID`)
 - `{{template_color}}` - 卡片主题颜色(orange/yellow/blue/purple/grey)
 - `{{tool_name}}` - 工具名称(Bash/Edit/Write/Read 等)
 - `{{project_name}}` - 项目名称
@@ -24,7 +24,7 @@
 **用途**: 静态权限请求卡片(无操作按钮)
 
 **变量**:
-- `{{at_user}}` - @ 用户标签(由 `FEISHU_AT_USER` 配置控制,默认为空)
+- `{{at_user}}` - @ 用户标签(由 `FEISHU_AT_USER` 配置控制,默认 @ `FEISHU_OWNER_ID`)
 - `{{template_color}}` - 卡片主题颜色
 - `{{tool_name}}` - 工具名称
 - `{{project_name}}` - 项目名称
@@ -48,7 +48,7 @@
 **用途**: Stop 事件完成通知卡片
 
 **变量**:
-- `{{at_user}}` - @ 用户标签（由 `FEISHU_AT_USER` 配置控制，默认为空）
+- `{{at_user}}` - @ 用户标签（由 `FEISHU_AT_USER` 配置控制，默认 @ `FEISHU_OWNER_ID`）
 - `{{response_content}}` - Claude 最终响应内容（Markdown 格式）
 - `{{project_name}}` - 项目名称
 - `{{timestamp}}` - 时间戳

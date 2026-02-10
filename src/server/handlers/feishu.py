@@ -642,8 +642,12 @@ def _get_auth_token_from_event(event: dict) -> str:
     return ''
 
 
-def _build_creating_session_card() -> dict:
+def _build_creating_session_card(selected_dir: str, prompt: str) -> dict:
     """构建"正在创建会话"状态卡片
+
+    Args:
+        selected_dir: 选择的工作目录
+        prompt: 用户输入的提示词
 
     Returns:
         卡片字典（包含 type 和 data）
@@ -665,6 +669,23 @@ def _build_creating_session_card() -> dict:
                         'text': {
                             'tag': 'plain_text',
                             'content': '请稍候，正在启动 Claude...'
+                        }
+                    },
+                    {
+                        'tag': 'hr'
+                    },
+                    {
+                        'tag': 'div',
+                        'text': {
+                            'tag': 'plain_text',
+                            'content': f'📁 工作目录：{selected_dir}'
+                        }
+                    },
+                    {
+                        'tag': 'div',
+                        'text': {
+                            'tag': 'plain_text',
+                            'content': f'💬 提示词：{prompt[:100]}{"..." if len(prompt) > 100 else ""}'
                         }
                     }
                 ]
@@ -726,8 +747,9 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
     # │ 分支 2: 点击"创建会话"按钮（trigger_name = submit_btn）           │
     # └────────────────────────────────────────────────────────────────┘
 
-    # 按优先级确定目录：custom_dir > browse_result > directory
-    selected_dir = custom_dir or browse_result or directory
+    # 按优先级确定目录：browse_result > custom_dir > directory
+    # 用户从"选择子目录"中选中的优先级最高，其次才是自定义路径输入框
+    selected_dir = browse_result or custom_dir or directory
 
     if not selected_dir:
         logger.warning("[feishu] No directory selected in form submission")
@@ -753,7 +775,7 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
             'type': TOAST_INFO,
             'content': '正在创建会话...'
         },
-        'card': _build_creating_session_card()
+        'card': _build_creating_session_card(selected_dir, prompt)
     }
 
     # 在后台线程中异步执行会话创建
@@ -901,10 +923,12 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
     browse_dirs = browse_data.get('dirs', [])
     browse_options = []
     for dir_path in browse_dirs:
+        # 只显示最后一层目录名称，value 保持完整路径
+        display_name = dir_path.rstrip('/').split('/')[-1] if dir_path else ''
         browse_options.append({
             'text': {
                 'tag': 'plain_text',
-                'content': dir_path
+                'content': display_name
             },
             'value': dir_path
         })
@@ -921,36 +945,70 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
         }
     })
 
-    # 常用目录下拉菜单（如果有）
+    # 常用目录下拉菜单（如果有），标签和下拉框同行
     if recent_dirs:
         form_elements.append({
-            'tag': 'select_static',
-            'name': 'directory',
-            'placeholder': {
-                'tag': 'plain_text',
-                'content': '选择工作目录'
-            },
-            'options': dir_options,
-            'initial_option': directory if directory in [d['value'] for d in dir_options] else (dir_options[0]['value'] if dir_options else '')
+            'tag': 'column_set',
+            'columns': [
+                {
+                    'tag': 'column',
+                    'width': 'weighted',
+                    'weight': 1,
+                    'vertical_align': 'center',
+                    'elements': [
+                        {
+                            'tag': 'div',
+                            'text': {
+                                'tag': 'plain_text',
+                                'content': '常用目录'
+                            }
+                        }
+                    ]
+                },
+                {
+                    'tag': 'column',
+                    'width': 'weighted',
+                    'weight': 5,
+                    'elements': [
+                        {
+                            'tag': 'select_static',
+                            'name': 'directory',
+                            'placeholder': {
+                                'tag': 'plain_text',
+                                'content': '选择工作目录'
+                            },
+                            'width': 'fill',
+                            'options': dir_options,
+                            'initial_option': directory if directory in [d['value'] for d in dir_options] else (dir_options[0]['value'] if dir_options else '')
+                        }
+                    ]
+                }
+            ]
         })
 
-    # 自定义路径标签 + 输入框 + 浏览按钮（使用 column_set 并排布局）
-    # 先添加标签文本
-    form_elements.append({
-        'tag': 'div',
-        'text': {
-            'tag': 'plain_text',
-            'content': '自定义路径'
-        }
-    })
-
-    # 然后添加输入框和浏览按钮的 column_set
+    # 自定义路径标签 + 输入框 + 浏览按钮（同行布局）
     form_elements.append({
         'tag': 'column_set',
         'columns': [
             {
                 'tag': 'column',
                 'width': 'weighted',
+                'weight': 1,
+                'vertical_align': 'center',
+                'elements': [
+                    {
+                        'tag': 'div',
+                        'text': {
+                            'tag': 'plain_text',
+                            'content': '自定义路径'
+                        }
+                    }
+                ]
+            },
+            {
+                'tag': 'column',
+                'width': 'weighted',
+                'weight': 4,
                 'elements': [
                     {
                         'tag': 'input',
@@ -959,14 +1017,15 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             'tag': 'plain_text',
                             'content': '输入完整路径，如 /home/user/project'
                         },
-                        "width": "200px", # 如果为了对齐其他菜单和输入框，PC 端建议 282px; 移动端建议 200px
+                        'width': 'fill',
                         'default_value': custom_dir  # 回填当前浏览路径
                     }
                 ]
             },
             {
                 'tag': 'column',
-                'width': 'auto',
+                'width': 'weighted',
+                'weight': 1,
                 'elements': [
                     {
                         'tag': 'button',
@@ -976,6 +1035,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             'content': '浏览'
                         },
                         'type': 'default',
+                        'width': 'fill',
                         'form_action_type': 'submit',
                         'behaviors': [
                             {
@@ -993,40 +1053,49 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
         ]
     })
 
-    # 优先级提示文本
-    form_elements.append({
-        'tag': 'div',
-        'text': {
-            'tag': 'plain_text',
-            'content': '💡 优先使用自定义路径；留空则使用上方选择的常用目录'
-        }
-    })
-
     # 浏览结果下拉菜单（如果有子目录）
     current_path = browse_data.get('current', '')
     if browse_options:
-        # 使用 column_set 将浏览结果下拉菜单和浏览按钮并排
+        # 使用 column_set 将浏览结果标签、下拉菜单和浏览按钮并排
         form_elements.append({
             'tag': 'column_set',
             'columns': [
                 {
                     'tag': 'column',
                     'width': 'weighted',
+                    'weight': 1,
+                    'vertical_align': 'center',
+                    'elements': [
+                        {
+                            'tag': 'div',
+                            'text': {
+                                'tag': 'plain_text',
+                                'content': '选择子目录'
+                            }
+                        }
+                    ]
+                },
+                {
+                    'tag': 'column',
+                    'width': 'weighted',
+                    'weight': 4,
                     'elements': [
                         {
                             'tag': 'select_static',
                             'name': 'browse_result',
                             'placeholder': {
                                 'tag': 'plain_text',
-                                'content': f'浏览结果 ({current_path}) - 选择子目录'
+                                'content': f'选择 {current_path} 的子目录'
                             },
+                            'width': 'fill',
                             'options': browse_options
                         }
                     ]
                 },
                 {
                     'tag': 'column',
-                    'width': 'auto',
+                    'width': 'weighted',
+                    'weight': 1,
                     'elements': [
                         {
                             'tag': 'button',
@@ -1036,6 +1105,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                                 'content': '浏览'
                             },
                             'type': 'default',
+                            'width': 'fill',
                             'form_action_type': 'submit',
                             'behaviors': [
                                 {
@@ -1061,6 +1131,15 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
             }
         })
 
+    # 优先级提示文本
+    form_elements.append({
+        'tag': 'div',
+        'text': {
+            'tag': 'plain_text',
+            'content': '💡 优先级：选择子目录 > 自定义路径 > 常用目录'
+        }
+    })
+
     # 分割线：目录选择区域结束
     form_elements.append({'tag': 'hr'})
 
@@ -1074,16 +1153,46 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
         }
     })
 
+    # 使用 column_set 让标签和输入框同行，与目录选择块对齐
     form_elements.append({
-        'tag': 'input',
-        'name': 'prompt',
-        'placeholder': {
-            'tag': 'plain_text',
-            'content': '请输入您的问题或任务描述'
-        },
-        'default_value': prompt,
-        # 不设置 required，避免点击"浏览"按钮时被阻止
-        # 服务端会在创建会话时验证 prompt 是否为空
+        'tag': 'column_set',
+        'columns': [
+            {
+                'tag': 'column',
+                'width': 'weighted',
+                'weight': 1,
+                'vertical_align': 'center',
+                'elements': [
+                    {
+                        'tag': 'div',
+                        'text': {
+                            'tag': 'plain_text',
+                            'content': '提示词'
+                        }
+                    }
+                ]
+            },
+            {
+                'tag': 'column',
+                'width': 'weighted',
+                'weight': 5,
+                'elements': [
+                    {
+                        'tag': 'input',
+                        'name': 'prompt',
+                        'input_type': 'multiline_text',
+                        'placeholder': {
+                            'tag': 'plain_text',
+                            'content': '请输入您的问题或任务描述'
+                        },
+                        'width': 'fill',
+                        'default_value': prompt,
+                        # 不设置 required，避免点击"浏览"按钮时被阻止
+                        # 服务端会在创建会话时验证 prompt 是否为空
+                    }
+                ]
+            }
+        ]
     })
 
     # 构建卡片
@@ -1647,7 +1756,7 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
     })
 
     # 下拉选择菜单（必须有 name 字段，提交时会带上）
-    # 只有在有历史目录时才显示
+    # 只有在有历史目录时才显示，标签和下拉框同行
     if recent_dirs:
         select_static = {
             'tag': 'select_static',
@@ -1656,31 +1765,65 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
                 'tag': 'plain_text',
                 'content': '选择工作目录'
             },
+            'width': 'fill',
             'options': options,
         }
 
         # 设置默认选中第一个（initial_option 是 value 字符串）
         select_static['initial_option'] = options[0]['value']
 
-        form_elements.append(select_static)
+        form_elements.append({
+            'tag': 'column_set',
+            'columns': [
+                {
+                    'tag': 'column',
+                    'width': 'weighted',
+                    'weight': 1,
+                    'vertical_align': 'center',
+                    'elements': [
+                        {
+                            'tag': 'div',
+                            'text': {
+                                'tag': 'plain_text',
+                                'content': '常用目录'
+                            }
+                        }
+                    ]
+                },
+                {
+                    'tag': 'column',
+                    'width': 'weighted',
+                    'weight': 5,
+                    'elements': [
+                        select_static
+                    ]
+                }
+            ]
+        })
 
-    # 自定义路径标签 + 输入框 + 浏览按钮
-    # 先添加标签文本
-    form_elements.append({
-        'tag': 'div',
-        'text': {
-            'tag': 'plain_text',
-            'content': '自定义路径'
-        }
-    })
-
-    # 然后添加输入框和浏览按钮的 column_set
+    # 自定义路径标签 + 输入框 + 浏览按钮（同行布局）
     form_elements.append({
         'tag': 'column_set',
         'columns': [
             {
                 'tag': 'column',
                 'width': 'weighted',
+                'weight': 1,
+                'vertical_align': 'center',
+                'elements': [
+                    {
+                        'tag': 'div',
+                        'text': {
+                            'tag': 'plain_text',
+                            'content': '自定义路径'
+                        }
+                    }
+                ]
+            },
+            {
+                'tag': 'column',
+                'width': 'weighted',
+                'weight': 4,
                 'elements': [
                     {
                         'tag': 'input',
@@ -1689,14 +1832,15 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
                             'tag': 'plain_text',
                             'content': '输入完整路径，如 /home/user/project'
                         },
-                        "width": "200px", # 如果为了对齐其他菜单和输入框，PC 端建议 282px; 移动端建议 200px
+                        'width': 'fill',
                         'default_value': project_dir or ''  # 使用传入的 project_dir 作为默认值
                     }
                 ]
             },
             {
                 'tag': 'column',
-                'width': 'auto',
+                'width': 'weighted',
+                'weight': 1,
                 'elements': [
                     {
                         'tag': 'button',
@@ -1706,6 +1850,7 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
                             'content': '浏览'
                         },
                         'type': 'default',
+                        'width': 'fill',
                         'form_action_type': 'submit',
                         'behaviors': [
                             {
@@ -1723,12 +1868,12 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
         ]
     })
 
-    # 优先级提示文本
+    # 优先级提示文本（初始卡片没有浏览子目录选项）
     form_elements.append({
         'tag': 'div',
         'text': {
             'tag': 'plain_text',
-            'content': '💡 优先使用自定义路径；留空则使用上方选择的常用目录'
+            'content': '💡 优先级：自定义路径 > 常用目录'
         }
     })
 
@@ -1745,16 +1890,46 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
         }
     })
 
+    # 使用 column_set 让标签和输入框同行，与目录选择块对齐
     form_elements.append({
-        'tag': 'input',
-        'name': 'prompt',
-        'placeholder': {
-            'tag': 'plain_text',
-            'content': '请输入您的问题或任务描述'
-        },
-        'default_value': prompt or '',  # 如果有预设 prompt，作为默认值
-        # 不设置 required，避免点击"浏览"按钮时被阻止
-        # 服务端会在创建会话时验证 prompt 是否为空
+        'tag': 'column_set',
+        'columns': [
+            {
+                'tag': 'column',
+                'width': 'weighted',
+                'weight': 1,
+                'vertical_align': 'center',
+                'elements': [
+                    {
+                        'tag': 'div',
+                        'text': {
+                            'tag': 'plain_text',
+                            'content': '提示词'
+                        }
+                    }
+                ]
+            },
+            {
+                'tag': 'column',
+                'width': 'weighted',
+                'weight': 5,
+                'elements': [
+                    {
+                        'tag': 'input',
+                        'name': 'prompt',
+                        'input_type': 'multiline_text',
+                        'placeholder': {
+                            'tag': 'plain_text',
+                            'content': '请输入您的问题或任务描述'
+                        },
+                        'width': 'fill',
+                        'default_value': prompt or '',
+                        # 不设置 required，避免点击"浏览"按钮时被阻止
+                        # 服务端会在创建会话时验证 prompt 是否为空
+                    }
+                ]
+            }
+        ]
     })
 
     # 构建卡片内容
