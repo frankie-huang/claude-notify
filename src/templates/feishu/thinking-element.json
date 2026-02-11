@@ -1,0 +1,21 @@
+{
+  "tag": "collapsible_panel",
+  "expanded": false,
+  "header": {
+    "title": {
+      "tag": "markdown",
+      "content": "**思考过程**"
+    }
+  },
+  "border": {
+    "color": "grey-400",
+    "corner_radius": "6px"
+  },
+  "elements": [
+    {
+      "tag": "markdown",
+      "content": "{{thinking_content}}",
+      "text_size": "normal_v2"
+    }
+  ]
+}

@@ -114,7 +114,7 @@ class DirHistoryStore:
             limit: 最多返回的目录数量
 
         Returns:
-            目录路径列表，按使用频率和时间排序
+            目录路径列表，按使用频率和时间排序，过滤掉不存在的目录
         """
         with self._file_lock:
             try:
@@ -123,9 +123,22 @@ class DirHistoryStore:
                 # 内存中过滤过期数据（不持久化，实际清理在 record_usage 写入时执行）
                 data = self._cleanup(data)
 
+                # 过滤掉不存在的目录
+                valid_dirs = {
+                    path: info for path, info in data.items()
+                    if os.path.isdir(path)
+                }
+
+                # 如果检测到已删除的目录，立即持久化清理
+                removed_count = len(data) - len(valid_dirs)
+                if removed_count > 0:
+                    removed_paths = [p for p in data if p not in valid_dirs]
+                    logger.info(f"[dir-history-store] Cleaning up {removed_count} non-existent dirs: {removed_paths}")
+                    self._save(valid_dirs)
+
                 # 排序：优先按使用次数降序，次数相同按最近使用时间降序
                 sorted_dirs = sorted(
-                    data.items(),
+                    valid_dirs.items(),
                     key=lambda x: (x[1]['count'], x[1]['last_used']),
                     reverse=True
                 )

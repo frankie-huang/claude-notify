@@ -135,7 +135,8 @@ render_template() {
         # 注意：response_content 需要转义，因为它嵌入在 JSON 字符串内
         if [[ "$key" != "buttons_json" ]] && \
            [[ "$key" != "description_element" ]] && \
-           [[ "$key" != "detail_elements" ]]; then
+           [[ "$key" != "detail_elements" ]] && \
+           [[ "$key" != "thinking_element" ]]; then
             # 转义特殊字符为 JSON 格式
             # 注意: JSON 解析器（jq/python3）会将转义序列解释为实际字符（如 \t → TAB, \n → LF）
             # 因此需要将这些实际字符重新转义回 JSON 格式
@@ -155,7 +156,7 @@ render_template() {
                         sed $'s/\t/\\\\t/g' | \
                         sed 's/$/\\n/g' | tr -d '\n' | sed 's/\\n$//')
                 fi
-            elif [[ "$key" == "response_content" ]]; then
+            elif [[ "$key" == "response_content" ]] || [[ "$key" == "thinking_content" ]]; then
                 # response_content: 飞书 Markdown 代码块必须在行首
                 # 1. 删除代码块标记前的空格（如 "   ```bash" → "```bash"）
                 # 2. 用 python3 json.dumps 处理 JSON 转义
@@ -249,6 +250,9 @@ render_sub_template() {
             ;;
         "description")
             template_file="${template_dir}/description-element.json"
+            ;;
+        "thinking")
+            template_file="${template_dir}/thinking-element.json"
             ;;
         *)
             log_error "Unknown sub template type: $sub_type"
@@ -631,10 +635,11 @@ build_notification_card() {
 # 功能: 构建飞书 Stop 事件完成卡片(用于主 Agent 完成响应时的通知)
 #
 # 参数:
-#   $1 - response_content Claude 最终响应内容 (Markdown 格式)
-#   $2 - project_name     项目名称
-#   $3 - timestamp        时间戳
-#   $4 - session_id       会话标识 (可选)
+#   $1 - response_content  Claude 最终响应内容 (Markdown 格式)
+#   $2 - project_name      项目名称
+#   $3 - timestamp         时间戳
+#   $4 - session_id        会话标识 (可选)
+#   $5 - thinking_content  思考过程内容 (可选, Markdown 格式)
 #
 # 输出:
 #   飞书卡片 JSON 字符串
@@ -645,24 +650,34 @@ build_notification_card() {
 #
 # 示例:
 #   card=$(build_stop_card "已修复 bug，具体改动如下..." \
-#       "myproject" "2024-01-01 12:00:00" "canyon")
+#       "myproject" "2024-01-01 12:00:00" "canyon" "分析了代码结构...")
 # ----------------------------------------------------------------------------
 build_stop_card() {
     local response_content="$1"
     local project_name="$2"
     local timestamp="$3"
     local session_id="${4:-}"
+    local thinking_content="${5:-}"
 
     # 获取 @ 用户配置
     local at_user
     at_user=$(_build_at_user_tag)
+
+    # 条件构建 thinking_element
+    local thinking_element=""
+    if [ -n "$thinking_content" ]; then
+        thinking_element=$(render_sub_template "thinking" "thinking_content=$thinking_content")
+        # 添加尾逗号，因为模板中 thinking_element 后面还有其他元素
+        thinking_element="${thinking_element},"
+    fi
 
     render_card_template "stop" \
         "response_content=$response_content" \
         "project_name=$project_name" \
         "timestamp=$timestamp" \
         "session_id=$session_id" \
-        "at_user=$at_user"
+        "at_user=$at_user" \
+        "thinking_element=$thinking_element"
 }
 
 # =============================================================================

@@ -87,6 +87,7 @@
           "tag": "hr",
           "margin": "0px 0px 0px 0px"
         },
+        {{thinking_element}}
         {
           "tag": "markdown",
           "content": "**答复：**",

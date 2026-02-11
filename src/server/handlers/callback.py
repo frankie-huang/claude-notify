@@ -534,10 +534,6 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
             # 解析参数
             request_path = data.get('path', '')
-            try:
-                limit = int(data.get('limit', 20))
-            except (TypeError, ValueError):
-                limit = 20
 
             # 默认起始路径为根目录
             if not request_path:
@@ -562,8 +558,8 @@ class CallbackHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                # 获取父目录路径（去除末尾斜杠）
-                current_path = request_path.rstrip('/')
+                # 获取父目录路径（去除末尾斜杠，但保留根目录的 /）
+                current_path = request_path.rstrip('/') if request_path != '/' else '/'
                 parent_path = os.path.dirname(current_path) if current_path != '/' else ''
 
                 # 列出子目录，过滤隐藏目录和文件
@@ -578,8 +574,6 @@ class CallbackHandler(BaseHTTPRequestHandler):
                         full_path = os.path.join(request_path, entry)
                         if os.path.isdir(full_path):
                             dirs.append(full_path)
-                            if len(dirs) >= limit:
-                                break
                 except PermissionError:
                     logger.warning(f"[browse-dirs] Permission denied: {request_path}")
                     dirs = []

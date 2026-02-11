@@ -740,8 +740,8 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
     # ┌────────────────────────────────────────────────────────────────┐
     # │ 分支 1: 点击"浏览"按钮（支持 browse_custom_btn 和 browse_result_btn）│
     # └────────────────────────────────────────────────────────────────┘
-    if trigger_name in ('browse_custom_btn', 'browse_result_btn'):
-        return _handle_browse_directory(trigger_name, custom_dir, prompt, chat_id, message_id, event, form_values)
+    if trigger_name in ('browse_dir_select_btn', 'browse_custom_btn', 'browse_result_btn'):
+        return _handle_browse_directory(trigger_name, directory, custom_dir, prompt, chat_id, message_id, event, form_values)
 
     # ┌────────────────────────────────────────────────────────────────┐
     # │ 分支 2: 点击"创建会话"按钮（trigger_name = submit_btn）           │
@@ -784,14 +784,16 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
     return True, response
 
 
-def _handle_browse_directory(trigger_name: str, custom_dir: str, prompt: str, chat_id: str, message_id: str,
+def _handle_browse_directory(trigger_name: str, directory: str, custom_dir: str,
+                            prompt: str, chat_id: str, message_id: str,
                             feishu_event: dict, form_values: dict) -> Tuple[bool, dict]:
     """处理浏览目录按钮点击
 
     调用 browse-dirs 接口获取子目录列表，返回更新后的卡片。
 
     Args:
-        trigger_name: 触发的按钮名称 (browse_custom_btn 或 browse_result_btn)
+        trigger_name: 触发的按钮名称 (browse_dir_select_btn, browse_custom_btn 或 browse_result_btn)
+        directory: 常用目录下拉框选择的值
         custom_dir: 用户输入的自定义路径
         prompt: 用户输入的问题
         chat_id: 群聊 ID
@@ -819,7 +821,19 @@ def _handle_browse_directory(trigger_name: str, custom_dir: str, prompt: str, ch
     browse_result = form_values.get('browse_result', '')
 
     # 根据按钮名称确定浏览路径
-    if trigger_name == 'browse_custom_btn':
+    if trigger_name == 'browse_dir_select_btn':
+        # 点击常用目录旁边的"浏览"：必须先选择目录
+        if not directory:
+            logger.warning("[feishu] No directory selected")
+            return True, {
+                'toast': {
+                    'type': TOAST_ERROR,
+                    'content': '请先从常用目录中选择一个目录'
+                }
+            }
+        browse_path = directory
+        logger.info(f"[feishu] Browse directory select: {browse_path}")
+    elif trigger_name == 'browse_custom_btn':
         # 点击自定义路径旁边的"浏览"：使用 custom_dir
         browse_path = custom_dir or '/'
         logger.info(f"[feishu] Browse custom path: {browse_path}")
@@ -836,12 +850,12 @@ def _handle_browse_directory(trigger_name: str, custom_dir: str, prompt: str, ch
         browse_path = browse_result
         logger.info(f"[feishu] Browse result path: {browse_path}")
     else:
-        # 默认：使用 custom_dir
-        browse_path = custom_dir or '/'
+        # 默认：优先使用 custom_dir（用户主动输入），其次使用 directory
+        browse_path = custom_dir or directory or '/'
         logger.info(f"[feishu] Browse default path: {browse_path}")
 
     # 调用 browse-dirs 接口
-    browse_data = _fetch_browse_dirs_from_callback(auth_token, browse_path, limit=20)
+    browse_data = _fetch_browse_dirs_from_callback(auth_token, browse_path)
     if not browse_data:
         logger.error(f"[feishu] Failed to browse dirs: {browse_path}")
         return True, {
@@ -852,13 +866,13 @@ def _handle_browse_directory(trigger_name: str, custom_dir: str, prompt: str, ch
         }
 
     # 计算应该回填到 custom_dir 输入框的值
-    # - 如果点击的是浏览结果按钮，使用 browse_result（用户选择的子目录）
-    # - 如果点击的是自定义路径按钮，保持 custom_dir 不变
     if trigger_name == 'browse_result_btn':
         custom_dir_value = browse_result  # 回填为选中的子目录
-    else:
-        # browse_custom_btn 或其他情况：回填为当前浏览路径
-        custom_dir_value = browse_data.get('current', '')
+    elif trigger_name == 'browse_dir_select_btn':
+        # 如果自定义输入框有值，保持不变；否则回填为当前浏览路径
+        custom_dir_value = custom_dir if custom_dir else browse_data.get('current', '')
+    else:  # browse_custom_btn
+        custom_dir_value = browse_data.get('current', '')  # 回填为当前浏览路径
 
     # 构建更新后的卡片
     card = _build_browse_result_card(
@@ -968,7 +982,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                 {
                     'tag': 'column',
                     'width': 'weighted',
-                    'weight': 5,
+                    'weight': 4,
                     'elements': [
                         {
                             'tag': 'select_static',
@@ -980,6 +994,34 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             'width': 'fill',
                             'options': dir_options,
                             'initial_option': directory if directory in [d['value'] for d in dir_options] else (dir_options[0]['value'] if dir_options else '')
+                        }
+                    ]
+                },
+                {
+                    'tag': 'column',
+                    'width': 'weighted',
+                    'weight': 1,
+                    'elements': [
+                        {
+                            'tag': 'button',
+                            'name': 'browse_dir_select_btn',
+                            'text': {
+                                'tag': 'plain_text',
+                                'content': '浏览'
+                            },
+                            'type': 'default',
+                            'width': 'fill',
+                            'form_action_type': 'submit',
+                            'behaviors': [
+                                {
+                                    'type': 'callback',
+                                    'value': {
+                                        'owner_id': owner_id,
+                                        'chat_id': chat_id,
+                                        'message_id': message_id
+                                    }
+                                }
+                            ]
                         }
                     ]
                 }
@@ -1643,13 +1685,12 @@ def _fetch_recent_dirs_from_callback(auth_token: str, limit: int = 5) -> list:
         return []
 
 
-def _fetch_browse_dirs_from_callback(auth_token: str, path: str, limit: int = 20) -> dict:
+def _fetch_browse_dirs_from_callback(auth_token: str, path: str) -> dict:
     """从 Callback 后端获取指定路径下的子目录列表
 
     Args:
         auth_token: 认证令牌
         path: 要浏览的路径
-        limit: 最多返回的目录数量
 
     Returns:
         包含 dirs, parent, current 的字典，失败时返回空字典
@@ -1665,8 +1706,7 @@ def _fetch_browse_dirs_from_callback(auth_token: str, path: str, limit: int = 20
 
     api_url = f"{callback_url.rstrip('/')}/claude/browse-dirs"
     request_data = {
-        'path': path,
-        'limit': limit
+        'path': path
     }
 
     try:
@@ -1793,9 +1833,37 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
                 {
                     'tag': 'column',
                     'width': 'weighted',
-                    'weight': 5,
+                    'weight': 4,
                     'elements': [
                         select_static
+                    ]
+                },
+                {
+                    'tag': 'column',
+                    'width': 'weighted',
+                    'weight': 1,
+                    'elements': [
+                        {
+                            'tag': 'button',
+                            'name': 'browse_dir_select_btn',
+                            'text': {
+                                'tag': 'plain_text',
+                                'content': '浏览'
+                            },
+                            'type': 'default',
+                            'width': 'fill',
+                            'form_action_type': 'submit',
+                            'behaviors': [
+                                {
+                                    'type': 'callback',
+                                    'value': {
+                                        'owner_id': owner_id,
+                                        'chat_id': chat_id,
+                                        'message_id': message_id
+                                    }
+                                }
+                            ]
+                        }
                     ]
                 }
             ]

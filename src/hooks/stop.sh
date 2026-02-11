@@ -27,22 +27,22 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
 fi
 
 # =============================================================================
-# 从单个 transcript 文件中查找最后一条 assistant 消息
+# 从单个 transcript 文件中提取响应内容（text + thinking）
 # 参数:
 #   $1 - transcript 文件路径
 #   $2 - 最大重试次数 (可选，默认 5)
 # 返回:
-#   输出 assistant 消息的 JSON 字符串，找不到则输出空
+#   输出 JSON 字符串 {"text":"...","thinking":"...","session_id":"..."}
+#   找不到有效内容则返回空
 # 说明:
-#   找到最后一条 type=="assistant" 的消息后，检查其 message.content 是否包含
-#   type="text" 的元素。如果不包含（可能是 thinking、tool_use 等其他类型），
-#   则返回空，视为找不到有效的文本响应。
+#   找到最近一条用户文本消息（排除仅含 tool_result 的 user 消息），
+#   收集其后所有 assistant 消息中的 text 和 thinking 内容。
 # =============================================================================
-find_last_assistant_in_file() {
+extract_response_from_file() {
     local transcript_file="$1"
     local max_retries="${2:-5}"
     local retry_count=0
-    local last_assistant=""
+    local result=""
 
     if [ ! -f "$transcript_file" ]; then
         return 1
@@ -50,42 +50,99 @@ find_last_assistant_in_file() {
 
     while [ $retry_count -lt $max_retries ]; do
         if [ "$JSON_HAS_JQ" = "true" ]; then
-            # 先找到最后一条 assistant 消息
-            last_assistant=$(jq -s 'map(select(.type=="assistant")) | .[-1]' "$transcript_file" 2>/dev/null)
-            # 检查是否包含 text 类型内容，不包含则清空
-            if [ -n "$last_assistant" ]; then
-                local has_text=$(echo "$last_assistant" | jq -r '.message.content | map(select(.type=="text")) | length > 0' 2>/dev/null)
-                if [ "$has_text" != "true" ]; then
-                    log "Last assistant message has no text content, skipping"
-                    last_assistant=""
-                fi
-            fi
+            result=$(jq -s '
+# 找到最近一条含文本的 user 消息的索引
+(
+    [to_entries[] | select(
+        .value.type == "user" and
+        (
+            (.value.message.content | type == "string" and length > 0) or
+            (.value.message.content | type == "array" and (map(select(.type == "text")) | length > 0))
+        )
+    ) | .key] | if length > 0 then .[-1] else null end
+) as $user_idx |
+if $user_idx == null then
+    null
+else
+    # 收集 user_idx 之后所有 assistant 消息
+    [.[$user_idx + 1:] | .[] | select(.type == "assistant")] |
+    {
+        text: ([.[] | .message.content // [] | [.[] | select(.type == "text") | .text] | join("")] | join("\n\n") | gsub("^\\n+|\\n+$"; "")),
+        thinking: ([.[] | .message.content // [] | [.[] | select(.type == "thinking") | .thinking] | join("")] | join("\n\n") | gsub("^\\n+|\\n+$"; "")),
+        session_id: ([.[] | .sessionId // empty] | if length > 0 then .[0] else "" end)
+    } |
+    if .text == "" then null else . end
+end
+' "$transcript_file" 2>/dev/null)
+
         elif [ "$JSON_HAS_PYTHON3" = "true" ]; then
-            last_assistant=$(python3 -c "
+            result=$(python3 -c "
 import sys, json
+
 with open('$transcript_file', 'r') as f:
     lines = f.readlines()
-# 找最后一条 assistant 消息
-for line in reversed(lines):
-    if not line.strip():
+
+records = []
+for line in lines:
+    line = line.strip()
+    if not line:
         continue
     try:
-        data = json.loads(line)
-        if data.get('type') == 'assistant':
-            # 检查 message.content 中是否有 type='text' 的元素
-            content = data.get('message', {}).get('content', [])
-            has_text = any(item.get('type') == 'text' for item in content if isinstance(item, dict))
-            if has_text:
-                print(json.dumps(data))
-            # 无论是否有 text，都只检查最后一条 assistant 消息，然后退出
-            break
+        records.append(json.loads(line))
     except:
         pass
+
+# 找最近一条含文本的 user 消息索引
+user_idx = None
+for i in range(len(records) - 1, -1, -1):
+    r = records[i]
+    if r.get('type') != 'user':
+        continue
+    content = r.get('message', {}).get('content')
+    if isinstance(content, str) and len(content) > 0:
+        user_idx = i
+        break
+    if isinstance(content, list):
+        has_text = any(item.get('type') == 'text' for item in content if isinstance(item, dict))
+        if has_text:
+            user_idx = i
+            break
+
+if user_idx is None:
+    sys.exit(0)
+
+# 收集 user_idx 之后所有 assistant 消息的 text 和 thinking
+texts = []
+thinkings = []
+session_id = ''
+for r in records[user_idx + 1:]:
+    if r.get('type') != 'assistant':
+        continue
+    if not session_id:
+        session_id = r.get('sessionId', '')
+    content = r.get('message', {}).get('content', [])
+    if not isinstance(content, list):
+        continue
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get('type') == 'text':
+            texts.append(item.get('text', ''))
+        elif item.get('type') == 'thinking':
+            thinkings.append(item.get('thinking', ''))
+
+combined_text = '\n\n'.join(t for t in texts if t).strip()
+combined_thinking = '\n\n'.join(t for t in thinkings if t).strip()
+
+if not combined_text:
+    sys.exit(0)
+
+print(json.dumps({'text': combined_text, 'thinking': combined_thinking, 'session_id': session_id}))
 " 2>/dev/null)
         fi
 
-        if [ -n "$last_assistant" ]; then
-            echo "$last_assistant"
+        if [ -n "$result" ] && [ "$result" != "null" ]; then
+            echo "$result"
             return 0
         fi
 
@@ -99,16 +156,16 @@ for line in reversed(lines):
 }
 
 # =============================================================================
-# 查找最后一条 assistant 消息（带子代理回退）
+# 提取响应内容（带子代理回退）
 # 参数:
 #   $1 - 主 transcript 文件路径
 # 返回:
-#   输出 assistant 消息的 JSON 字符串
+#   输出 JSON 字符串 {"text":"...","thinking":"...","session_id":"..."}
 # 说明:
 #   1. 先在主 transcript 文件中查找
 #   2. 如果找不到，检查 subagents 目录，按修改时间倒序查找
 # =============================================================================
-find_last_assistant() {
+extract_response() {
     local transcript_path="$1"
 
     # 提前检查：路径为空直接返回
@@ -117,15 +174,15 @@ find_last_assistant() {
         return 1
     fi
 
-    local last_assistant=""
+    local result=""
 
     # 1. 先在主 transcript 文件中查找
     if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
         log "Searching in main transcript: $transcript_path"
-        last_assistant=$(find_last_assistant_in_file "$transcript_path" 5)
-        if [ -n "$last_assistant" ]; then
-            log "Found assistant message in main transcript"
-            echo "$last_assistant"
+        result=$(extract_response_from_file "$transcript_path" 5)
+        if [ -n "$result" ] && [ "$result" != "null" ]; then
+            log "Found response in main transcript"
+            echo "$result"
             return 0
         fi
     fi
@@ -135,7 +192,7 @@ find_last_assistant() {
     local subagents_dir="$session_dir/subagents"
 
     if [ -d "$subagents_dir" ]; then
-        log "Main transcript has no assistant message, searching in subagents: $subagents_dir"
+        log "Main transcript has no response, searching in subagents: $subagents_dir"
 
         # 按修改时间倒序遍历子代理文件
         local subagent_files
@@ -144,17 +201,17 @@ find_last_assistant() {
         for subagent_file in $subagent_files; do
             if [ -f "$subagent_file" ]; then
                 log "Searching in subagent: $(basename "$subagent_file")"
-                last_assistant=$(find_last_assistant_in_file "$subagent_file" 3)
-                if [ -n "$last_assistant" ]; then
-                    log "Found assistant message in subagent: $(basename "$subagent_file")"
-                    echo "$last_assistant"
+                result=$(extract_response_from_file "$subagent_file" 3)
+                if [ -n "$result" ] && [ "$result" != "null" ]; then
+                    log "Found response in subagent: $(basename "$subagent_file")"
+                    echo "$result"
                     return 0
                 fi
             fi
         done
     fi
 
-    log "No assistant message found in transcript or subagents"
+    log "No response found in transcript or subagents"
     return 1
 }
 
@@ -165,6 +222,7 @@ send_stop_notification_async() {
     # 捕获当前环境变量供后台使用
     local WEBHOOK_URL=$(get_config "FEISHU_WEBHOOK_URL" "")
     local STOP_MAX_LENGTH=$(get_config "STOP_MESSAGE_MAX_LENGTH" "5000")
+    local STOP_THINKING_MAX_LENGTH=$(get_config "STOP_THINKING_MAX_LENGTH" "5000")
     local CALLBACK_URL=$(get_config "CALLBACK_SERVER_URL" "http://localhost:8080")
     local TRANSCRIPT_PATH=$(json_get "$INPUT" "transcript_path")
     local PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(json_get "$INPUT" "cwd")}"
@@ -186,25 +244,24 @@ send_stop_notification_async() {
 
     log "Stop notification: extracting response from transcript"
 
-    # 提取 Claude 响应内容
+    # 提取 Claude 响应内容（text + thinking）
     local CLAUDE_RESPONSE=""
-    local last_assistant=""
+    local CLAUDE_THINKING=""
+    local response_json=""
 
-    # 使用抽象函数查找最后的 assistant 消息（支持子代理回退）
-    last_assistant=$(find_last_assistant "$TRANSCRIPT_PATH")
+    # 使用新的 extract_response 函数（支持子代理回退）
+    response_json=$(extract_response "$TRANSCRIPT_PATH")
 
-    if [ -n "$last_assistant" ]; then
-        # 从消息中提取 session_id
-        SESSION_ID=$(json_get "$last_assistant" "sessionId")
+    if [ -n "$response_json" ] && [ "$response_json" != "null" ]; then
+        # 从结果中提取各字段
+        SESSION_ID=$(json_get "$response_json" "session_id")
         if [ -z "$SESSION_ID" ]; then
             SESSION_ID="unknown"
         fi
 
-        # 使用 json_get_array_value 提取所有 type=text 的内容
-        CLAUDE_RESPONSE=$(json_get_array_value "$last_assistant" "message.content" "text" "text")
-        # 恢复原有的换行符
-        CLAUDE_RESPONSE=$(echo "$CLAUDE_RESPONSE" | sed 's/∂/\n/g')
-        log "Extracted response: ${#CLAUDE_RESPONSE} chars"
+        CLAUDE_RESPONSE=$(json_get "$response_json" "text")
+        CLAUDE_THINKING=$(json_get "$response_json" "thinking")
+        log "Extracted response: ${#CLAUDE_RESPONSE} chars, thinking: ${#CLAUDE_THINKING} chars"
     fi
 
     if [ -z "$CLAUDE_RESPONSE" ]; then
@@ -218,11 +275,20 @@ send_stop_notification_async() {
         log "Response truncated to ${#CLAUDE_RESPONSE} chars"
     fi
 
-    log "Final response (${#CLAUDE_RESPONSE} chars): $CLAUDE_RESPONSE"
+    # 处理 thinking：STOP_THINKING_MAX_LENGTH=0 时跳过
+    if [ "$STOP_THINKING_MAX_LENGTH" = "0" ]; then
+        CLAUDE_THINKING=""
+        log "Thinking display disabled (STOP_THINKING_MAX_LENGTH=0)"
+    elif [ -n "$CLAUDE_THINKING" ] && [ ${#CLAUDE_THINKING} -gt "$STOP_THINKING_MAX_LENGTH" ]; then
+        CLAUDE_THINKING="${CLAUDE_THINKING:0:$STOP_THINKING_MAX_LENGTH}..."
+        log "Thinking truncated to ${#CLAUDE_THINKING} chars"
+    fi
+
+    log "Final response (${#CLAUDE_RESPONSE} chars), thinking (${#CLAUDE_THINKING} chars)"
 
     # 构建并发送卡片
     local CARD
-    CARD=$(build_stop_card "$CLAUDE_RESPONSE" "$PROJECT_NAME" "$TIMESTAMP" "${SESSION_ID:0:8}" 2>/dev/null)
+    CARD=$(build_stop_card "$CLAUDE_RESPONSE" "$PROJECT_NAME" "$TIMESTAMP" "${SESSION_ID:0:8}" "$CLAUDE_THINKING" 2>/dev/null)
 
     if [ -n "$CARD" ]; then
         # 传递 session_id, project_dir, callback_url 支持回复继续会话
