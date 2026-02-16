@@ -180,7 +180,7 @@ curl -s http://localhost:8080/status                              # 确认服务
 
 **6. 获取 OWNER_ID**
 
-`FEISHU_OWNER_ID` 是消息接收者的飞书 open_id（`ou_xxxx` 格式）。可通过飞书开放平台「用户管理」查看，或发送消息给机器人后从日志中获取。
+`FEISHU_OWNER_ID` 是消息接收者的飞书 user_id（纯数字或字母数字组合）。可通过飞书开放平台「用户管理」查看，或发送消息给机器人后从日志中获取。
 
 ### 配置
 
@@ -195,7 +195,7 @@ FEISHU_APP_SECRET=xxxxxxxxxxxx
 FEISHU_VERIFICATION_TOKEN=your_verification_token
 
 # 消息接收者
-FEISHU_OWNER_ID=ou_xxxx
+FEISHU_OWNER_ID=12345678
 
 # 回调服务（需要飞书能访问到此地址）
 CALLBACK_SERVER_URL=http://your-server:8080

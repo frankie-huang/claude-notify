@@ -237,7 +237,7 @@ class ToolConfigManager:
             icon="",
             input_field="",
             detail_template="{tool_name}",
-            rule_template=f"{tool_name}(*)"
+            rule_template=tool_name if tool_name.startswith("mcp__") else f"{tool_name}(*)"
         )
 
     def get_color(self, tool_name: str) -> str:

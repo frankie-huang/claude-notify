@@ -532,13 +532,15 @@ OpenAPI 模式支持将消息发送到飞书群聊：
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `FEISHU_OWNER_ID` | 默认消息接收者 / 通知 @ 用户（支持 `ou_`/`oc_`/`on_`/邮箱/user_id） | 空 |
+| `FEISHU_OWNER_ID` | 默认消息接收者 / 通知 @ 用户（**必须使用 user_id 格式**） | 空 |
 | `FEISHU_AT_USER` | 通知 @ 用户配置：空=@ `FEISHU_OWNER_ID`，`all`=@ 所有人，`off`=禁用 | 空 |
 | `FEISHU_TEMPLATE_PATH` | 自定义卡片模板目录 | `src/templates/feishu` |
 
 > `FEISHU_OWNER_ID` 说明：
+> - **必须使用 user_id 格式**（纯数字或字母数字组合），其他 ID 类型会导致认证问题
+> - 获取方式：[如何获取 User ID](https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-user-id)
 > - **Webhook 模式**：可选，仅用于通知 @ 用户
-> - **OpenAPI 模式**：**必需**，用于确定消息接收者
+> - **OpenAPI 模式**：**必需**，用于确定消息接收者和网关注册
 
 #### 回调服务器配置
 

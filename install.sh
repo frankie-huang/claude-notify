@@ -407,12 +407,8 @@ CLOSE_PAGE_TIMEOUT=3
 # 启用后，Callback 后端启动时自动向飞书网关注册，实现双向认证
 #
 # 飞书用户 ID（网关注册时必填，同时作为 OpenAPI 消息接收者）
-# 支持格式:
-#   - ou_xxxx: 用户 open_id
-#   - oc_xxxx: 群聊 chat_id
-#   - on_xxxx: 用户 union_id
-#   - xxx@xxx: 用户邮箱
-#   - 其他: 用户 user_id
+# 必须使用 user_id 格式（纯数字或字母数字组合），服务启动时会校验格式
+# 获取方式：https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-user-id
 FEISHU_OWNER_ID=
 
 # 飞书群聊 ID (可选，默认为空)

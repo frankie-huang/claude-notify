@@ -84,7 +84,7 @@
       "icon": "image",
       "input_field": "imageSource",
       "detail_template": "图像分析",
-      "rule_template": "mcp__4_5v_mcp__analyze_image(*)"
+      "rule_template": "mcp__4_5v_mcp__analyze_image"
     },
     "mcp__web_reader__webReader": {
       "name": "mcp__web_reader__webReader",
@@ -93,7 +93,7 @@
       "icon": "web",
       "input_field": "url",
       "detail_template": "{url}",
-      "rule_template": "mcp__web_reader__webReader({url})"
+      "rule_template": "mcp__web_reader__webReader"
     }
   },
   "_defaults": {

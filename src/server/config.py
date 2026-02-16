@@ -272,7 +272,20 @@ FEISHU_SEND_MODE = get_config('FEISHU_SEND_MODE', 'webhook')
 CALLBACK_SERVER_URL = get_config('CALLBACK_SERVER_URL', '')
 
 # 飞书用户 ID（用于网关注册）
+# 必须使用 user_id 格式，以确保同一用户在更换应用后仍能正确认证
+# 其他 ID 类型（open_id、union_id）在更换应用后会导致认证失败
 FEISHU_OWNER_ID = get_config('FEISHU_OWNER_ID', '')
+if FEISHU_OWNER_ID:
+    # user_id 格式校验：不能是其他已知格式
+    if (FEISHU_OWNER_ID.startswith('ou_') or  # open_id
+        FEISHU_OWNER_ID.startswith('oc_') or  # chat_id
+        FEISHU_OWNER_ID.startswith('on_') or  # union_id
+        '@' in FEISHU_OWNER_ID):              # email
+        raise ValueError(
+            f"配置错误: FEISHU_OWNER_ID 必须使用 user_id 格式，"
+            f"当前值: {FEISHU_OWNER_ID} 是其他 ID 类型。"
+            f"请在飞书开放平台获取用户的 user_id（纯数字或字母数字组合）。"
+        )
 
 # 飞书网关地址（分离部署时配置，网关注册接口为 {FEISHU_GATEWAY_URL}/register）
 # OpenAPI 模式下未配置时，默认使用 CALLBACK_SERVER_URL（单机模式）

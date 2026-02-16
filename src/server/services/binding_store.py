@@ -109,6 +109,16 @@ class BindingStore:
             try:
                 data = self._load()
                 existing = data.get(owner_id)
+                # 清除其他用户对同一 callback_url 的旧绑定
+                stale_owners = [
+                    oid for oid, info in data.items()
+                    if oid != owner_id and info.get('callback_url') == callback_url
+                ]
+                for oid in stale_owners:
+                    del data[oid]
+                    logger.info(
+                        f"[binding-store] Removed stale binding: {oid} -> {callback_url}"
+                    )
                 data[owner_id] = {
                     'callback_url': callback_url,
                     'auth_token': auth_token,

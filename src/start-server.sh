@@ -80,8 +80,10 @@ start_service() {
         echo "Warning: FEISHU_WEBHOOK_URL is not set. Notifications will be skipped."
     fi
 
-    # 后台启动服务（日志由 Python logging 模块写入 callback_*.log）
-    nohup python3 "${SERVER_DIR}/main.py" >/dev/null 2>&1 &
+    # 后台启动服务（日志由 Python FileHandler 写入，stderr 写入单独文件用于捕获启动错误）
+    local log_file="$LOG_DIR/callback_$(date +%Y%m%d).log"
+    local error_file="$LOG_DIR/startup_error.log"
+    nohup python3 "${SERVER_DIR}/main.py" >/dev/null 2>"$error_file" &
     local pid=$!
 
     # 保存 PID
@@ -93,10 +95,19 @@ start_service() {
     # 验证服务是否启动成功
     if is_running; then
         echo "Service started successfully (PID: $pid)"
-        echo "Logs: $LOG_DIR/callback_$(date +%Y%m%d).log"
+        echo "Logs: $log_file"
+        # 启动成功后清理错误文件
+        rm -f "$error_file"
         return 0
     else
-        echo "Failed to start service. Check logs: $LOG_DIR/callback_$(date +%Y%m%d).log"
+        echo "Failed to start service."
+        # 显示启动错误（如果有）
+        if [ -s "$error_file" ]; then
+            echo "Error:"
+            cat "$error_file"
+        else
+            echo "Check logs: $log_file"
+        fi
         rm -f "$PID_FILE"
         return 1
     fi
