@@ -188,7 +188,7 @@ claude-notify/
 │   ├── server/                   # Python 回调服务
 │   │   ├── main.py
 │   │   ├── config.py
-│   │   ├── socket-client.py
+│   │   ├── socket_client.py
 │   │   ├── handlers/
 │   │   ├── models/
 │   │   └── services/
@@ -205,11 +205,13 @@ claude-notify/
 │   │   └── feishu/
 │   │
 │   └── proxy/                    # VSCode 代理
-│       └── vscode-ssh-proxy.py
+│       └── vscode_ssh_proxy.py
 │
 ├── docs/                         # 文档
 │   ├── AGENTS.md
-│   └── CLAUDE_CODE_HOOKS.md
+│   ├── deploy/                   # 部署相关
+│   ├── design/                   # 架构设计
+│   └── reference/                # 参考资料
 │
 ├── log/                          # 日志目录（运行时生成）
 │

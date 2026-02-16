@@ -7,8 +7,9 @@
 优先级: .env 文件 > 环境变量 > 默认值
 """
 
+import json
 import os
-from typing import Optional
+from typing import Optional, List, Tuple
 
 # =============================================================================
 # 默认配置值
@@ -141,10 +142,93 @@ def get_close_page_timeout() -> int:
     return get_config_int('CLOSE_PAGE_TIMEOUT', DEFAULT_CLOSE_PAGE_TIMEOUT)
 
 
+def get_claude_commands():
+    # type: () -> List[str]
+    """解析 CLAUDE_COMMAND 配置为命令列表
+
+    支持格式:
+    - 单命令字符串: "claude" 或 "claude --setting opus"
+    - 无引号列表: [claude, claude --setting opus]
+    - JSON 数组: ["claude", "claude --setting opus"]
+    - 空值/缺失: 默认 ["claude"]
+
+    Returns:
+        命令字符串列表，至少包含一个元素
+    """
+    raw = get_config('CLAUDE_COMMAND', '')
+    raw = raw.strip()
+
+    if not raw:
+        return ['claude']
+
+    # 列表格式: 以 [ 开头且以 ] 结尾
+    if raw.startswith('[') and raw.endswith(']'):
+        # 先尝试 JSON 解析
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                result = [str(item).strip() for item in parsed if str(item).strip()]
+                return result if result else ['claude']
+        except (ValueError, TypeError):
+            pass
+
+        # JSON 失败，按逗号分隔（无引号列表格式）
+        inner = raw[1:-1]
+        items = [item.strip() for item in inner.split(',') if item.strip()]
+        return items if items else ['claude']
+
+    # 单命令字符串
+    return [raw]
+
+
+def resolve_claude_command(cmd_arg):
+    # type: (str) -> Tuple[bool, str]
+    """根据索引或名称匹配从配置列表中选择 Claude Command
+
+    Args:
+        cmd_arg: 用户输入的 --cmd 参数值，可以是:
+            - 数字字符串（索引，从 0 开始）
+            - 名称子串（大小写敏感匹配）
+
+    Returns:
+        (success, result):
+            - success=True, result=匹配到的命令字符串
+            - success=False, result=错误提示信息
+    """
+    commands = get_claude_commands()
+
+    if not cmd_arg:
+        return True, commands[0]
+
+    # 尝试索引匹配
+    if cmd_arg.isdigit():
+        idx = int(cmd_arg)
+        if 0 <= idx < len(commands):
+            return True, commands[idx]
+        cmd_list = ', '.join(
+            '`[{}] {}`'.format(i, c) for i, c in enumerate(commands)
+        )
+        return False, '索引 {} 超出范围，可用命令: {}'.format(idx, cmd_list)
+
+    # 名称子串匹配
+    for cmd in commands:
+        if cmd_arg in cmd:
+            return True, cmd
+
+    cmd_list = ', '.join(
+        '`[{}] {}`'.format(i, c) for i, c in enumerate(commands)
+    )
+    return False, '未找到包含 `{}` 的命令，可用命令: {}'.format(cmd_arg, cmd_list)
+
+
 def reload_config():
     """重新加载 .env 文件
 
-    当 .env 文件内容变化后调用此函数刷新缓存
+    当 .env 文件内容变化后调用此函数刷新缓存。
+    注意：此函数仅刷新内部缓存，不会更新模块级导出变量
+    （如 REQUEST_TIMEOUT、FEISHU_APP_ID 等）。其他模块通过
+    from config import XXX 获取的值仍为模块首次加载时的旧值。
+    如需获取最新值，应直接调用 get_config()。
     """
     global _env_file_cache
     _env_file_cache = None

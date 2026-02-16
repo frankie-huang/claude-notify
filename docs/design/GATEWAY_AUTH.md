@@ -529,7 +529,7 @@ FEISHU_APP_SECRET=xxx
 **Callback 后端：**
 
 ```bash
-# 发送模式（必需，启用双向认证）
+# 发送模式（必需）
 FEISHU_SEND_MODE=openapi
 
 # 回调服务对外可访问的地址
@@ -538,17 +538,17 @@ CALLBACK_SERVER_URL=https://callback.example.com
 # 飞书用户 ID（必需）
 FEISHU_OWNER_ID=ou_xxx
 
-# 飞书验证 Token（必需，用于生成和验证 auth_token 签名）
-FEISHU_VERIFICATION_TOKEN=your_secret_token
-
-# 飞书网关地址（可选，不配置则使用 CALLBACK_SERVER_URL）
+# 飞书网关地址（必需）
 FEISHU_GATEWAY_URL=https://gateway.example.com
+
+# 注意：Callback 后端不需要 FEISHU_VERIFICATION_TOKEN
+# 网关请求通过注册时下发的 auth_token 验证
 ```
 
 **飞书网关：**
 
 ```bash
-# 飞书验证 Token（必需）
+# 飞书验证 Token（必需，用于验证飞书事件和生成 auth_token）
 FEISHU_VERIFICATION_TOKEN=your_secret_token
 
 # 飞书应用凭证（必需）

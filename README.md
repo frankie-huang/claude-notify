@@ -53,41 +53,52 @@ claude-notify/
 │   ├── server/                 # Python 回调服务
 │   │   ├── main.py             # 主服务入口（ThreadedHTTPServer）
 │   │   ├── config.py           # 配置管理
-│   │   ├── socket-client.py    # Socket 客户端
+│   │   ├── socket_client.py    # Socket 客户端
 │   │   ├── models/             # 数据模型
 │   │   ├── services/           # 业务服务
 │   │   │   ├── request_manager.py   # 请求管理器
 │   │   │   ├── decision_handler.py  # 决策处理器
 │   │   │   ├── rule_writer.py       # 权限规则写入
-│   │   │   ├── session_store.py     # Session 映射存储
+│   │   │   ├── message_session_store.py # Message-Session 映射存储
+│   │   │   ├── session_chat_store.py   # Session-Chat 映射存储
 │   │   │   ├── binding_store.py     # 群聊绑定存储
+│   │   │   ├── dir_history_store.py # 目录历史记录存储
 │   │   │   ├── auto_register.py     # 网关注册服务
 │   │   │   ├── auth_token.py        # 认证令牌管理
+│   │   │   ├── auth_token_store.py  # 认证令牌存储
 │   │   │   └── feishu_api.py        # 飞书 API 封装
 │   │   └── handlers/           # HTTP 处理器
 │   │       ├── callback.py     # 权限回调处理器
 │   │       ├── feishu.py       # 飞书事件处理器（OpenAPI 网关）
 │   │       ├── claude.py       # Claude 会话继续处理器
-│   │       └── register.py     # 网关注册处理器
+│   │       ├── register.py     # 网关注册处理器
+│   │       └── utils.py        # 处理器通用工具函数
 │   ├── config/                 # 配置文件
 │   │   └── tools.json          # 工具类型配置
 │   ├── templates/              # 飞书卡片模板
 │   │   └── feishu/             # 飞书卡片模板文件
 │   ├── shared/                 # 跨语言共享资源
 │   │   ├── protocol.md         # Socket 通信协议规范
-│   │   └── logging.json        # 统一日志配置
+│   │   ├── logging.json        # 统一日志配置
+│   │   └── logging_config.py   # Python 日志配置模块
 │   └── proxy/                  # 本地代理服务
-│       └── vscode-ssh-proxy.py # VSCode SSH 反向隧道代理
+│       └── vscode_ssh_proxy.py # VSCode SSH 反向隧道代理
 ├── openspec/                   # OpenSpec 规范管理
 │   ├── specs/                  # 活跃规范
 │   └── changes/                # 历史变更记录
 ├── docs/                       # 文档
 │   ├── AGENTS.md               # Agent 规范说明
-│   ├── CLAUDE_CODE_HOOKS.md    # Hook 类型指南
-│   ├── DEPLOYMENT_MODES.md     # 部署模式对比
-│   ├── FEISHU_SESSION_CONTINUE.md # 会话继续功能
-│   ├── GATEWAY_AUTH.md         # 认证机制说明
-│   └── SECURITY_ANALYSIS.md    # 安全分析
+│   ├── deploy/                 # 部署相关
+│   │   ├── DEPLOYMENT_MODES.md
+│   │   ├── DEPLOYMENT_OPENAPI.md
+│   │   └── DEPLOYMENT_WEBHOOK.md
+│   ├── design/                 # 架构设计
+│   │   ├── FEISHU_SESSION_CONTINUE.md
+│   │   ├── GATEWAY_AUTH.md
+│   │   └── SECURITY_ANALYSIS.md
+│   └── reference/              # 参考资料
+│       ├── CLAUDE_CODE_HOOKS.md
+│       └── CODE_REVIEW.md
 ├── test/                       # 测试脚本
 ├── runtime/                    # 运行时数据（session 映射等）
 └── log/                        # 日志目录
@@ -123,7 +134,7 @@ vim .env
 | **OpenAPI 单机** | `FEISHU_APP_ID` + `FEISHU_APP_SECRET` + `FEISHU_OWNER_ID` | 飞书内响应 |
 | **OpenAPI 分离** | `FEISHU_GATEWAY_URL` | 多实例部署 |
 
-> 详细的模式对比、架构设计和配置指南请参考 [部署模式架构文档](docs/DEPLOYMENT_MODES.md)
+> 详细的模式对比、架构设计和配置指南请参考 [部署模式架构文档](docs/deploy/DEPLOYMENT_MODES.md)
 
 ### 3. 启动回调服务
 
@@ -139,14 +150,14 @@ vim .env
 
 ## 架构设计
 
-本项目支持两种部署模式，详细的架构设计、配置步骤和部署指南请参考：
+本项目支持两种部署模式：
 
-**[部署模式架构文档](docs/DEPLOYMENT_MODES.md)**
+| 模式 | 说明 | 详细文档 |
+|------|------|----------|
+| **Webhook 模式** | 使用飞书机器人 Webhook，配置简单，适合个人使用 | [部署文档](docs/deploy/DEPLOYMENT_WEBHOOK.md) |
+| **OpenAPI 模式** | 使用飞书开放平台 API，支持飞书内响应、多实例部署 | [部署文档](docs/deploy/DEPLOYMENT_OPENAPI.md) |
 
-| 模式 | 说明 |
-|------|------|
-| **Webhook 模式** | 使用飞书机器人 Webhook，配置简单，适合个人使用 |
-| **OpenAPI 模式** | 使用飞书开放平台 API，支持飞书内响应、多实例部署 |
+**[→ 部署模式选择指南](docs/deploy/DEPLOYMENT_MODES.md)**
 
 ### 单机部署架构
 
@@ -201,7 +212,7 @@ vim .env
                                         网关自动路由到对应服务
 ```
 
-> 完整的部署模式对比、配置清单和选择指南请查看 [部署模式架构文档](docs/DEPLOYMENT_MODES.md)
+> 完整的部署模式对比、配置清单和选择指南请查看 [部署模式架构文档](docs/deploy/DEPLOYMENT_MODES.md)
 
 ### 关键设计点
 
@@ -212,8 +223,8 @@ vim .env
 5. **长度前缀协议**: 使用 4 字节长度前缀确保数据完整性（详见 `src/shared/protocol.md`）
 6. **连接状态驱动**: 请求有效性由 Socket 连接状态决定，支持死连接检测和超时处理
 7. **优雅降级**: 回调服务不可用时自动降级为仅通知模式
-8. **消息回复关联**: OpenAPI 模式下通过 `message_id` → `session` 映射实现回复继续会话（详见 `docs/FEISHU_SESSION_CONTINUE.md`）
-9. **自动注册与双向认证**: OpenAPI 模式下 Callback 服务启动时自动向网关注册，通过 `auth_token` 实现双向认证（详见 `docs/GATEWAY_AUTH.md`）
+8. **消息回复关联**: OpenAPI 模式下通过 `message_id` → `session` 映射实现回复继续会话（详见 `docs/design/FEISHU_SESSION_CONTINUE.md`）
+9. **自动注册与双向认证**: OpenAPI 模式下 Callback 服务启动时自动向网关注册，通过 `auth_token` 实现双向认证（详见 `docs/design/GATEWAY_AUTH.md`）
 
 ## 功能特性
 
@@ -225,7 +236,7 @@ vim .env
 
 ### 会话继续（OpenAPI 模式）
 - **飞书回复继续会话**: 用户可回复飞书消息在对应的 Claude session 中继续提问
-- **群聊绑定**: 支持将群聊与用户绑定，消息自动路由到对应实例
+- **群聊支持**: 支持将消息发送到飞书群聊，Session 自动映射到对应群聊
 - **多实例支持**: 分离部署模式下，多个 Claude Code 实例可独立工作
 
 ### 系统特性
@@ -258,7 +269,7 @@ vim .env
 - ✅ **飞书回复继续会话**: 用户可回复飞书消息在对应的 Claude session 中继续提问
 - ✅ **自动注册与双向认证**: Callback 服务启动时自动向网关注册，获取 `auth_token` 用于双向认证
 - ✅ **用户授权控制**: 分离部署模式下，新设备注册需用户在飞书中确认
-- ✅ **群聊绑定**: 支持群聊与用户的绑定关系，实现多群聊消息路由
+- ✅ **群聊支持**: 支持将消息发送到飞书群聊，Session 自动映射到对应群聊
 
 ### VSCode 集成
 - ✅ **VSCode 自动跳转**: 点击飞书按钮后从浏览器页面自动跳转到 VSCode（`VSCODE_URI_PREFIX`）
@@ -283,9 +294,9 @@ vim .env
 | `src/hooks/webhook.sh` | 通用通知（任务暂停等） | Notification |
 | `src/hooks/stop.sh` | 任务完成通知（含响应摘要） | Stop |
 | `src/server/main.py` | 权限回调服务（HTTP + Socket） | - |
-| `src/server/socket-client.py` | Socket 客户端（替代 socat） | - |
+| `src/server/socket_client.py` | Socket 客户端（替代 socat） | - |
 | `src/server/handlers/claude.py` | Claude 会话继续处理器 | - |
-| `src/server/services/session_store.py` | Session 映射存储服务 | - |
+| `src/server/services/message_session_store.py` | Message-Session 映射存储服务 | - |
 
 ## Shell 函数库说明
 
@@ -305,10 +316,8 @@ vim .env
 
 | 模型 | 功能 |
 |------|------|
-| `request.py` | 权限请求数据模型 |
 | `decision.py` | 用户决策数据模型 |
-| `session.py` | Session 映射数据模型 |
-| `binding.py` | 群聊绑定数据模型 |
+| `tool_config.py` | 工具配置数据模型（从 config/tools.json 读取） |
 
 ### 业务服务 (`src/server/services/`)
 
@@ -317,10 +326,13 @@ vim .env
 | `request_manager.py` | 请求管理器（注册、查询、超时处理） |
 | `decision_handler.py` | 决策处理器（通过 Socket 返回决策） |
 | `rule_writer.py` | 权限规则写入器（"始终允许"功能） |
-| `session_store.py` | Session 映射存储（message_id → session） |
-| `binding_store.py` | 群聊绑定存储（chat_id ↔ owner_id） |
+| `message_session_store.py` | Message-Session 映射存储（message_id → session） |
+| `session_chat_store.py` | Session-Chat 映射存储（session_id → chat_id） |
+| `binding_store.py` | 网关注册绑定存储（owner_id → callback_url + auth_token） |
+| `dir_history_store.py` | 目录历史记录存储（常用工作目录推荐） |
 | `auto_register.py` | 网关注册服务（Callback 自动向网关注册） |
 | `auth_token.py` | 认证令牌管理（生成、验证、刷新） |
+| `auth_token_store.py` | 认证令牌存储（网关注册返回的 token） |
 | `feishu_api.py` | 飞书 API 封装（发送消息、上传图片等） |
 
 ### HTTP 处理器 (`src/server/handlers/`)
@@ -331,6 +343,7 @@ vim .env
 | `feishu.py` | 飞书事件处理器（OpenAPI 网关） | `/feishu/*` |
 | `claude.py` | Claude 会话继续处理器 | `/claude/continue` |
 | `register.py` | 网关注册处理器 | `/register` |
+| `utils.py` | 处理器通用工具函数 | - |
 
 ## VSCode SSH 远程开发代理
 
@@ -341,7 +354,7 @@ vim .env
 1. **在本地电脑启动代理服务**：
 
 ```bash
-python3 src/proxy/vscode-ssh-proxy.py --vps myserver
+python3 src/proxy/vscode_ssh_proxy.py --vps myserver
 ```
 
 参数说明：
@@ -464,7 +477,7 @@ OpenAPI 模式支持两种部署方式：
 | `FEISHU_APP_ID` | 飞书应用 App ID | **必需** |
 | `FEISHU_APP_SECRET` | 飞书应用 App Secret | **必需** |
 | `FEISHU_VERIFICATION_TOKEN` | 飞书验证 Token（双向认证必需） | **必需** |
-| `FEISHU_OWNER_ID` | 默认消息接收者（留空则需用户回复建立群聊绑定） | 可选 |
+| `FEISHU_OWNER_ID` | 默认消息接收者（OpenAPI 模式必需） | **必需** |
 
 **分离部署**：飞书网关与 Callback 服务分离（多实例场景）
 
@@ -472,15 +485,15 @@ OpenAPI 模式支持两种部署方式：
 
 - 网关服务配置：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_VERIFICATION_TOKEN`
 - Callback 服务配置：`FEISHU_GATEWAY_URL`（不配置则默认使用 `CALLBACK_SERVER_URL`）
-- Callback 服务启动时自动向网关注册获取 `auth_token`
+- Callback 服务启动时自动向网关注册获取 `auth_token`（用于后续通信验证）
 - 消息根据 `chat_id` 参数发送：优先级为 `chat_id` 参数 > `FEISHU_CHAT_ID` 配置 > `owner_id`
 
 | 变量 | 网关服务 | Callback 服务 |
 |------|:-------:|:------------:|
-| `FEISHU_GATEWAY_URL` | - | ✓（可选） |
+| `FEISHU_GATEWAY_URL` | - | ✓（分离部署必需） |
 | `FEISHU_APP_ID` | ✓ | - |
 | `FEISHU_APP_SECRET` | ✓ | - |
-| `FEISHU_VERIFICATION_TOKEN` | ✓ | ✓ |
+| `FEISHU_VERIFICATION_TOKEN` | ✓ | - |
 | `FEISHU_OWNER_ID` | ✓ | ✓ |
 | `FEISHU_CHAT_ID` | ✓ | ✓（客户端读取） |
 
@@ -497,27 +510,23 @@ FEISHU_OWNER_ID=ou_admin_user
 
 # === Callback 服务 ===
 FEISHU_SEND_MODE=openapi
-# FEISHU_GATEWAY_URL=http://gateway-server:8080  # 不配置则使用本地网关
+FEISHU_GATEWAY_URL=http://gateway-server:8080  # 网关地址
 CALLBACK_SERVER_URL=http://callback-server-a:8081
 CALLBACK_SERVER_PORT=8081
-FEISHU_VERIFICATION_TOKEN=your_verification_token  # 需与网关一致
 FEISHU_OWNER_ID=ou_admin_user
 ```
 
-#### 群聊绑定（OpenAPI 模式）
+#### 群聊发送（OpenAPI 模式）
 
-OpenAPI 模式支持将群聊与用户绑定，实现多群聊消息路由：
+OpenAPI 模式支持将消息发送到飞书群聊：
 
 | 变量 | 说明 |
 |------|------|
-| `FEISHU_CHAT_ID` | 默认群聊 ID（可被 client 参数覆盖） |
+| `FEISHU_CHAT_ID` | 默认群聊 ID（由客户端读取，作为参数传递） |
 
-**绑定流程**：
-1. 用户在群聊中发送任意消息
-2. 网关自动记录 `chat_id` 与 `owner_id` 的绑定关系
-3. 后续消息优先发送到绑定的群聊
+**消息发送优先级**：`chat_id` 参数 > `owner_id`
 
-**消息优先级**：`chat_id` 参数 > `FEISHU_CHAT_ID` 配置 > `owner_id`
+**Session 与群聊映射**：当用户在群聊中回复消息继续会话时，系统会自动记录 `session_id → chat_id` 映射，后续该 session 的通知会自动发送到对应群聊。
 
 #### 通用飞书配置
 
@@ -527,9 +536,9 @@ OpenAPI 模式支持将群聊与用户绑定，实现多群聊消息路由：
 | `FEISHU_AT_USER` | 通知 @ 用户配置：空=@ `FEISHU_OWNER_ID`，`all`=@ 所有人，`off`=禁用 | 空 |
 | `FEISHU_TEMPLATE_PATH` | 自定义卡片模板目录 | `src/templates/feishu` |
 
-> `FEISHU_OWNER_ID` 的双重作用：
-> 1. 作为首次会话消息的默认接收者
-> 2. 在通知消息中默认 @ 此用户（可通过 `FEISHU_AT_USER` 覆盖）
+> `FEISHU_OWNER_ID` 说明：
+> - **Webhook 模式**：可选，仅用于通知 @ 用户
+> - **OpenAPI 模式**：**必需**，用于确定消息接收者
 
 #### 回调服务器配置
 
@@ -543,9 +552,28 @@ OpenAPI 模式支持将群聊与用户绑定，实现多群聊消息路由：
 | `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
 | `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
 | `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 60 |
-| `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 5000 |
 | `STOP_THINKING_MAX_LENGTH` | Stop 事件思考过程最大长度（字符数，0 禁用） | 5000 |
-| `CLAUDE_COMMAND` | Claude 命令（支持参数、shell 别名，如 `claude --setting opus`） | `claude` |
+| `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 5000 |
+| `CLAUDE_COMMAND` | Claude 命令，支持多命令列表如 `[claude, claude --setting opus]`，详见下文 | `claude` |
+
+**Claude Command 多命令配置**
+
+支持配置多个 Claude 命令，在创建/继续会话时选择使用哪个：
+
+```bash
+# 单命令（向后兼容）
+CLAUDE_COMMAND=claude
+
+# 多命令（列表格式，无需引号）
+CLAUDE_COMMAND=[claude, claude --setting opus]
+```
+
+配置多命令后：
+- `/new` 卡片会显示 Command 选择下拉框
+- `/new --cmd=1 --dir=/path prompt` — 按索引选择
+- `/new --cmd=opus --dir=/path prompt` — 按名称子串匹配
+- `/reply --cmd=opus prompt` — 回复消息时指定 Command（仅在回复消息时可用）
+- 每个 session 会记忆最近使用的 Command，后续回复自动复用
 
 **VSCode 自动跳转/激活配置**（以下两种模式二选一）
 
@@ -564,7 +592,7 @@ OpenAPI 模式支持将群聊与用户绑定，实现多群聊消息路由：
 
 ### 可选依赖
 - `jq` - 更好的 JSON 处理（脚本会自动降级使用 Python3 或 grep/sed）
-- `socat` - Socket 通信备选方案（有 Python socket-client 作为替代）
+- `socat` - Socket 通信备选方案（有 Python socket_client 作为替代）
 
 ### 安装
 
@@ -615,7 +643,19 @@ brew install python3 curl jq socat
 3. 网关通过 `message_id` 找到对应的 session
 4. 消息注入到 Claude session，继续对话
 
-> 详细原理请参考 [飞书消息回复继续会话方案](docs/FEISHU_SESSION_CONTINUE.md)
+> 详细原理请参考 [飞书消息回复继续会话方案](docs/design/FEISHU_SESSION_CONTINUE.md)
+
+### 飞书指令
+
+| 指令 | 说明 |
+|------|------|
+| `/new` | 发起新会话，弹出目录选择卡片 |
+| `/new --dir=/path prompt` | 直接指定目录和提示词创建会话 |
+| `/new --cmd=1 --dir=/path prompt` | 指定 Claude Command（按索引或名称子串） |
+| `/reply --cmd=opus prompt` | 回复消息时指定 Command 继续会话 |
+
+- `/reply` 仅在回复消息时可用，用于临时切换 Command 继续会话
+- 未指定 `--cmd` 时，使用 session 记忆的 Command 或默认命令
 
 ## 日志
 
@@ -631,15 +671,21 @@ brew install python3 curl jq socat
 
 ## 文档
 
-### 架构与安全
-- [部署模式架构](docs/DEPLOYMENT_MODES.md) - Webhook 模式与 OpenAPI 模式的详细对比与配置指南
-- [飞书网关认证与注册机制](docs/GATEWAY_AUTH.md) - Callback 后端自动注册与双向认证机制
-- [通信鉴权与安全分析](docs/SECURITY_ANALYSIS.md) - 通信安全风险评估与加固建议
+### 部署指南
+- [部署模式选择指南](docs/deploy/DEPLOYMENT_MODES.md) - Webhook 与 OpenAPI 模式对比与选择
+- [Webhook 模式部署](docs/deploy/DEPLOYMENT_WEBHOOK.md) - Webhook 模式详细部署文档
+- [OpenAPI 模式部署](docs/deploy/DEPLOYMENT_OPENAPI.md) - OpenAPI 模式详细部署文档
+
+### 架构设计
+- [飞书网关认证与注册机制](docs/design/GATEWAY_AUTH.md) - Callback 后端自动注册与双向认证机制
+- [飞书消息回复继续会话方案](docs/design/FEISHU_SESSION_CONTINUE.md) - 飞书回复继续 Claude 会话的设计与实现
+- [通信鉴权与安全分析](docs/design/SECURITY_ANALYSIS.md) - 通信安全风险评估与加固建议
 - [Socket 通信协议](src/shared/protocol.md) - Unix Socket 通信规范
 
-### 功能设计
-- [Claude Code Hooks 事件调研](docs/CLAUDE_CODE_HOOKS.md) - 所有 hooks 事件类型、触发时机和配置方式
-- [飞书消息回复继续会话方案](docs/FEISHU_SESSION_CONTINUE.md) - 飞书回复继续 Claude 会话的设计与实现
+### 参考资料
+- [用户使用指南](docs/reference/USER_GUIDE.md) - 从用户视角的完整使用说明（指令、卡片交互、错误处理）
+- [Claude Code Hooks 事件调研](docs/reference/CLAUDE_CODE_HOOKS.md) - 所有 hooks 事件类型、触发时机和配置方式
+- [代码审查记录](docs/reference/CODE_REVIEW.md) - 代码审查与改进记录
 - [飞书卡片模板说明](src/templates/feishu/README.md) - 卡片模板使用指南
 
 ### OpenSpec

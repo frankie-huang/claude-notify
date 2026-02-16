@@ -27,16 +27,17 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
 fi
 
 # =============================================================================
-# 从单个 transcript 文件中提取响应内容（text + thinking）
+# 从单个 transcript 文件中提取响应内容（texts 数组 + thinking）
 # 参数:
 #   $1 - transcript 文件路径
 #   $2 - 最大重试次数 (可选，默认 5)
 # 返回:
-#   输出 JSON 字符串 {"text":"...","thinking":"...","session_id":"..."}
+#   输出 JSON 字符串 {"texts":["...","..."],"thinking":"...","session_id":"..."}
 #   找不到有效内容则返回空
 # 说明:
 #   找到最近一条用户文本消息（排除仅含 tool_result 的 user 消息），
 #   收集其后所有 assistant 消息中的 text 和 thinking 内容。
+#   texts 按 assistant 消息分组，每条 assistant 的文本合并为一个元素。
 # =============================================================================
 extract_response_from_file() {
     local transcript_file="$1"
@@ -67,11 +68,11 @@ else
     # 收集 user_idx 之后所有 assistant 消息
     [.[$user_idx + 1:] | .[] | select(.type == "assistant")] |
     {
-        text: ([.[] | .message.content // [] | [.[] | select(.type == "text") | .text] | join("")] | join("\n\n") | gsub("^\\n+|\\n+$"; "")),
+        texts: [.[] | .message.content // [] | [.[] | select(.type == "text") | .text] | join("") | gsub("^\\n+|\\n+$"; "") | select(length > 0)],
         thinking: ([.[] | .message.content // [] | [.[] | select(.type == "thinking") | .thinking] | join("")] | join("\n\n") | gsub("^\\n+|\\n+$"; "")),
         session_id: ([.[] | .sessionId // empty] | if length > 0 then .[0] else "" end)
     } |
-    if .text == "" then null else . end
+    if (.texts | length) == 0 then null else . end
 end
 ' "$transcript_file" 2>/dev/null)
 
@@ -79,7 +80,7 @@ end
             result=$(python3 -c "
 import sys, json
 
-with open('$transcript_file', 'r') as f:
+with open(sys.argv[1], 'r') as f:
     lines = f.readlines()
 
 records = []
@@ -112,7 +113,8 @@ if user_idx is None:
     sys.exit(0)
 
 # 收集 user_idx 之后所有 assistant 消息的 text 和 thinking
-texts = []
+# texts 按 assistant 消息分组
+stage_texts = []
 thinkings = []
 session_id = ''
 for r in records[user_idx + 1:]:
@@ -123,22 +125,25 @@ for r in records[user_idx + 1:]:
     content = r.get('message', {}).get('content', [])
     if not isinstance(content, list):
         continue
+    msg_parts = []
     for item in content:
         if not isinstance(item, dict):
             continue
         if item.get('type') == 'text':
-            texts.append(item.get('text', ''))
+            msg_parts.append(item.get('text', ''))
         elif item.get('type') == 'thinking':
             thinkings.append(item.get('thinking', ''))
+    msg_text = ''.join(msg_parts).strip()
+    if msg_text:
+        stage_texts.append(msg_text)
 
-combined_text = '\n\n'.join(t for t in texts if t).strip()
 combined_thinking = '\n\n'.join(t for t in thinkings if t).strip()
 
-if not combined_text:
+if not stage_texts:
     sys.exit(0)
 
-print(json.dumps({'text': combined_text, 'thinking': combined_thinking, 'session_id': session_id}))
-" 2>/dev/null)
+print(json.dumps({'texts': stage_texts, 'thinking': combined_thinking, 'session_id': session_id}))
+" "$transcript_file" 2>/dev/null)
         fi
 
         if [ -n "$result" ] && [ "$result" != "null" ]; then
@@ -160,7 +165,7 @@ print(json.dumps({'text': combined_text, 'thinking': combined_thinking, 'session
 # 参数:
 #   $1 - 主 transcript 文件路径
 # 返回:
-#   输出 JSON 字符串 {"text":"...","thinking":"...","session_id":"..."}
+#   输出 JSON 字符串 {"texts":[...],"thinking":"...","session_id":"..."}
 # 说明:
 #   1. 先在主 transcript 文件中查找
 #   2. 如果找不到，检查 subagents 目录，按修改时间倒序查找
@@ -216,6 +221,75 @@ extract_response() {
 }
 
 # =============================================================================
+# 构建响应元素 JSON 片段（多个 markdown 元素，hr 分隔）
+# 参数:
+#   $1 - response_json  extract_response 返回的 JSON（含 texts 数组）
+#   $2 - max_length     总文本最大长度
+# 输出:
+#   逗号分隔的 JSON 元素字符串，可直接嵌入飞书卡片 elements 数组
+# =============================================================================
+build_response_elements() {
+    local response_json="$1"
+    local max_length="$2"
+
+    if [ "$JSON_HAS_JQ" = "true" ]; then
+        echo "$response_json" | jq -r --argjson max_len "$max_length" '
+            .texts |
+            # 按总长度截断
+            reduce .[] as $t (
+                {remaining: $max_len, result: []};
+                if .remaining <= 0 then .
+                elif ($t | length) <= .remaining then
+                    .result += [$t] | .remaining -= ($t | length)
+                else
+                    .result += [$t[:.remaining] + "..."] | .remaining = 0
+                end
+            ) | .result |
+            # 构建 markdown 元素，元素间用 hr 分隔
+            [to_entries[] |
+                (if .key > 0 then
+                    [{tag: "hr", margin: "0px 0px 0px 0px"}]
+                else [] end) +
+                [{
+                    tag: "markdown",
+                    content: (.value | split("\n") | map(
+                        if test("^\\s*```") then sub("^\\s*"; "") else . end
+                    ) | join("\n")),
+                    text_align: "left",
+                    text_size: "normal_v2"
+                }]
+            ] | flatten | map(tojson) | join(",")
+        ' 2>/dev/null
+    elif [ "$JSON_HAS_PYTHON3" = "true" ]; then
+        echo "$response_json" | python3 -c "
+import sys, json, re
+data = json.load(sys.stdin)
+texts = data.get('texts', [])
+max_len = int(sys.argv[1])
+truncated = []
+remaining = max_len
+for text in texts:
+    if remaining <= 0:
+        break
+    if len(text) <= remaining:
+        truncated.append(text)
+        remaining -= len(text)
+    else:
+        truncated.append(text[:remaining] + '...')
+        remaining = 0
+fence = chr(96) * 3
+elements = []
+for i, text in enumerate(truncated):
+    text = re.sub(r'^[ \t]*' + fence, fence, text, flags=re.MULTILINE)
+    if i > 0:
+        elements.append(json.dumps({'tag': 'hr', 'margin': '0px 0px 0px 0px'}))
+    elements.append(json.dumps({'tag': 'markdown', 'content': text, 'text_align': 'left', 'text_size': 'normal_v2'}))
+print(','.join(elements))
+" "$max_length" 2>/dev/null
+    fi
+}
+
+# =============================================================================
 # 后台异步发送通知函数
 # =============================================================================
 send_stop_notification_async() {
@@ -244,35 +318,32 @@ send_stop_notification_async() {
 
     log "Stop notification: extracting response from transcript"
 
-    # 提取 Claude 响应内容（text + thinking）
-    local CLAUDE_RESPONSE=""
+    # 提取 Claude 响应内容（texts 数组 + thinking）
     local CLAUDE_THINKING=""
+    local RESPONSE_ELEMENTS=""
     local response_json=""
 
-    # 使用新的 extract_response 函数（支持子代理回退）
+    # 使用 extract_response 函数（支持子代理回退）
     response_json=$(extract_response "$TRANSCRIPT_PATH")
 
     if [ -n "$response_json" ] && [ "$response_json" != "null" ]; then
-        # 从结果中提取各字段
+        # 从结果中提取 session_id 和 thinking
         SESSION_ID=$(json_get "$response_json" "session_id")
         if [ -z "$SESSION_ID" ]; then
             SESSION_ID="unknown"
         fi
 
-        CLAUDE_RESPONSE=$(json_get "$response_json" "text")
         CLAUDE_THINKING=$(json_get "$response_json" "thinking")
-        log "Extracted response: ${#CLAUDE_RESPONSE} chars, thinking: ${#CLAUDE_THINKING} chars"
+
+        # 构建响应元素 JSON 片段（含截断和代码块格式化）
+        RESPONSE_ELEMENTS=$(build_response_elements "$response_json" "$STOP_MAX_LENGTH")
+        log "Built response elements: ${#RESPONSE_ELEMENTS} chars, thinking: ${#CLAUDE_THINKING} chars"
     fi
 
-    if [ -z "$CLAUDE_RESPONSE" ]; then
-        CLAUDE_RESPONSE="任务已完成，请返回终端查看详细信息。"
+    # 无响应时使用默认消息
+    if [ -z "$RESPONSE_ELEMENTS" ]; then
+        RESPONSE_ELEMENTS='{"tag":"markdown","content":"任务已完成，请返回终端查看详细信息。","text_align":"left","text_size":"normal_v2"}'
         log "Using default response"
-    fi
-
-    # 截断过长响应
-    if [ ${#CLAUDE_RESPONSE} -gt "$STOP_MAX_LENGTH" ]; then
-        CLAUDE_RESPONSE="${CLAUDE_RESPONSE:0:$STOP_MAX_LENGTH}..."
-        log "Response truncated to ${#CLAUDE_RESPONSE} chars"
     fi
 
     # 处理 thinking：STOP_THINKING_MAX_LENGTH=0 时跳过
@@ -284,11 +355,9 @@ send_stop_notification_async() {
         log "Thinking truncated to ${#CLAUDE_THINKING} chars"
     fi
 
-    log "Final response (${#CLAUDE_RESPONSE} chars), thinking (${#CLAUDE_THINKING} chars)"
-
     # 构建并发送卡片
     local CARD
-    CARD=$(build_stop_card "$CLAUDE_RESPONSE" "$PROJECT_NAME" "$TIMESTAMP" "${SESSION_ID:0:8}" "$CLAUDE_THINKING" 2>/dev/null)
+    CARD=$(build_stop_card "$RESPONSE_ELEMENTS" "$PROJECT_NAME" "$TIMESTAMP" "$SESSION_ID" "$CLAUDE_THINKING" 2>/dev/null)
 
     if [ -n "$CARD" ]; then
         # 传递 session_id, project_dir, callback_url 支持回复继续会话

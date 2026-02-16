@@ -93,11 +93,25 @@ json_get() {
             echo "$json" | jq -r ".$field_path // empty" 2>/dev/null
             ;;
         python3)
-            # Python3 解析
-            local field_jspath
-            # 将 .field.nested 转换为 Python 的 ['field']['nested'] 格式
-            field_jspath=$(echo "$field_path" | sed 's/\./"]["/g' | sed 's/^/["/g' | sed 's/$/"]/g')
-            echo "$json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d${field_jspath} if d${field_jspath} is not None else '')" 2>/dev/null
+            # Python3 解析（安全处理中间键不存在）
+            echo "$json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+parts = sys.argv[1].split('.')
+result = d
+try:
+    for part in parts:
+        if isinstance(result, dict) and part in result:
+            result = result[part]
+        else:
+            result = ''
+            break
+    if result is None:
+        result = ''
+    print(str(result))
+except:
+    print('')
+" "$field_path" 2>/dev/null
             ;;
         native)
             # grep/sed 解析（有已知限制）
@@ -114,6 +128,81 @@ json_get() {
             ;;
         *)
             echo ""
+            return 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# 批量获取多个 JSON 字段值
+# =============================================================================
+# 功能：一次调用获取多个字段值，减少进程启动开销
+# 用法：json_get_multi "json_string" "field1" "field2" ...
+# 参数：
+#   json_string  - JSON 字符串
+#   field1, field2, ... - 字段路径列表
+# 输出：每行一个字段值，顺序与输入字段一致
+#
+# 示例：
+#   local -a vals
+#   mapfile -t vals <<< "$(json_get_multi "$json" name age address.city)"
+#   local name="${vals[0]:-}" age="${vals[1]:-}" city="${vals[2]:-}"
+# =============================================================================
+json_get_multi() {
+    local json="$1"
+    shift
+    local fields=("$@")
+
+    # 如果未初始化，先初始化
+    if [ -z "$JSON_PARSER" ]; then
+        json_init
+    fi
+
+    # 空值处理
+    if [ -z "$json" ] || [ ${#fields[@]} -eq 0 ]; then
+        return 1
+    fi
+
+    case "$JSON_PARSER" in
+        jq)
+            # jq 解析：输出每行一个值
+            local query=""
+            for field in "${fields[@]}"; do
+                if [ -n "$query" ]; then
+                    query="$query, "
+                fi
+                query="$query(.$field // \"\")"
+            done
+            echo "$json" | jq -r "$query" 2>/dev/null
+            ;;
+        python3)
+            # Python3 解析（一次调用获取所有字段）
+            echo "$json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for f in sys.argv[1:]:
+    parts = f.split('.')
+    result = d
+    try:
+        for p in parts:
+            if isinstance(result, dict) and p in result:
+                result = result[p]
+            else:
+                result = ''
+                break
+        print(str(result) if result is not None else '')
+    except:
+        print('')
+" "${fields[@]}" 2>/dev/null
+            ;;
+        native)
+            # native 不支持批量，逐个调用 json_get
+            local field
+            for field in "${fields[@]}"; do
+                json_get "$json" "$field"
+            done
+            ;;
+        *)
             return 1
             ;;
     esac
@@ -153,10 +242,23 @@ json_get_object() {
             echo "$json" | jq -c ".$field_path // {}" 2>/dev/null
             ;;
         python3)
-            # Python3 解析
-            local field_jspath
-            field_jspath=$(echo "$field_path" | sed 's/\./"]["/g' | sed 's/^/["/g' | sed 's/$/"]/g')
-            echo "$json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d${field_jspath} if d${field_jspath} is not None else {}))" 2>/dev/null
+            # Python3 解析（安全处理中间键不存在）
+            echo "$json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+parts = sys.argv[1].split('.')
+result = d
+try:
+    for part in parts:
+        if isinstance(result, dict) and part in result:
+            result = result[part]
+        else:
+            result = {}
+            break
+    print(json.dumps(result))
+except:
+    print('{}')
+" "$field_path" 2>/dev/null
             ;;
         native)
             # grep/sed 解析（简化版，仅支持单层对象）
@@ -260,20 +362,23 @@ json_get_array_value() {
             # Python3 解析
             echo "$json" | python3 -c "
 import sys, json
-data = json.load(sys.stdin)
-parts = '$array_path'.split('.')
-obj = data
-for part in parts:
-    if isinstance(obj, dict) and part in obj:
-        obj = obj[part]
-    else:
-        obj = []
-        break
-if isinstance(obj, list):
-    values = [item.get('$value_field', '') for item in obj if item.get('type') == '$type_filter']
-    # 用特殊字符连接
-    print('∂'.join(values))
-" 2>/dev/null
+try:
+    data = json.load(sys.stdin)
+    array_path, type_filter, val_field = sys.argv[1], sys.argv[2], sys.argv[3]
+    parts = array_path.split('.')
+    obj = data
+    for part in parts:
+        if isinstance(obj, dict) and part in obj:
+            obj = obj[part]
+        else:
+            obj = []
+            break
+    if isinstance(obj, list):
+        values = [item.get(val_field, '') for item in obj if item.get('type') == type_filter]
+        print('∂'.join(values))
+except:
+    print('')
+" "$array_path" "$type_filter" "$value_field" 2>/dev/null
             ;;
         *)
             # 不支持
@@ -314,11 +419,24 @@ json_has_field() {
             [ -n "$value" ]
             ;;
         python3)
-            # Python3 解析
-            local field_jspath
-            field_jspath=$(echo "$field_path" | sed 's/\./"]["/g' | sed 's/^/["/g' | sed 's/$/"]/g')
+            # Python3 解析（安全处理中间键不存在）
             local value
-            value=$(echo "$json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d${field_jspath} if d${field_jspath} is not None else '')" 2>/dev/null)
+            value=$(echo "$json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+parts = sys.argv[1].split('.')
+result = d
+try:
+    for part in parts:
+        if isinstance(result, dict) and part in result:
+            result = result[part]
+        else:
+            result = None
+            break
+    print('1' if result is not None else '')
+except:
+    print('')
+" "$field_path" 2>/dev/null)
             [ -n "$value" ]
             ;;
         native)

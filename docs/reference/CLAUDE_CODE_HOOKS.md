@@ -856,7 +856,7 @@ if assistant_messages:
       "hooks": [
         {
           "type": "command",
-          "command": "bash /path/to/claude-notify/hooks/permission-notify.sh",
+          "command": "bash /path/to/claude-notify/src/hook-router.sh",
           "timeout": 600
         }
       ]
@@ -876,7 +876,7 @@ if assistant_messages:
       "hooks": [
         {
           "type": "command",
-          "command": "bash $HOME/.claude/hooks/webhook/webhook-notify.sh",
+          "command": "bash /path/to/claude-notify/src/hook-router.sh",
           "timeout": 5
         }
       ]

@@ -2,7 +2,7 @@
 """
 Socket 客户端 - 替代 socat 实现可靠的双向通信
 
-用法: echo '{"json": "data"}' | python3 socket-client.py [socket_path]
+用法: echo '{"json": "data"}' | python3 socket_client.py [socket_path]
 
 功能：
     从 stdin 读取请求数据，通过 Unix Socket 发送到回调服务器，
@@ -28,7 +28,7 @@ import time
 from config import REQUEST_TIMEOUT, CLIENT_TIMEOUT, CLIENT_TIMEOUT_BUFFER
 
 # 日志配置（按日期切分）
-# 从 src/server/socket-client.py 向上两级到 src，再向上到项目根目录
+# 从 src/server/socket_client.py 向上两级到 src，再向上到项目根目录
 src_dir = os.path.dirname(os.path.dirname(__file__))
 project_root = os.path.dirname(src_dir)
 log_dir = os.path.join(project_root, 'log')

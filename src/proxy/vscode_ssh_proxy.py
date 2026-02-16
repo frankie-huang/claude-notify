@@ -7,10 +7,10 @@ VPS 可以发送请求来唤起本地 VSCode 窗口打开远程项目。
 
 使用方法:
     # 简单模式（使用默认端口 9527）
-    python3 vscode-ssh-proxy.py --vps myserver
+    python3 vscode_ssh_proxy.py --vps myserver
 
     # 从 .env 加载端口配置
-    source .env && python3 vscode-ssh-proxy.py --vps myserver --port ${VSCODE_SSH_PROXY_PORT} --remote-port ${VSCODE_SSH_PROXY_PORT}
+    source .env && python3 vscode_ssh_proxy.py --vps myserver --port ${VSCODE_SSH_PROXY_PORT} --remote-port ${VSCODE_SSH_PROXY_PORT}
 
 自动重连:
     脚本会自动检测并使用 autossh（如果已安装），实现断线自动重连。

@@ -96,6 +96,18 @@ def handle_decision(
     session_id = req_data.get('session_id', 'unknown')
     logger.info(f"[decision] Request {request_id} (Session: {session_id}), action: {action}")
 
+    # 对于 always 操作，先写入规则（在提交决策之前）
+    # 这样如果写规则失败，用户可以重试
+    if action == 'always':
+        rule_success = write_always_allow_rule(
+            extra_data.get('project_dir'),
+            extra_data.get('tool_name'),
+            extra_data.get('tool_input', {})
+        )
+        if not rule_success:
+            logger.error(f"[decision] Failed to write always-allow rule for request {request_id}")
+            return False, None, '写入规则失败，请检查项目目录权限后重试'
+
     # 执行决策
     resolve_success, error_code, error_msg = request_manager.resolve(request_id, decision)
 
@@ -106,18 +118,10 @@ def handle_decision(
         else:
             return False, None, f'处理失败: {error_msg}'
 
-    # 对于 always 操作，写入规则
-    if action == 'always':
-        write_always_allow_rule(
-            extra_data.get('project_dir'),
-            extra_data.get('tool_name'),
-            extra_data.get('tool_input', {})
-        )
-        return True, 'allow', '已始终允许，后续相同操作将自动批准'
-
     # 成功响应消息
     action_messages = {
         'allow': '已批准运行',
+        'always': '已始终允许，后续相同操作将自动批准',
         'deny': '已拒绝运行',
         'interrupt': '已拒绝并中断'
     }

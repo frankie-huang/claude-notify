@@ -6,9 +6,9 @@
 
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Dict, Optional, Any
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -16,18 +16,30 @@ logger = logging.getLogger(__name__)
 TOOLS_CONFIG_FILE = Path(__file__).parent.parent.parent / "config" / "tools.json"
 
 
-@dataclass
 class ToolConfig:
     """工具配置数据类"""
-    name: str
-    display_name: str
-    color: str
-    icon: str
-    input_field: str
-    detail_template: str
-    rule_template: str
-    limit_length: Optional[int] = None
-    truncate_suffix: str = "..."
+
+    def __init__(
+        self,
+        name: str,
+        display_name: str,
+        color: str,
+        icon: str,
+        input_field: str,
+        detail_template: str,
+        rule_template: str,
+        limit_length: Optional[int] = None,
+        truncate_suffix: str = "..."
+    ):
+        self.name = name
+        self.display_name = display_name
+        self.color = color
+        self.icon = icon
+        self.input_field = input_field
+        self.detail_template = detail_template
+        self.rule_template = rule_template
+        self.limit_length = limit_length
+        self.truncate_suffix = truncate_suffix
 
     def format_detail(self, tool_input: Dict[str, Any], description: str = "") -> str:
         """格式化工具详情
@@ -239,11 +251,14 @@ class ToolConfigManager:
 
 # 全局单例
 _tool_config_manager: Optional[ToolConfigManager] = None
+_tool_config_lock = threading.Lock()
 
 
 def get_tool_config_manager() -> ToolConfigManager:
-    """获取工具配置管理器单例"""
+    """获取工具配置管理器单例（线程安全）"""
     global _tool_config_manager
     if _tool_config_manager is None:
-        _tool_config_manager = ToolConfigManager()
+        with _tool_config_lock:
+            if _tool_config_manager is None:  # 双重检查
+                _tool_config_manager = ToolConfigManager()
     return _tool_config_manager

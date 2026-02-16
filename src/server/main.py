@@ -35,11 +35,12 @@ from config import (
 from models.decision import Decision
 from services.request_manager import RequestManager
 from services.feishu_api import FeishuAPIService
-from services.session_store import SessionStore
+from services.message_session_store import MessageSessionStore
 from services.dir_history_store import DirHistoryStore
 from services.binding_store import BindingStore
 from handlers.callback import CallbackHandler
-from handlers.register import AuthTokenStore, ChatIdStore
+from services.auth_token_store import AuthTokenStore
+from services.session_chat_store import SessionChatStore
 
 # =============================================================================
 # 配置 (优先级: .env > 环境变量 > 默认值)
@@ -77,11 +78,6 @@ logger.info(f"Logging to: {log_file}")
 request_manager = RequestManager()
 CallbackHandler.request_manager = request_manager
 
-# Session 过期清理计数器：每 720 次断开连接清理后执行一次 session 过期清理
-# 5 秒 * 720 = 3600 秒 = 1 小时
-_SESSION_EXPIRATION_CLEANUP_COUNTER = 0
-_SESSION_EXPIRATION_CLEANUP_INTERVAL = 720  # 每 720 次循环清理一次
-
 
 # =============================================================================
 # Socket 服务器处理
@@ -102,20 +98,32 @@ def handle_socket_client(conn: socket.socket, addr):
 
     try:
         # 设置接收超时，避免永久阻塞
-        conn.settimeout(5.0)
-        logger.debug(f"[socket] Set receive timeout to 5s")
+        recv_timeout = 5.0
+        conn.settimeout(recv_timeout)
+        logger.debug(f"[socket] Set receive timeout to {recv_timeout}s")
 
         data = b''
         start_time = time.time()
 
         while True:
-            chunk = conn.recv(4096)
+            try:
+                chunk = conn.recv(4096)
+            except socket.timeout:
+                logger.warning(f"[socket] Receive timeout after {recv_timeout}s (received {len(data)} bytes so far)")
+                conn.close()
+                return
+            except OSError as e:
+                logger.warning(f"[socket] Receive error: {e} (received {len(data)} bytes so far)")
+                conn.close()
+                return
+
             elapsed = time.time() - start_time
             logger.debug(f"[socket] Received {len(chunk) if chunk else 0} bytes (elapsed: {elapsed:.1f}s)")
 
             if not chunk:
                 logger.warning(f"[socket] Connection closed by client (received {len(data)} bytes total)")
-                break
+                conn.close()
+                return
 
             data += chunk
 
@@ -131,11 +139,6 @@ def handle_socket_client(conn: socket.socket, addr):
         # 恢复阻塞模式（后续操作不需要超时）
         conn.settimeout(None)
         logger.debug(f"[socket] Removed timeout, connection ready for response")
-
-        if not data:
-            logger.warning(f"[socket] No data received, closing connection")
-            conn.close()
-            return
 
         logger.info(f"[socket] Received {len(data)} bytes of JSON data")
 
@@ -153,23 +156,22 @@ def handle_socket_client(conn: socket.socket, addr):
 
         # 解码 raw_input_encoded 提取 session_id、tool_name 和 tool_input
         # 这些字段用于日志记录和 /always 端点生成正确的权限规则
-        session_id = None
         raw_input_encoded = request.get('raw_input_encoded')
         if raw_input_encoded:
             try:
                 raw_input = json.loads(base64.b64decode(raw_input_encoded).decode('utf-8'))
-                session_id = raw_input.get('session_id', 'unknown')
-                request['session_id'] = session_id
+                request['session_id'] = raw_input.get('session_id', 'unknown')
                 request['tool_name'] = raw_input.get('tool_name')
                 request['tool_input'] = raw_input.get('tool_input', {})
-                logger.debug(f"[socket] Decoded session_id: {session_id}, tool_name: {request['tool_name']}")
+                logger.debug(f"[socket] Decoded session_id: {request['session_id']}, tool_name: {request['tool_name']}")
             except Exception as e:
                 logger.warning(f"[socket] Failed to decode raw_input_encoded: {e}")
                 request['session_id'] = 'unknown'
         else:
             request['session_id'] = 'unknown'
 
-        logger.info(f"[socket] Request ID: {request_id}, Session: {request['session_id']}, Hook PID: {hook_pid}")
+        session_id = request['session_id']
+        logger.info(f"[socket] Request ID: {request_id}, Session: {session_id}, Hook PID: {hook_pid}")
 
         # 注册请求（保存 socket 连接供后续 resolve 使用）
         request_manager.register(request_id, conn, request)
@@ -182,7 +184,6 @@ def handle_socket_client(conn: socket.socket, addr):
         }).encode())
 
         # 重要：不关闭连接！等待用户响应后由 resolve() 关闭
-        session_id = request.get('session_id', 'unknown')
         logger.info(f"[socket] Request {request_id} registered (Session: {session_id}), waiting for user response...")
 
     except Exception as e:
@@ -190,7 +191,7 @@ def handle_socket_client(conn: socket.socket, addr):
         try:
             conn.sendall(json.dumps({'success': False, 'error': str(e)}).encode())
             conn.close()
-        except:
+        except Exception:
             pass
 
 
@@ -200,13 +201,15 @@ def run_socket_server():
     功能：
         监听 Unix Socket，接受来自 permission-notify.sh 的连接
     """
-    # 删除已存在的 socket 文件
-    if os.path.exists(SOCKET_PATH):
+    # 删除已存在的 socket 文件（避免 TOCTOU 竞态条件）
+    try:
         os.unlink(SOCKET_PATH)
+    except FileNotFoundError:
+        pass
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(SOCKET_PATH)
-    os.chmod(SOCKET_PATH, 0o666)
+    os.chmod(SOCKET_PATH, 0o600)  # 仅所有者可读写，防止其他用户访问
     server.listen(10)
 
     logger.info(f"Socket server listening on {SOCKET_PATH}")
@@ -219,33 +222,60 @@ def run_socket_server():
 
 
 def run_cleanup_thread():
-    """运行断开连接清理线程
+    """运行清理线程 - 使用独立的定时器进行不同频率的清理
 
-    功能：
-        定期清理断开连接和超时的请求（每 5 秒）
-        定期清理过期的 session 映射（每 1 小时）
+    清理任务：
+        - 清理断开连接（每 5 秒）
+        - 清理过期数据（每 1 小时）
     """
-    global _SESSION_EXPIRATION_CLEANUP_COUNTER
+    # 高频清理：断开连接（5秒间隔）
+    def cleanup_disconnected_loop():
+        while True:
+            time.sleep(CLEANUP_INTERVAL)
+            request_manager.cleanup_disconnected()
 
-    while True:
-        time.sleep(CLEANUP_INTERVAL)
-        request_manager.cleanup_disconnected()
+    # 低频清理：过期数据（1小时间隔）
+    def cleanup_expired_loop():
+        while True:
+            time.sleep(3600)  # 1 小时
+            _cleanup_expired_data()
 
-        # 每 _SESSION_EXPIRATION_CLEANUP_INTERVAL 次循环清理一次 session 过期数据
-        _SESSION_EXPIRATION_CLEANUP_COUNTER += 1
-        if _SESSION_EXPIRATION_CLEANUP_COUNTER >= _SESSION_EXPIRATION_CLEANUP_INTERVAL:
-            _SESSION_EXPIRATION_CLEANUP_COUNTER = 0
-            _cleanup_expired_sessions()
+    # 启动两个独立的清理线程
+    for target in (cleanup_disconnected_loop, cleanup_expired_loop):
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
 
 
-def _cleanup_expired_sessions():
-    """清理过期的 session 映射"""
-    from services.session_store import SessionStore
-    store = SessionStore.get_instance()
+def _cleanup_expired_data():
+    """清理过期的数据
+
+    数据存储过期与清理机制说明：
+
+    | Store                | 文件名                  | 过期时间 | Lazy | 定期 | 说明                     |
+    |----------------------|-------------------------|----------|------|------|--------------------------|
+    | MessageSessionStore  | message_sessions.json   | 7 天     | ✅   | ✅   | 本函数清理                |
+    | SessionChatStore     | session_chats.json      | 7 天     | ✅   | ✅   | 本函数清理                |
+    | BindingStore         | bindings.json           | 无       | ❌   | ❌   | 需先实现自动续期机制       |
+    | DirHistoryStore      | dir_history.json        | 30 天    | ✅   | ❌   | 写入时清理，死数据无害     |
+    | AuthTokenStore       | auth_token.json         | 无       | ❌   | ❌   | 单条记录，每次注册覆盖     |
+
+    本函数清理范围：
+        - message_sessions.json (7天过期)
+        - session_chats.json (7天过期)
+    """
+    # 清理 message_sessions
+    store = MessageSessionStore.get_instance()
     if store:
         expired_count = store.cleanup_expired()
         if expired_count > 0:
             logger.info(f"[cleanup] Cleaned {expired_count} expired session mappings")
+
+    # 清理 session_chats
+    chat_store = SessionChatStore.get_instance()
+    if chat_store:
+        expired_count = chat_store.cleanup_expired()
+        if expired_count > 0:
+            logger.info(f"[cleanup] Cleaned {expired_count} expired chat mappings")
 
 # =============================================================================
 # 多线程 HTTP 服务器
@@ -271,11 +301,13 @@ def main():
         1. Unix Socket 服务器 - 接收 permission-notify.sh 的连接
         2. 清理线程 - 定期清理断开连接和过期 session
         3. HTTP 服务器 - 接收飞书按钮的回调请求
-        4. SessionStore - 维护 message_id 到 session 的映射
-        5. BindingStore - 维护 owner_id 到 callback_url 的绑定（网关专用）
-        6. AuthTokenStore - 存储网关注册的 auth_token（Callback 后端专用）
-        7. FeishuAPIService - 飞书 OpenAPI 服务（OpenAPI 模式）
-        8. AutoRegister - 启动时自动向飞书网关注册（可选）
+        4. MessageSessionStore - 维护 message_id 到 session 的映射
+        5. SessionChatStore - 维护 session_id 到 chat_id 的映射
+        6. DirHistoryStore - 记录目录使用历史
+        7. BindingStore - 维护 owner_id 到 callback_url 的绑定（网关专用）
+        8. AuthTokenStore - 存储网关注册的 auth_token（Callback 后端专用）
+        9. FeishuAPIService - 飞书 OpenAPI 服务（OpenAPI 模式）
+        10. AutoRegister - 启动时自动向飞书网关注册（可选）
     """
     logger.info("Starting Claude Code Permission Callback Server")
     logger.info(f"HTTP Port: {HTTP_PORT}")
@@ -289,10 +321,10 @@ def main():
     if not FEISHU_WEBHOOK_URL:
         logger.warning("FEISHU_WEBHOOK_URL not set - webhook notifications will be skipped")
 
-    # 初始化 SessionStore（用于继续会话功能）
+    # 初始化 MessageSessionStore（用于继续会话功能）
     runtime_dir = os.path.join(project_root, 'runtime')
-    SessionStore.initialize(runtime_dir)
-    logger.info(f"SessionStore initialized with runtime_dir={runtime_dir}")
+    MessageSessionStore.initialize(runtime_dir)
+    logger.info(f"MessageSessionStore initialized with runtime_dir={runtime_dir}")
 
     # 初始化 DirHistoryStore（用于记录目录使用历史）
     DirHistoryStore.initialize(runtime_dir)
@@ -306,9 +338,9 @@ def main():
     AuthTokenStore.initialize(runtime_dir)
     logger.info(f"AuthTokenStore initialized with runtime_dir={runtime_dir}")
 
-    # 初始化 ChatIdStore（callback 后端存储 session_id -> chat_id 映射）
-    ChatIdStore.initialize(runtime_dir)
-    logger.info(f"ChatIdStore initialized with runtime_dir={runtime_dir}")
+    # 初始化 SessionChatStore（callback 后端存储 session_id -> chat_id 映射）
+    SessionChatStore.initialize(runtime_dir)
+    logger.info(f"SessionChatStore initialized with runtime_dir={runtime_dir}")
 
     # 初始化飞书 OpenAPI 服务
     if FEISHU_SEND_MODE == 'openapi':
@@ -325,10 +357,8 @@ def main():
     socket_thread.daemon = True
     socket_thread.start()
 
-    # 启动清理线程
-    cleanup_thread = threading.Thread(target=run_cleanup_thread)
-    cleanup_thread.daemon = True
-    cleanup_thread.start()
+    # 启动清理线程（内部启动独立的 daemon 线程）
+    run_cleanup_thread()
 
     # 启动 HTTP 服务器（使用 ThreadedHTTPServer 支持并发请求）
     # 这样飞书回调请求和转发到 /callback/decision 的请求可以并发处理

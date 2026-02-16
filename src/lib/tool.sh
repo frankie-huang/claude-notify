@@ -33,34 +33,27 @@ if [ -f "${LIB_DIR}/tool-config.sh" ] && [ -f "${CONFIG_DIR}/tools.json" ]; then
     fi
 fi
 
-# 如果外部配置不可用，使用内置配置作为降级
-if [ "$USE_EXTERNAL_CONFIG" = "false" ]; then
-    # 工具类型 -> 卡片颜色映射
-    declare -A TOOL_COLORS=(
-        ["Bash"]="orange"
-        ["Edit"]="yellow"
-        ["Write"]="yellow"
-        ["Read"]="blue"
-        ["Glob"]="blue"
-        ["Grep"]="blue"
-        ["WebSearch"]="purple"
-        ["WebFetch"]="purple"
-        ["mcp__4_5v_mcp__analyze_image"]="purple"
-        ["mcp__web_reader__webReader"]="purple"
-    )
+# 如果外部配置不可用，使用内置 case 函数作为降级
+_builtin_tool_color() {
+    case "$1" in
+        Bash) echo "orange" ;;
+        Edit|Write) echo "yellow" ;;
+        Read|Glob|Grep) echo "blue" ;;
+        WebSearch|WebFetch|mcp__4_5v_mcp__analyze_image|mcp__web_reader__webReader) echo "purple" ;;
+        *) echo "grey" ;;
+    esac
+}
 
-    # 工具类型 -> 主要参数字段名映射
-    declare -A TOOL_FIELDS=(
-        ["Bash"]="command"
-        ["Edit"]="file_path"
-        ["Write"]="file_path"
-        ["Read"]="file_path"
-        ["Glob"]="pattern"
-        ["Grep"]="pattern"
-        ["WebSearch"]="query"
-        ["WebFetch"]="url"
-    )
-fi
+_builtin_tool_field() {
+    case "$1" in
+        Bash) echo "command" ;;
+        Edit|Write|Read) echo "file_path" ;;
+        Glob|Grep) echo "pattern" ;;
+        WebSearch) echo "query" ;;
+        WebFetch) echo "url" ;;
+        *) echo "" ;;
+    esac
+}
 
 # 全局变量用于存储提取的详情
 EXTRACTED_COMMAND=""
@@ -80,12 +73,7 @@ get_tool_color() {
     if [ "$USE_EXTERNAL_CONFIG" = "true" ]; then
         tool_get_color "$tool_name"
     else
-        # 使用内置配置
-        if [ -n "${TOOL_COLORS[$tool_name]}" ]; then
-            echo "${TOOL_COLORS[$tool_name]}"
-        else
-            echo "grey"
-        fi
+        _builtin_tool_color "$tool_name"
     fi
 }
 
@@ -110,7 +98,7 @@ extract_tool_detail() {
     if [ "$USE_EXTERNAL_CONFIG" = "true" ]; then
         field_name=$(tool_get_field "$tool_name")
     else
-        field_name="${TOOL_FIELDS[$tool_name]:-}"
+        field_name=$(_builtin_tool_field "$tool_name")
     fi
 
     # 初始化
@@ -190,7 +178,7 @@ get_tool_value() {
     if [ "$USE_EXTERNAL_CONFIG" = "true" ]; then
         field_name=$(tool_get_field "$tool_name")
     else
-        field_name="${TOOL_FIELDS[$tool_name]:-}"
+        field_name=$(_builtin_tool_field "$tool_name")
     fi
 
     if [ -n "$field_name" ]; then

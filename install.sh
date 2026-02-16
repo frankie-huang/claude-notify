@@ -119,7 +119,7 @@ check_dependencies() {
     if command -v socat &>/dev/null; then
         print_success "socat: 已安装 (可选，Socket 通信备选方案)"
     else
-        print_warning "socat: 未安装 (可选，将使用 Python socket-client)"
+        print_warning "socat: 未安装 (可选，将使用 Python socket_client)"
         optional_missing+=("socat")
     fi
 
@@ -448,25 +448,37 @@ PERMISSION_NOTIFY_DELAY=60
 
 # Claude 命令 (可选，默认 claude)
 # 用于继续会话和新建会话功能
-# 支持配置其他 Claude 变体命令或添加额外参数
-# 示例:
-#   - CLAUDE_COMMAND=claude              # 默认
-#   - CLAUDE_COMMAND=claude-glm          # 使用 glm 模型
-#   - CLAUDE_COMMAND="claude --setting opus"  # 带参数
+#
+# 单命令配置（向后兼容）:
+#   CLAUDE_COMMAND=claude
+#   CLAUDE_COMMAND=claude --setting opus
+#
+# 多命令配置（列表格式，无需引号）:
+#   CLAUDE_COMMAND=[claude, claude --setting opus]
+#
+# 也兼容 JSON 数组格式:
+#   CLAUDE_COMMAND=["claude", "claude --setting opus"]
+#
+# 配置多个命令后:
+#   - 默认使用列表第一个
+#   - /new 卡片支持选择
+#   - /new --cmd=1 或 /new --cmd=opus 指定使用哪个
+#   - /reply --cmd=opus 在回复时指定
+#   - 空值或缺失时默认使用 claude
 CLAUDE_COMMAND=claude
 
 # =============================================================================
 # 七、Stop 事件配置
 # =============================================================================
 
+# Stop 事件思考过程最大长度，字符数 (可选，默认 5000)
+# 设为 0 则不显示思考过程
+STOP_THINKING_MAX_LENGTH=5000
+
 # Stop 事件消息最大长度，字符数 (可选，默认 5000)
 # 主 Agent 完成时，发送飞书通知中显示的响应内容最大长度
 # 超过此长度会被截断并添加 "..."
 STOP_MESSAGE_MAX_LENGTH=5000
-
-# Stop 事件思考过程最大长度，字符数 (可选，默认 5000)
-# 设为 0 则不显示思考过程
-STOP_THINKING_MAX_LENGTH=5000
 
 # =============================================================================
 # 八、VSCode 自动跳转/激活配置 (可选，以下两种模式二选一)
@@ -506,7 +518,7 @@ ACTIVATE_VSCODE_ON_CALLBACK=false
 #
 # 使用方法:
 #   1. 在本地电脑运行代理服务:
-#      python3 src/proxy/vscode-ssh-proxy.py --vps <host> [options]
+#      python3 src/proxy/vscode_ssh_proxy.py --vps <host> [options]
 #        --vps HOST        VPS 的 SSH 地址 (别名如 myserver，或 root@1.2.3.4)
 #        --ssh-port PORT   SSH 端口 (默认: 22，使用别名时从 ~/.ssh/config 读取)
 #        -p, --port        本地 HTTP 服务端口 (默认: 9527)
@@ -646,7 +658,7 @@ main() {
                 echo ""
                 echo "  3. 使用 Claude Code，权限请求将发送到飞书"
                 echo ""
-                print_dim "可选：VSCode SSH 代理 - python3 src/proxy/vscode-ssh-proxy.py --vps <host>"
+                print_dim "可选：VSCode SSH 代理 - python3 src/proxy/vscode_ssh_proxy.py --vps <host>"
             fi
             ;;
         *)

@@ -66,7 +66,7 @@ return True, message_id
 
 | 项目 | 说明 |
 |------|------|
-| **存储位置** | 飞书网关本地，JSON 文件 `runtime/session_messages.json` |
+| **存储位置** | 飞书网关本地，JSON 文件 `runtime/message_sessions.json` |
 | **过期时间** | 默认 7 天 |
 
 ### 映射表结构
@@ -186,7 +186,7 @@ Claude 完成后，通过 Hook 事件自行决定发送结果到哪里。
 | `src/lib/feishu.sh` | 请求体增加 `session_id`、`project_dir`、`callback_url` |
 | `src/server/handlers/feishu.py` | 发送成功后保存映射；处理回复消息查映射并调用 Callback |
 | `src/server/services/feishu_api.py` | `send_card` 增加参数，返回 message_id 后由 handler 保存映射 |
-| `src/server/services/session_store.py` | **新增** 管理映射关系 |
+| `src/server/services/message_session_store.py` | **新增** 管理映射关系 |
 | `src/server/handlers/claude.py` | **新增** `/claude/continue` 接口 |
 | `src/server/services/claude_invoker.py` | **新增** 封装 Claude 调用 |
 
@@ -220,7 +220,7 @@ handle_send_message()  [src/server/handlers/feishu.py]
   │
   │ 提取 session_id, project_dir, callback_url
   │ 调用 service.send_card(...)
-  │ 成功后调用 SessionStore.save(message_id, session_id, project_dir, callback_url)
+  │ 成功后调用 MessageSessionStore.save(message_id, session_id, project_dir, callback_url)
   ▼
 完成
 ```
@@ -316,8 +316,8 @@ def handle_send_message(data: dict) -> Tuple[bool, dict]:
 
         # 新增：发送成功后保存映射
         if success and message_id and session_id and project_dir and callback_url:
-            from services.session_store import SessionStore
-            store = SessionStore.get_instance()
+            from services.message_session_store import MessageSessionStore
+            store = MessageSessionStore.get_instance()
             if store:
                 store.save(message_id, session_id, project_dir, callback_url)
 
@@ -341,13 +341,13 @@ def _handle_message_event(event: dict) -> Tuple[bool, dict]:
 
 def _handle_reply_message(event: dict, parent_id: str) -> Tuple[bool, dict]:
     """处理用户回复消息，继续 Claude 会话"""
-    from services.session_store import SessionStore
+    from services.message_session_store import MessageSessionStore
     import requests
 
     # 查询映射
-    store = SessionStore.get_instance()
+    store = MessageSessionStore.get_instance()
     if not store:
-        return False, {'error': 'SessionStore not initialized'}
+        return False, {'error': 'MessageSessionStore not initialized'}
 
     mapping = store.get(parent_id)
     if not mapping:
@@ -385,10 +385,10 @@ def _handle_reply_message(event: dict, parent_id: str) -> Tuple[bool, dict]:
         return False, {'error': str(e)}
 ```
 
-#### 9.2.4 新增 `src/server/services/session_store.py`
+#### 9.2.4 新增 `src/server/services/message_session_store.py`
 
 ```python
-"""Session-Message 映射存储"""
+"""Message-Session 映射存储"""
 
 import json
 import os
@@ -396,7 +396,7 @@ import threading
 import time
 from typing import Optional, Dict
 
-class SessionStore:
+class MessageSessionStore:
     """管理 message_id -> session 信息的映射"""
 
     _instance = None
@@ -407,19 +407,19 @@ class SessionStore:
 
     def __init__(self, data_dir: str):
         self._data_dir = data_dir
-        self._file_path = os.path.join(data_dir, 'session_messages.json')
+        self._file_path = os.path.join(data_dir, 'message_sessions.json')
         self._file_lock = threading.Lock()
         os.makedirs(data_dir, exist_ok=True)
 
     @classmethod
-    def initialize(cls, data_dir: str) -> 'SessionStore':
+    def initialize(cls, data_dir: str) -> 'MessageSessionStore':
         with cls._lock:
             if cls._instance is None:
                 cls._instance = cls(data_dir)
             return cls._instance
 
     @classmethod
-    def get_instance(cls) -> Optional['SessionStore']:
+    def get_instance(cls) -> Optional['MessageSessionStore']:
         return cls._instance
 
     def save(self, message_id: str, session_id: str, project_dir: str, callback_url: str) -> bool:
@@ -607,7 +607,7 @@ def claude_continue():
 | 方案 | 复杂度 | 说明 |
 |------|--------|------|
 | **文件锁** | 低 | 执行前创建 `runtime/session_<id>.lock`，存在则拒绝或等待 |
-| **内存锁** | 中 | 在 `SessionStore` 中维护"正在使用的 Session"集合 |
+| **内存锁** | 中 | 在 `MessageSessionStore` 中维护"正在使用的 Session"集合 |
 | **任务队列** | 高 | 引入队列系统（如 Redis），严格排队处理 |
 
 ## 12. 配置项
@@ -678,7 +678,7 @@ CLAUDE_COMMAND=claude-glm
 
 ### 第一阶段：映射注册
 
-- 新增 `session_store.py`
+- 新增 `message_session_store.py`
 - 修改 `stop.sh` 传递 session_id、project_dir、callback_url
 - 修改 `feishu.sh` 在请求体中添加这些字段
 - 修改 `feishu.py` 发送成功后保存映射

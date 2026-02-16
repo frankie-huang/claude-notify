@@ -8,6 +8,7 @@ Feishu Handler - 飞书事件处理器
     - 发送消息（/feishu/send）
 """
 
+import hmac
 import json
 import logging
 import os
@@ -17,6 +18,8 @@ import socket
 import threading
 import time
 from typing import Tuple, Optional
+
+from .utils import run_in_background as _run_in_background, post_json as _post_json
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ TOAST_INFO = 'info'
 
 # 飞书消息事件日志（独立文件）
 _feishu_message_logger = None
+_feishu_message_logger_lock = threading.Lock()
 
 # 消息内容清理正则：移除 @_user_1 提及（带或不带尾随空格）
 _AT_USER_PATTERN = re.compile(r'@_user_1\s?')
@@ -68,29 +72,31 @@ def _truncate_path(path: str, max_len: int = 40) -> str:
 
 
 def _get_message_logger():
-    """获取飞书消息日志记录器（懒加载）"""
+    """获取飞书消息日志记录器（懒加载，线程安全）"""
     global _feishu_message_logger
     if _feishu_message_logger is None:
-        _feishu_message_logger = logging.getLogger('feishu_message')
-        _feishu_message_logger.setLevel(logging.INFO)
-        _feishu_message_logger.propagate = False  # 不传播到父 logger
+        with _feishu_message_logger_lock:
+            if _feishu_message_logger is None:  # 双重检查
+                _feishu_message_logger = logging.getLogger('feishu_message')
+                _feishu_message_logger.setLevel(logging.INFO)
+                _feishu_message_logger.propagate = False  # 不传播到父 logger
 
-        # 日志目录: src/server/handlers -> src/server -> src -> project_root -> log
-        handlers_dir = os.path.dirname(__file__)
-        server_dir = os.path.dirname(handlers_dir)
-        src_dir = os.path.dirname(server_dir)
-        project_root = os.path.dirname(src_dir)
-        log_dir = os.path.join(project_root, 'log')
-        os.makedirs(log_dir, exist_ok=True)
+                # 日志目录: src/server/handlers -> src/server -> src -> project_root -> log
+                handlers_dir = os.path.dirname(__file__)
+                server_dir = os.path.dirname(handlers_dir)
+                src_dir = os.path.dirname(server_dir)
+                project_root = os.path.dirname(src_dir)
+                log_dir = os.path.join(project_root, 'log')
+                os.makedirs(log_dir, exist_ok=True)
 
-        log_file = os.path.join(log_dir, f"feishu_message_{time.strftime('%Y%m%d')}.log")
-        handler = logging.FileHandler(log_file, encoding='utf-8')
-        handler.setFormatter(logging.Formatter(
-            '%(asctime)s.%(msecs)03d %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        ))
-        _feishu_message_logger.addHandler(handler)
-        logger.info(f"Feishu message logging to: {log_file}")
+                log_file = os.path.join(log_dir, f"feishu_message_{time.strftime('%Y%m%d')}.log")
+                handler = logging.FileHandler(log_file, encoding='utf-8')
+                handler.setFormatter(logging.Formatter(
+                    '%(asctime)s.%(msecs)03d %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S'
+                ))
+                _feishu_message_logger.addHandler(handler)
+                logger.info(f"Feishu message logging to: {log_file}")
 
     return _feishu_message_logger
 
@@ -161,8 +167,8 @@ def _verify_token(data: dict) -> bool:
         logger.warning("[feishu] Request missing token in header")
         return False
 
-    # 验证 token
-    if token != FEISHU_VERIFICATION_TOKEN:
+    # 验证 token（恒定时间比较，防止时序攻击）
+    if not hmac.compare_digest(token, FEISHU_VERIFICATION_TOKEN):
         logger.warning(f"[feishu] Token mismatch")
         return False
 
@@ -260,17 +266,6 @@ def _handle_message_event(data: dict):
         _handle_reply_message(data, parent_id)
 
 
-def _run_in_background(func, args=()):
-    """在后台线程中执行函数
-
-    Args:
-        func: 要执行的函数
-        args: 位置参数元组
-    """
-    thread = threading.Thread(target=func, args=args, daemon=True)
-    thread.start()
-
-
 def _get_supported_commands() -> str:
     """获取支持的命令列表（用于帮助提示）
 
@@ -342,7 +337,7 @@ def _handle_reply_message(data: dict, parent_id: str):
         data: 飞书事件数据
         parent_id: 被回复的消息 ID
     """
-    from services.session_store import SessionStore
+    from services.message_session_store import MessageSessionStore
 
     event = data.get('event', {})
     message = event.get('message', {})
@@ -360,9 +355,9 @@ def _handle_reply_message(data: dict, parent_id: str):
     logger.info(f"[feishu] Reply message: parent_id={parent_id}, prompt={_sanitize_user_content(prompt)}")
 
     # 查询映射
-    store = SessionStore.get_instance()
+    store = MessageSessionStore.get_instance()
     if not store:
-        logger.warning("[feishu] SessionStore not initialized")
+        logger.warning("[feishu] MessageSessionStore not initialized")
         _run_in_background(_send_reject_message, (chat_id, "会话存储服务未初始化，请稍后重试或联系管理员", message_id))
         return
 
@@ -397,7 +392,6 @@ def _forward_claude_request(callback_url: str, endpoint: str, data: dict, auth_t
         action: 操作类型（用于日志，如 'continue', 'new'）
         reply_to: 要回复的消息 ID（可选）
     """
-    import urllib.request
     import urllib.error
 
     api_url = f"{callback_url.rstrip('/')}{endpoint}"
@@ -405,33 +399,19 @@ def _forward_claude_request(callback_url: str, endpoint: str, data: dict, auth_t
     logger.info(f"[feishu] Forwarding {action} request to {api_url}")
 
     try:
-        headers = {'Content-Type': 'application/json'}
-        if auth_token:
-            headers['X-Auth-Token'] = auth_token
+        response_data = _post_json(api_url, data, auth_token=auth_token, timeout=30)
+        logger.info(f"[feishu] {action.capitalize()} request response: {response_data}")
 
-        req = urllib.request.Request(
-            api_url,
-            data=json.dumps(data).encode('utf-8'),
-            headers=headers,
-            method='POST'
-        )
-
-        # 创建无代理的 opener
-        no_proxy_handler = urllib.request.ProxyHandler({})
-        opener = urllib.request.build_opener(no_proxy_handler)
-        with opener.open(req, timeout=30) as response:
-            response_data = json.loads(response.read().decode('utf-8'))
-            logger.info(f"[feishu] {action.capitalize()} request response: {response_data}")
-
-            # 根据操作类型发送不同的通知
-            if action == 'continue':
-                _send_continue_result_notification(chat_id, response_data, reply_to=reply_to)
-            elif action == 'new':
-                _send_new_result_notification(chat_id, response_data, data.get('project_dir', ''), reply_to=reply_to)
+        # 根据操作类型发送不同的通知
+        if action == 'continue':
+            _send_continue_result_notification(chat_id, response_data, reply_to=reply_to)
+        elif action == 'new':
+            _send_new_result_notification(chat_id, response_data, data.get('project_dir', ''), reply_to=reply_to)
 
     except urllib.error.HTTPError as e:
         error_detail = _extract_http_error_detail(e)
-        error_msg = f"新建会话失败: {error_detail}" if error_detail else f"Callback 服务返回错误: HTTP {e.code}"
+        action_text = "新建会话失败" if action == 'new' else "继续会话失败"
+        error_msg = f"{action_text}: {error_detail}" if error_detail else f"Callback 服务返回错误: HTTP {e.code}"
         logger.error(f"[feishu] {action.capitalize()} request HTTP error: {e.code} {e.reason}")
         _send_error_notification(chat_id, error_msg, reply_to=reply_to)
 
@@ -458,7 +438,7 @@ def _extract_http_error_detail(http_error):
 
 
 def _forward_continue_request(mapping: dict, prompt: str, chat_id: str, reply_message_id: str,
-                              auth_token: str = ''):
+                              auth_token: str = '', claude_command: str = ''):
     """转发继续会话请求到 Callback 后端
 
     Args:
@@ -467,14 +447,20 @@ def _forward_continue_request(mapping: dict, prompt: str, chat_id: str, reply_me
         chat_id: 群聊 ID
         reply_message_id: 回复消息 ID（用作 reply_to）
         auth_token: 认证令牌（双向认证）
+        claude_command: 指定使用的 Claude 命令（可选）
     """
-    _forward_claude_request(mapping['callback_url'], '/claude/continue', {
+    data = {
         'session_id': mapping['session_id'],
         'project_dir': mapping['project_dir'],
         'prompt': prompt,
         'chat_id': chat_id,
         'reply_message_id': reply_message_id
-    }, auth_token, chat_id, 'continue', reply_to=reply_message_id)
+    }
+    if claude_command:
+        data['claude_command'] = claude_command
+
+    _forward_claude_request(mapping['callback_url'], '/claude/continue', data,
+                            auth_token, chat_id, 'continue', reply_to=reply_message_id)
 
 
 def _send_continue_result_notification(chat_id: str, response: dict, reply_to: Optional[str] = None):
@@ -524,7 +510,7 @@ def _send_error_notification(chat_id: str, error_msg: str, reply_to: Optional[st
 
     service = FeishuAPIService.get_instance()
     if service and service.enabled:
-        _send_text_message(service, chat_id, f"⚠️ 继续会话失败: {error_msg}", reply_to=reply_to)
+        _send_text_message(service, chat_id, f"⚠️ {error_msg}", reply_to=reply_to)
 
 
 def _send_text_message(service, chat_id: str, text: str, reply_to: Optional[str] = None):
@@ -725,8 +711,9 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
     custom_dir = form_values.get('custom_dir', '')  # 自定义路径输入框的值
     browse_result = form_values.get('browse_result', '')  # 浏览结果下拉选择的值
     prompt = form_values.get('prompt', '')
+    claude_command = form_values.get('claude_command', '')  # Command 选择下拉的值
 
-    logger.info(f"[feishu] Form values: directory={directory}, custom_dir={custom_dir}, browse_result={browse_result}, prompt={_sanitize_user_content(prompt)}, trigger={trigger_name}")
+    logger.info(f"[feishu] Form values: directory={directory}, custom_dir={custom_dir}, browse_result={browse_result}, claude_command={claude_command}, prompt={_sanitize_user_content(prompt)}, trigger={trigger_name}")
 
     if not chat_id:
         logger.warning("[feishu] No chat_id in button value")
@@ -779,7 +766,7 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
     }
 
     # 在后台线程中异步执行会话创建
-    _run_in_background(_async_create_session, (selected_dir, prompt, chat_id, message_id, event))
+    _run_in_background(_async_create_session, (selected_dir, prompt, chat_id, message_id, event, claude_command))
 
     return True, response
 
@@ -887,40 +874,34 @@ def _handle_browse_directory(trigger_name: str, directory: str, custom_dir: str,
     return True, {'card': {'type': 'raw', 'data': card}}
 
 
-def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_value: str,
-                              chat_id: str, message_id: str, feishu_event: dict) -> dict:
-    """构建包含浏览结果的目录选择卡片
+def _build_new_session_card(
+    owner_id: str,
+    chat_id: str,
+    message_id: str,
+    recent_dirs: list,
+    custom_dir: str,
+    prompt: str,
+    claude_command: str = '',
+    browse_data: Optional[dict] = None,
+    directory: str = ''
+) -> dict:
+    """构建新建会话卡片（统一构建逻辑）
 
     Args:
-        browse_data: browse-dirs 接口返回的数据 {dirs, parent, current}
-        form_values: 原始表单数据（用于回填）
-        custom_dir_value: 应该回填到 custom_dir 输入框的值
+        owner_id: 用户 ID
         chat_id: 群聊 ID
         message_id: 原始消息 ID
-        feishu_event: 飞书事件数据
+        recent_dirs: 常用目录列表
+        custom_dir: 自定义路径输入框默认值
+        prompt: 提示词输入框默认值
+        claude_command: 预选的 Claude 命令
+        browse_data: 浏览结果数据 {dirs, parent, current}，为 None 则不显示浏览结果区域
+        directory: 常用目录下拉的选中值（回填用）
 
     Returns:
         飞书卡片字典
     """
-    from services.feishu_api import FeishuAPIService
-
-    service = FeishuAPIService.get_instance()
-
-    # 获取 owner_id
-    sender = feishu_event.get('sender', {})
-    sender_id_obj = sender.get('sender_id', {})
-    owner_id = sender_id_obj.get('open_id', '') or sender_id_obj.get('user_id', '')
-
-    # 获取 auth_token
-    auth_token = _get_auth_token_from_event(feishu_event)
-
-    # 获取常用目录列表（保持不变）
-    recent_dirs = _fetch_recent_dirs_from_callback(auth_token, limit=5) if auth_token else []
-
-    # 提取表单值用于回填
-    custom_dir = custom_dir_value  # 使用传入的计算值
-    prompt = form_values.get('prompt', '')
-    directory = form_values.get('directory', '')
+    from config import get_claude_commands
 
     # 构建常用目录下拉选项
     dir_options = []
@@ -933,19 +914,12 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
             'value': dir_path
         })
 
-    # 构建浏览结果下拉选项
-    browse_dirs = browse_data.get('dirs', [])
-    browse_options = []
-    for dir_path in browse_dirs:
-        # 只显示最后一层目录名称，value 保持完整路径
-        display_name = dir_path.rstrip('/').split('/')[-1] if dir_path else ''
-        browse_options.append({
-            'text': {
-                'tag': 'plain_text',
-                'content': display_name
-            },
-            'value': dir_path
-        })
+    # 回调 value（按钮共用）
+    callback_value = {
+        'owner_id': owner_id,
+        'chat_id': chat_id,
+        'message_id': message_id
+    }
 
     # 构建 Form 表单元素
     form_elements = []
@@ -961,6 +935,12 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
 
     # 常用目录下拉菜单（如果有），标签和下拉框同行
     if recent_dirs:
+        # 决定 initial_option
+        if directory and directory in [d['value'] for d in dir_options]:
+            initial_option = directory
+        else:
+            initial_option = dir_options[0]['value'] if dir_options else ''
+
         form_elements.append({
             'tag': 'column_set',
             'columns': [
@@ -993,7 +973,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             },
                             'width': 'fill',
                             'options': dir_options,
-                            'initial_option': directory if directory in [d['value'] for d in dir_options] else (dir_options[0]['value'] if dir_options else '')
+                            'initial_option': initial_option
                         }
                     ]
                 },
@@ -1015,11 +995,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             'behaviors': [
                                 {
                                     'type': 'callback',
-                                    'value': {
-                                        'owner_id': owner_id,
-                                        'chat_id': chat_id,
-                                        'message_id': message_id
-                                    }
+                                    'value': callback_value
                                 }
                             ]
                         }
@@ -1060,7 +1036,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             'content': '输入完整路径，如 /home/user/project'
                         },
                         'width': 'fill',
-                        'default_value': custom_dir  # 回填当前浏览路径
+                        'default_value': custom_dir
                     }
                 ]
             },
@@ -1082,11 +1058,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                         'behaviors': [
                             {
                                 'type': 'callback',
-                                'value': {
-                                    'owner_id': owner_id,
-                                    'chat_id': chat_id,
-                                    'message_id': message_id
-                                }
+                                'value': callback_value
                             }
                         ]
                     }
@@ -1095,10 +1067,151 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
         ]
     })
 
-    # 浏览结果下拉菜单（如果有子目录）
-    current_path = browse_data.get('current', '')
-    if browse_options:
-        # 使用 column_set 将浏览结果标签、下拉菜单和浏览按钮并排
+    # 浏览结果区域（仅当 browse_data 非空时显示）
+    if browse_data is not None:
+        current_path = browse_data.get('current', '')
+        browse_dirs = browse_data.get('dirs', [])
+        browse_options = []
+        for dir_path in browse_dirs:
+            display_name = dir_path.rstrip('/').split('/')[-1] if dir_path else ''
+            browse_options.append({
+                'text': {
+                    'tag': 'plain_text',
+                    'content': display_name
+                },
+                'value': dir_path
+            })
+
+        if browse_options:
+            form_elements.append({
+                'tag': 'column_set',
+                'columns': [
+                    {
+                        'tag': 'column',
+                        'width': 'weighted',
+                        'weight': 1,
+                        'vertical_align': 'center',
+                        'elements': [
+                            {
+                                'tag': 'div',
+                                'text': {
+                                    'tag': 'plain_text',
+                                    'content': '选择子目录'
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        'tag': 'column',
+                        'width': 'weighted',
+                        'weight': 4,
+                        'elements': [
+                            {
+                                'tag': 'select_static',
+                                'name': 'browse_result',
+                                'placeholder': {
+                                    'tag': 'plain_text',
+                                    'content': f'选择 {current_path} 的子目录'
+                                },
+                                'width': 'fill',
+                                'options': browse_options
+                            }
+                        ]
+                    },
+                    {
+                        'tag': 'column',
+                        'width': 'weighted',
+                        'weight': 1,
+                        'elements': [
+                            {
+                                'tag': 'button',
+                                'name': 'browse_result_btn',
+                                'text': {
+                                    'tag': 'plain_text',
+                                    'content': '浏览'
+                                },
+                                'type': 'default',
+                                'width': 'fill',
+                                'form_action_type': 'submit',
+                                'behaviors': [
+                                    {
+                                        'type': 'callback',
+                                        'value': callback_value
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            })
+        else:
+            form_elements.append({
+                'tag': 'div',
+                'text': {
+                    'tag': 'plain_text',
+                    'content': f'📁 {current_path} 下没有子目录'
+                }
+            })
+
+        # 优先级提示文本（有浏览结果时）
+        form_elements.append({
+            'tag': 'div',
+            'text': {
+                'tag': 'plain_text',
+                'content': '💡 优先级：选择子目录 > 自定义路径 > 常用目录'
+            }
+        })
+    else:
+        # 优先级提示文本（初始卡片没有浏览子目录选项）
+        form_elements.append({
+            'tag': 'div',
+            'text': {
+                'tag': 'plain_text',
+                'content': '💡 优先级：自定义路径 > 常用目录'
+            }
+        })
+
+    # Claude Command 选择（仅当配置了多个命令时显示）
+    claude_commands = get_claude_commands()
+    if len(claude_commands) > 1:
+        prompt_step = '3️⃣'
+
+        # 分割线：目录选择区域结束
+        form_elements.append({'tag': 'hr'})
+
+        form_elements.append({
+            'tag': 'div',
+            'text': {
+                'tag': 'plain_text',
+                'content': '2️⃣ 选择 Claude Command'
+            }
+        })
+
+        cmd_options = []
+        for i, cmd in enumerate(claude_commands):
+            cmd_options.append({
+                'text': {
+                    'tag': 'plain_text',
+                    'content': f'[{i}] {cmd}'
+                },
+                'value': cmd
+            })
+
+        cmd_select = {
+            'tag': 'select_static',
+            'name': 'claude_command',
+            'placeholder': {
+                'tag': 'plain_text',
+                'content': '选择 Claude 命令'
+            },
+            'options': cmd_options,
+            'width': 'fill'
+        }
+        if claude_command and claude_command in claude_commands:
+            cmd_select['initial_option'] = claude_command
+        else:
+            cmd_select['initial_option'] = claude_commands[0]
+
         form_elements.append({
             'tag': 'column_set',
             'columns': [
@@ -1112,7 +1225,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             'tag': 'div',
                             'text': {
                                 'tag': 'plain_text',
-                                'content': '选择子目录'
+                                'content': '命令'
                             }
                         }
                     ]
@@ -1120,82 +1233,26 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                 {
                     'tag': 'column',
                     'width': 'weighted',
-                    'weight': 4,
-                    'elements': [
-                        {
-                            'tag': 'select_static',
-                            'name': 'browse_result',
-                            'placeholder': {
-                                'tag': 'plain_text',
-                                'content': f'选择 {current_path} 的子目录'
-                            },
-                            'width': 'fill',
-                            'options': browse_options
-                        }
-                    ]
-                },
-                {
-                    'tag': 'column',
-                    'width': 'weighted',
-                    'weight': 1,
-                    'elements': [
-                        {
-                            'tag': 'button',
-                            'name': 'browse_result_btn',  # 浏览结果旁边的按钮
-                            'text': {
-                                'tag': 'plain_text',
-                                'content': '浏览'
-                            },
-                            'type': 'default',
-                            'width': 'fill',
-                            'form_action_type': 'submit',
-                            'behaviors': [
-                                {
-                                    'type': 'callback',
-                                    'value': {
-                                        'owner_id': owner_id,
-                                        'chat_id': chat_id,
-                                        'message_id': message_id
-                                    }
-                                }
-                            ]
-                        }
-                    ]
+                    'weight': 5,
+                    'elements': [cmd_select]
                 }
             ]
         })
     else:
-        form_elements.append({
-            'tag': 'div',
-            'text': {
-                'tag': 'plain_text',
-                'content': f'📁 {current_path} 下没有子目录'
-            }
-        })
+        prompt_step = '2️⃣'
 
-    # 优先级提示文本
-    form_elements.append({
-        'tag': 'div',
-        'text': {
-            'tag': 'plain_text',
-            'content': '💡 优先级：选择子目录 > 自定义路径 > 常用目录'
-        }
-    })
-
-    # 分割线：目录选择区域结束
+    # 分割线：cmd / 目录选择区域结束
     form_elements.append({'tag': 'hr'})
 
-    # Prompt 输入框（回填）
-    # 添加区域标题
+    # Prompt 输入框
     form_elements.append({
         'tag': 'div',
         'text': {
             'tag': 'plain_text',
-            'content': '2️⃣ 输入提示词'
+            'content': prompt_step + ' 输入提示词'
         }
     })
 
-    # 使用 column_set 让标签和输入框同行，与目录选择块对齐
     form_elements.append({
         'tag': 'column_set',
         'columns': [
@@ -1228,7 +1285,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             'content': '请输入您的问题或任务描述'
                         },
                         'width': 'fill',
-                        'default_value': prompt,
+                        'default_value': prompt or '',
                         # 不设置 required，避免点击"浏览"按钮时被阻止
                         # 服务端会在创建会话时验证 prompt 是否为空
                     }
@@ -1257,7 +1314,6 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                     'tag': 'form',
                     'name': 'dir_prompt_form',
                     'elements': form_elements + [
-                        # 创建会话按钮
                         {
                             'tag': 'button',
                             'name': 'submit_btn',
@@ -1270,11 +1326,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
                             'behaviors': [
                                 {
                                     'type': 'callback',
-                                    'value': {
-                                        'owner_id': owner_id,
-                                        'chat_id': chat_id,
-                                        'message_id': message_id
-                                    }
+                                    'value': callback_value
                                 }
                             ]
                         }
@@ -1284,7 +1336,46 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
         }
     }
 
-    logger.info(f"[feishu] Built browse result card with {len(browse_options)} dirs")
+    return card
+
+
+def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_value: str,
+                              chat_id: str, message_id: str, feishu_event: dict) -> dict:
+    """构建包含浏览结果的目录选择卡片
+
+    Args:
+        browse_data: browse-dirs 接口返回的数据 {dirs, parent, current}
+        form_values: 原始表单数据（用于回填）
+        custom_dir_value: 应该回填到 custom_dir 输入框的值
+        chat_id: 群聊 ID
+        message_id: 原始消息 ID
+        feishu_event: 飞书事件数据
+
+    Returns:
+        飞书卡片字典
+    """
+    # 获取 owner_id
+    sender = feishu_event.get('sender', {})
+    sender_id_obj = sender.get('sender_id', {})
+    owner_id = sender_id_obj.get('open_id', '') or sender_id_obj.get('user_id', '')
+
+    # 获取 auth_token
+    auth_token = _get_auth_token_from_event(feishu_event)
+
+    # 获取常用目录列表
+    recent_dirs = _fetch_recent_dirs_from_callback(auth_token, limit=5) if auth_token else []
+
+    card = _build_new_session_card(
+        owner_id=owner_id, chat_id=chat_id, message_id=message_id,
+        recent_dirs=recent_dirs, custom_dir=custom_dir_value,
+        prompt=form_values.get('prompt', ''),
+        claude_command=form_values.get('claude_command', ''),
+        browse_data=browse_data,
+        directory=form_values.get('directory', '')
+    )
+
+    browse_dirs = browse_data.get('dirs', [])
+    logger.info(f"[feishu] Built browse result card with {len(browse_dirs)} dirs")
 
     # 打印完整卡片 JSON 用于调试
     card_json = json.dumps(card, ensure_ascii=True, indent=2)
@@ -1293,7 +1384,8 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
     return card
 
 
-def _async_create_session(project_dir: str, prompt: str, chat_id: str, message_id: str, feishu_event: dict):
+def _async_create_session(project_dir: str, prompt: str, chat_id: str, message_id: str,
+                          feishu_event: dict, claude_command: str = ''):
     """后台异步创建会话
 
     Args:
@@ -1302,6 +1394,7 @@ def _async_create_session(project_dir: str, prompt: str, chat_id: str, message_i
         chat_id: 群聊 ID
         message_id: 原始消息 ID（用于回复）
         feishu_event: 飞书事件数据（用于获取 sender_id 查询 auth_token）
+        claude_command: 指定使用的 Claude 命令（可选）
     """
     auth_token = _get_auth_token_from_event(feishu_event)
 
@@ -1311,7 +1404,7 @@ def _async_create_session(project_dir: str, prompt: str, chat_id: str, message_i
         return
 
     # 复用 _forward_new_request 转发到 /claude/new 接口
-    _forward_new_request(project_dir, prompt, chat_id, message_id, auth_token)
+    _forward_new_request(project_dir, prompt, chat_id, message_id, auth_token, claude_command)
 
 
 def _handle_card_action(data: dict) -> Tuple[bool, dict]:
@@ -1366,11 +1459,12 @@ def _handle_card_action(data: dict) -> Tuple[bool, dict]:
         }
 
     # ┌────────────────────────────────────────────────────────────────┐
-    # │ 分支 1: Form 表单提交（目录选择 + prompt 输入）                    │
-    # │ 识别标志：form_value 中包含 'prompt' 字段                          │
-    # │ （无论是否有 'directory' 字段，只要有 prompt 就是新会话表单）       │
+    # │ 分支 1: 新会话表单提交（目录选择 + prompt 输入）                    │
+    # │ 识别标志：按钮名称为 submit_btn 或 browse_*_btn                   │
     # └────────────────────────────────────────────────────────────────┘
-    if form_value and 'prompt' in form_value:
+    trigger_name = action.get('name', '')
+    new_session_form_buttons = ('submit_btn', 'browse_dir_select_btn', 'browse_custom_btn', 'browse_result_btn')
+    if trigger_name in new_session_form_buttons:
         return _handle_new_session_form(data, form_value)
 
     # ┌────────────────────────────────────────────────────────────────┐
@@ -1420,7 +1514,6 @@ def _forward_permission_request(callback_url: str, action_type: str, request_id:
     Returns:
         (handled, toast_response)
     """
-    import urllib.request
     import urllib.error
 
     # 提取 project_dir（从原始请求的 value 中获取）
@@ -1459,48 +1552,33 @@ def _forward_permission_request(callback_url: str, action_type: str, request_id:
     start_time = time.time()
 
     try:
-        headers = {'Content-Type': 'application/json'}
-        if auth_token:
-            headers['X-Auth-Token'] = auth_token
-
-        req = urllib.request.Request(
-            api_url,
-            data=json.dumps(request_data).encode('utf-8'),
-            headers=headers,
-            method='POST'
-        )
-
-        # 创建无代理的 opener，避免系统代理影响请求
-        no_proxy_handler = urllib.request.ProxyHandler({})
-        opener = urllib.request.build_opener(no_proxy_handler)
         # 飞书要求 3 秒内返回，设置 2 秒超时预留处理时间
-        with opener.open(req, timeout=2) as response:
-            elapsed = (time.time() - start_time) * 1000
-            response_data = json.loads(response.read().decode('utf-8'))
+        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=2)
+        elapsed = (time.time() - start_time) * 1000
 
-            success = response_data.get('success', False)
-            decision = response_data.get('decision')
-            message = response_data.get('message', '')
+        success = response_data.get('success', False)
+        decision = response_data.get('decision')
+        message = response_data.get('message', '')
 
-            # 根据决策结果生成 toast
-            if success and decision:
-                if decision == 'allow':
-                    toast_type = TOAST_SUCCESS
-                else:  # deny
-                    toast_type = TOAST_WARNING
-                toast_content = message or ('已批准运行' if decision == 'allow' else '已拒绝运行')
-                logger.info(f"[feishu] Decision succeeded: decision={decision}, message={message}, elapsed={elapsed:.0f}ms")
-            else:
-                toast_type = TOAST_ERROR
-                toast_content = message or '处理失败'
-                logger.warning(f"[feishu] Decision failed: message={toast_content}, elapsed={elapsed:.0f}ms")
+        # 根据决策结果生成 toast
+        if success and decision:
+            if decision == 'allow':
+                toast_type = TOAST_SUCCESS
+            else:  # deny
+                toast_type = TOAST_WARNING
+            toast_content = message or ('已批准运行' if decision == 'allow' else '已拒绝运行')
+            logger.info(f"[feishu] Decision succeeded: decision={decision}, message={message}, elapsed={elapsed:.0f}ms")
+        else:
+            toast_type = TOAST_ERROR
+            toast_content = message or '处理失败'
+            logger.warning(f"[feishu] Decision failed: message={toast_content}, elapsed={elapsed:.0f}ms")
 
-            return True, {
-                'toast': {
-                    'type': toast_type,
-                    'content': toast_content
-                }
+        return True, {
+            'toast': {
+                'type': toast_type,
+                'content': toast_content
             }
+        }
 
     except urllib.error.HTTPError as e:
         logger.error(f"[feishu] Forward HTTP error: {e.code} {e.reason}")
@@ -1587,47 +1665,52 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
         }
 
 
-def _parse_new_command(args: str) -> Tuple[bool, str, str]:
-    """解析 /new 指令参数
+def _parse_command_args(args: str):
+    # type: (str) -> Tuple[bool, str, str, str]
+    """解析指令参数，提取 --dir=、--cmd= 和 prompt
 
-    支持格式：
-    - --dir=/path/to/project prompt
-    - --dir="/path with spaces" prompt
-    - prompt（回复模式，需要 parent_id）
+    支持格式（参数顺序不限）：
+    - --dir=/path --cmd=1 prompt
+    - --cmd=opus --dir=/path prompt
+    - --dir=/path prompt
+    - --cmd=opus prompt
+    - prompt（回复模式）
 
     Args:
-        args: 参数部分（不含 /new）
+        args: 参数部分（不含指令名）
 
     Returns:
-        (success, project_dir, prompt)
+        (success, project_dir, cmd_arg, prompt)
     """
     args = args.strip()
     if not args:
-        # 只有 /new，没有参数
-        return True, '', ''
+        return True, '', '', ''
 
-    # 检查是否有 --dir= 参数
-    if args.startswith('--dir='):
-        # 解析 --dir= 参数
-        try:
-            # 使用 shlex.split 处理引号
-            parts = shlex.split(args, posix=False)
-            # 第一部分是 --dir=/path
-            dir_part = parts[0]
-            if not dir_part.startswith('--dir='):
-                return False, '', ''
+    # 检查是否有 --dir= 或 --cmd= 参数
+    has_named_args = args.startswith('--dir=') or args.startswith('--cmd=')
+    if not has_named_args:
+        return True, '', '', args
 
-            project_dir = dir_part[6:]  # 移除 '--dir='
-            # 其余部分是 prompt
-            prompt = ' '.join(parts[1:]) if len(parts) > 1 else ''
-            return True, project_dir, prompt
-        except ValueError as e:
-            logger.warning(f"[feishu] Failed to parse /new command: {e}")
-            return False, '', ''
-    else:
-        # 回复模式：没有 --dir 参数，整个 args 是 prompt
-        # project_dir 需要从 parent_id 查询
-        return True, '', args
+    try:
+        parts = shlex.split(args, posix=False)
+    except ValueError as e:
+        logger.warning(f"[feishu] Failed to parse command args: {e}")
+        return False, '', '', ''
+
+    project_dir = ''
+    cmd_arg = ''
+    prompt_parts = []
+
+    for part in parts:
+        if part.startswith('--dir='):
+            project_dir = part[6:]
+        elif part.startswith('--cmd='):
+            cmd_arg = part[6:]
+        else:
+            prompt_parts.append(part)
+
+    prompt = ' '.join(prompt_parts)
+    return True, project_dir, cmd_arg, prompt
 
 
 def _fetch_recent_dirs_from_callback(auth_token: str, limit: int = 5) -> list:
@@ -1641,7 +1724,6 @@ def _fetch_recent_dirs_from_callback(auth_token: str, limit: int = 5) -> list:
         目录路径列表
     """
     from config import CALLBACK_SERVER_URL
-    import urllib.request
     import urllib.error
 
     callback_url = CALLBACK_SERVER_URL
@@ -1655,24 +1737,10 @@ def _fetch_recent_dirs_from_callback(auth_token: str, limit: int = 5) -> list:
     }
 
     try:
-        req = urllib.request.Request(
-            api_url,
-            data=json.dumps(request_data).encode('utf-8'),
-            headers={
-                'Content-Type': 'application/json',
-                'X-Auth-Token': auth_token
-            },
-            method='POST'
-        )
-
-        # 创建无代理的 opener
-        no_proxy_handler = urllib.request.ProxyHandler({})
-        opener = urllib.request.build_opener(no_proxy_handler)
-        with opener.open(req, timeout=5) as response:
-            response_data = json.loads(response.read().decode('utf-8'))
-            recent_dirs = response_data.get('dirs', [])
-            logger.info(f"[feishu] Fetched {len(recent_dirs)} recent dirs from callback")
-            return recent_dirs
+        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=5)
+        recent_dirs = response_data.get('dirs', [])
+        logger.info(f"[feishu] Fetched {len(recent_dirs)} recent dirs from callback")
+        return recent_dirs
 
     except urllib.error.HTTPError as e:
         logger.error(f"[feishu] Fetch recent dirs HTTP error: {e.code} {e.reason}")
@@ -1696,7 +1764,6 @@ def _fetch_browse_dirs_from_callback(auth_token: str, path: str) -> dict:
         包含 dirs, parent, current 的字典，失败时返回空字典
     """
     from config import CALLBACK_SERVER_URL
-    import urllib.request
     import urllib.error
 
     callback_url = CALLBACK_SERVER_URL
@@ -1710,23 +1777,9 @@ def _fetch_browse_dirs_from_callback(auth_token: str, path: str) -> dict:
     }
 
     try:
-        req = urllib.request.Request(
-            api_url,
-            data=json.dumps(request_data).encode('utf-8'),
-            headers={
-                'Content-Type': 'application/json',
-                'X-Auth-Token': auth_token
-            },
-            method='POST'
-        )
-
-        # 创建无代理的 opener
-        no_proxy_handler = urllib.request.ProxyHandler({})
-        opener = urllib.request.build_opener(no_proxy_handler)
-        with opener.open(req, timeout=5) as response:
-            response_data = json.loads(response.read().decode('utf-8'))
-            logger.info(f"[feishu] Fetched browse result: {len(response_data.get('dirs', []))} dirs from {path}")
-            return response_data
+        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=5)
+        logger.info(f"[feishu] Fetched browse result: {len(response_data.get('dirs', []))} dirs from {path}")
+        return response_data
 
     except urllib.error.HTTPError as e:
         logger.error(f"[feishu] Browse dirs HTTP error: {e.code} {e.reason}")
@@ -1739,15 +1792,17 @@ def _fetch_browse_dirs_from_callback(auth_token: str, path: str) -> dict:
         return {}
 
 
-def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prompt: str, event: dict):
-    """发送工作目录选择卡片（使用 Form 表单: select_static 下拉单选组件 + input 输入框 + submit 按钮）
+def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prompt: str,
+                           event: dict, claude_command: str = ''):
+    """发送工作目录选择卡片
 
     Args:
         chat_id: 群聊 ID
         message_id: 原始消息 ID（用于回复）
-        project_dir: 项目目录（用作 custom_dir 输入框的默认值，通常从历史记录中获取）
+        project_dir: 项目目录（用作 custom_dir 输入框的默认值）
         prompt: 用户输入的 prompt（作为 prompt 输入框的默认值）
         event: 飞书事件数据（用于获取 auth_token 和 owner_id）
+        claude_command: 预选的 Claude 命令（可选，来自 --cmd 参数）
     """
     from services.feishu_api import FeishuAPIService
 
@@ -1770,295 +1825,19 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
     # 从 Callback 后端获取常用目录列表
     recent_dirs = _fetch_recent_dirs_from_callback(auth_token, limit=5)
 
-    # 构建下拉菜单选项（Card 2.0 格式：text + value）
-    options = []
-    for dir_path in recent_dirs:
-        # 这里需要完整展示给用户看，目录路径不做截断
-        # display_path = _truncate_path(dir_path, max_len=40)
-        options.append({
-            'text': {
-                'tag': 'plain_text',
-                'content': dir_path
-            },
-            'value': dir_path
-        })
+    card = _build_new_session_card(
+        owner_id=owner_id, chat_id=chat_id, message_id=message_id,
+        recent_dirs=recent_dirs, custom_dir=project_dir or '',
+        prompt=prompt, claude_command=claude_command
+    )
 
-    # 构建 Form 表单元素
-    form_elements = []
-
-    # 区域标题：选择工作目录
-    form_elements.append({
-        'tag': 'div',
-        'text': {
-            'tag': 'plain_text',
-            'content': '1️⃣ 选择工作目录'
-        }
-    })
-
-    # 下拉选择菜单（必须有 name 字段，提交时会带上）
-    # 只有在有历史目录时才显示，标签和下拉框同行
-    if recent_dirs:
-        select_static = {
-            'tag': 'select_static',
-            'name': 'directory',  # 表单字段名
-            'placeholder': {
-                'tag': 'plain_text',
-                'content': '选择工作目录'
-            },
-            'width': 'fill',
-            'options': options,
-        }
-
-        # 设置默认选中第一个（initial_option 是 value 字符串）
-        select_static['initial_option'] = options[0]['value']
-
-        form_elements.append({
-            'tag': 'column_set',
-            'columns': [
-                {
-                    'tag': 'column',
-                    'width': 'weighted',
-                    'weight': 1,
-                    'vertical_align': 'center',
-                    'elements': [
-                        {
-                            'tag': 'div',
-                            'text': {
-                                'tag': 'plain_text',
-                                'content': '常用目录'
-                            }
-                        }
-                    ]
-                },
-                {
-                    'tag': 'column',
-                    'width': 'weighted',
-                    'weight': 4,
-                    'elements': [
-                        select_static
-                    ]
-                },
-                {
-                    'tag': 'column',
-                    'width': 'weighted',
-                    'weight': 1,
-                    'elements': [
-                        {
-                            'tag': 'button',
-                            'name': 'browse_dir_select_btn',
-                            'text': {
-                                'tag': 'plain_text',
-                                'content': '浏览'
-                            },
-                            'type': 'default',
-                            'width': 'fill',
-                            'form_action_type': 'submit',
-                            'behaviors': [
-                                {
-                                    'type': 'callback',
-                                    'value': {
-                                        'owner_id': owner_id,
-                                        'chat_id': chat_id,
-                                        'message_id': message_id
-                                    }
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ]
-        })
-
-    # 自定义路径标签 + 输入框 + 浏览按钮（同行布局）
-    form_elements.append({
-        'tag': 'column_set',
-        'columns': [
-            {
-                'tag': 'column',
-                'width': 'weighted',
-                'weight': 1,
-                'vertical_align': 'center',
-                'elements': [
-                    {
-                        'tag': 'div',
-                        'text': {
-                            'tag': 'plain_text',
-                            'content': '自定义路径'
-                        }
-                    }
-                ]
-            },
-            {
-                'tag': 'column',
-                'width': 'weighted',
-                'weight': 4,
-                'elements': [
-                    {
-                        'tag': 'input',
-                        'name': 'custom_dir',
-                        'placeholder': {
-                            'tag': 'plain_text',
-                            'content': '输入完整路径，如 /home/user/project'
-                        },
-                        'width': 'fill',
-                        'default_value': project_dir or ''  # 使用传入的 project_dir 作为默认值
-                    }
-                ]
-            },
-            {
-                'tag': 'column',
-                'width': 'weighted',
-                'weight': 1,
-                'elements': [
-                    {
-                        'tag': 'button',
-                        'name': 'browse_custom_btn',
-                        'text': {
-                            'tag': 'plain_text',
-                            'content': '浏览'
-                        },
-                        'type': 'default',
-                        'width': 'fill',
-                        'form_action_type': 'submit',
-                        'behaviors': [
-                            {
-                                'type': 'callback',
-                                'value': {
-                                    'owner_id': owner_id,
-                                    'chat_id': chat_id,
-                                    'message_id': message_id
-                                }
-                            }
-                        ]
-                    }
-                ]
-            }
-        ]
-    })
-
-    # 优先级提示文本（初始卡片没有浏览子目录选项）
-    form_elements.append({
-        'tag': 'div',
-        'text': {
-            'tag': 'plain_text',
-            'content': '💡 优先级：自定义路径 > 常用目录'
-        }
-    })
-
-    # 分割线：目录选择区域结束
-    form_elements.append({'tag': 'hr'})
-
-    # Prompt 输入框
-    # 添加区域标题
-    form_elements.append({
-        'tag': 'div',
-        'text': {
-            'tag': 'plain_text',
-            'content': '2️⃣ 输入提示词'
-        }
-    })
-
-    # 使用 column_set 让标签和输入框同行，与目录选择块对齐
-    form_elements.append({
-        'tag': 'column_set',
-        'columns': [
-            {
-                'tag': 'column',
-                'width': 'weighted',
-                'weight': 1,
-                'vertical_align': 'center',
-                'elements': [
-                    {
-                        'tag': 'div',
-                        'text': {
-                            'tag': 'plain_text',
-                            'content': '提示词'
-                        }
-                    }
-                ]
-            },
-            {
-                'tag': 'column',
-                'width': 'weighted',
-                'weight': 5,
-                'elements': [
-                    {
-                        'tag': 'input',
-                        'name': 'prompt',
-                        'input_type': 'multiline_text',
-                        'placeholder': {
-                            'tag': 'plain_text',
-                            'content': '请输入您的问题或任务描述'
-                        },
-                        'width': 'fill',
-                        'default_value': prompt or '',
-                        # 不设置 required，避免点击"浏览"按钮时被阻止
-                        # 服务端会在创建会话时验证 prompt 是否为空
-                    }
-                ]
-            }
-        ]
-    })
-
-    # 构建卡片内容
-    elements = []
-
-    # Form 表单（需要包含提交按钮）
-    elements.append({
-        'tag': 'form',
-        'name': 'dir_prompt_form',  # Form 必须有 name
-        'elements': form_elements + [
-            # 提交按钮
-            {
-                'tag': 'button',
-                'name': 'submit_btn',  # 按钮的 name
-                'text': {
-                    'tag': 'plain_text',
-                    'content': '创建会话'
-                },
-                'type': 'primary',
-                'form_action_type': 'submit',  # 标识为提交按钮
-                'behaviors': [
-                    {
-                        'type': 'callback',
-                        'value': {
-                            'owner_id': owner_id,    # 用于验证操作者身份
-                            'chat_id': chat_id,      # 用于发送通知
-                            'message_id': message_id # 用于回复原消息
-                        }
-                    }
-                ]
-            }
-        ]
-    })
-
-    card = {
-        'schema': '2.0',
-        'config': {
-            'wide_screen_mode': True
-        },
-        'header': {
-            'title': {
-                'tag': 'plain_text',
-                'content': '🧠 完善信息以创建会话'
-            },
-            'template': 'blue'
-        },
-        'body': {
-            'direction': 'vertical',
-            'elements': elements
-        }
-    }
-
-    # 打印完整卡片 JSON 用于调试（使用 ensure_ascii=True 避免编码问题）
+    # 打印完整卡片 JSON 用于调试
     card_json = json.dumps(card, ensure_ascii=True, indent=2)
     logger.info(f"[feishu] Dir selector card JSON:\n{card_json}")
 
     if message_id:
-        # 使用回复消息 API
         success, result = service.reply_card(json.dumps(card, ensure_ascii=False), message_id)
     else:
-        # 使用发送新消息 API
         success, result = service.send_card(json.dumps(card, ensure_ascii=False), receive_id=chat_id, receive_id_type='chat_id')
 
     if success:
@@ -2074,7 +1853,7 @@ def _handle_new_command(data: dict, args: str):
         data: 飞书事件数据
         args: 参数部分（不含 /new）
     """
-    from services.session_store import SessionStore
+    from services.message_session_store import MessageSessionStore
 
     event = data.get('event', {})
     message = event.get('message', {})
@@ -2083,15 +1862,25 @@ def _handle_new_command(data: dict, args: str):
     chat_id = message.get('chat_id', '')
     parent_id = message.get('parent_id', '')
 
-    # 解析指令参数
-    success, project_dir, prompt = _parse_new_command(args)
+    # 解析指令参数（支持 --dir= 和 --cmd=）
+    success, project_dir, cmd_arg, prompt = _parse_command_args(args)
     if not success:
-        _run_in_background(_send_reject_message, (chat_id, "参数格式错误，正确格式：`/new --dir=/path/to/project prompt`", message_id))
+        _run_in_background(_send_reject_message, (chat_id, "参数格式错误，正确格式：`/new --dir=/path/to/project [--cmd=0] prompt`", message_id))
         return
+
+    # 解析 --cmd 参数
+    claude_command = ''
+    if cmd_arg:
+        from config import resolve_claude_command
+        ok, result = resolve_claude_command(cmd_arg)
+        if not ok:
+            _run_in_background(_send_reject_message, (chat_id, result, message_id))
+            return
+        claude_command = result
 
     # 如果没有 project_dir，尝试从 parent_id 查询
     if not project_dir and parent_id:
-        store = SessionStore.get_instance()
+        store = MessageSessionStore.get_instance()
         if store:
             mapping = store.get(parent_id)
             if mapping:
@@ -2102,10 +1891,10 @@ def _handle_new_command(data: dict, args: str):
 
     # 验证参数：如果没有目录或没有提示词，发送卡片让用户完善
     if not project_dir or not prompt:
-        _run_in_background(_send_new_session_card, (chat_id, message_id, project_dir, prompt, event))
+        _run_in_background(_send_new_session_card, (chat_id, message_id, project_dir, prompt, event, claude_command))
         return
 
-    logger.info(f"[feishu] /new command: dir={project_dir}, prompt={_sanitize_user_content(prompt)}")
+    logger.info(f"[feishu] /new command: dir={project_dir}, cmd={claude_command or '(default)'}, prompt={_sanitize_user_content(prompt)}")
 
     # 查询 auth_token（用于双向认证）
     auth_token = _get_auth_token_from_event(event)
@@ -2116,11 +1905,11 @@ def _handle_new_command(data: dict, args: str):
         return
 
     # 在后台线程中转发到 Callback 后端
-    _run_in_background(_forward_new_request, (project_dir, prompt, chat_id, message_id, auth_token))
+    _run_in_background(_forward_new_request, (project_dir, prompt, chat_id, message_id, auth_token, claude_command))
 
 
 def _forward_new_request(project_dir: str, prompt: str, chat_id: str, message_id: str,
-                         auth_token: str = ''):
+                         auth_token: str = '', claude_command: str = ''):
     """转发新建会话请求到 Callback 后端
 
     Args:
@@ -2129,17 +1918,23 @@ def _forward_new_request(project_dir: str, prompt: str, chat_id: str, message_id
         chat_id: 群聊 ID
         message_id: 原始消息 ID（用作 reply_to）
         auth_token: 认证令牌（双向认证）
+        claude_command: 指定使用的 Claude 命令（可选）
     """
     # 从本地配置获取 callback_url
     from config import CALLBACK_SERVER_URL
     callback_url = CALLBACK_SERVER_URL
 
-    _forward_claude_request(callback_url, '/claude/new', {
+    data = {
         'project_dir': project_dir,
         'prompt': prompt,
         'chat_id': chat_id,
         'message_id': message_id
-    }, auth_token, chat_id, 'new', reply_to=message_id)
+    }
+    if claude_command:
+        data['claude_command'] = claude_command
+
+    _forward_claude_request(callback_url, '/claude/new', data,
+                            auth_token, chat_id, 'new', reply_to=message_id)
 
 
 def _send_new_result_notification(chat_id: str, response: dict, project_dir: str,
@@ -2153,7 +1948,7 @@ def _send_new_result_notification(chat_id: str, response: dict, project_dir: str
         reply_to: 要回复的消息 ID（可选）
     """
     from services.feishu_api import FeishuAPIService
-    from services.session_store import SessionStore
+    from services.message_session_store import MessageSessionStore
 
     service = FeishuAPIService.get_instance()
     if not service or not service.enabled:
@@ -2182,7 +1977,7 @@ def _send_new_result_notification(chat_id: str, response: dict, project_dir: str
             new_message_id = result
             if new_message_id and session_id:
                 from config import CALLBACK_SERVER_URL
-                store = SessionStore.get_instance()
+                store = MessageSessionStore.get_instance()
                 if store:
                     store.save(new_message_id, session_id, project_dir, CALLBACK_SERVER_URL)
                     logger.info(f"[feishu] Saved new session mapping: {new_message_id} -> {session_id}")
@@ -2281,8 +2076,8 @@ def handle_send_message(data: dict) -> Tuple[bool, dict]:
 
         # 发送成功后保存映射（支持继续会话）
         if message_id and session_id and project_dir and callback_url:
-            from services.session_store import SessionStore
-            store = SessionStore.get_instance()
+            from services.message_session_store import MessageSessionStore
+            store = MessageSessionStore.get_instance()
             if store:
                 store.save(message_id, session_id, project_dir, callback_url)
                 logger.info(f"[feishu] Saved session mapping: {message_id} -> {session_id}")
@@ -2293,11 +2088,82 @@ def handle_send_message(data: dict) -> Tuple[bool, dict]:
         return True, {'success': False, 'error': result}
 
 
+def _handle_reply_command(data: dict, args: str):
+    """处理 /reply 指令，在回复消息时指定 Claude Command 继续会话
+
+    仅在回复消息时可用。支持 --cmd= 参数。
+
+    Args:
+        data: 飞书事件数据
+        args: 参数部分（不含 /reply）
+    """
+    from services.message_session_store import MessageSessionStore
+
+    event = data.get('event', {})
+    message = event.get('message', {})
+
+    message_id = message.get('message_id', '')
+    chat_id = message.get('chat_id', '')
+    parent_id = message.get('parent_id', '')
+
+    # /reply 仅在回复消息时可用
+    if not parent_id:
+        _run_in_background(_send_reject_message, (chat_id, "`/reply` 指令仅支持在回复消息时使用", message_id))
+        return
+
+    # 解析参数
+    success, project_dir, cmd_arg, prompt = _parse_command_args(args)
+    if not success:
+        _run_in_background(_send_reject_message, (chat_id, "参数格式错误，正确格式：`/reply [--cmd=0] prompt`", message_id))
+        return
+
+    if project_dir:
+        _run_in_background(_send_reject_message, (chat_id, "`/reply` 不支持 `--dir` 参数，会话目录由原始 session 决定。请去掉 `--dir` 后重试", message_id))
+        return
+
+    if not prompt:
+        _run_in_background(_send_reject_message, (chat_id, "请提供问题内容，格式：`/reply [--cmd=0] prompt`", message_id))
+        return
+
+    # 解析 --cmd 参数
+    claude_command = ''
+    if cmd_arg:
+        from config import resolve_claude_command
+        ok, result = resolve_claude_command(cmd_arg)
+        if not ok:
+            _run_in_background(_send_reject_message, (chat_id, result, message_id))
+            return
+        claude_command = result
+
+    # 查询映射
+    store = MessageSessionStore.get_instance()
+    if not store:
+        _run_in_background(_send_reject_message, (chat_id, "会话存储服务未初始化，请稍后重试或联系管理员", message_id))
+        return
+
+    mapping = store.get(parent_id)
+    if not mapping:
+        _run_in_background(_send_reject_message, (chat_id, "无法找到对应的会话（可能已过期或被清理），请重新发起 /new 指令", message_id))
+        return
+
+    logger.info(f"[feishu] /reply command: session={mapping.get('session_id', '')}, cmd={claude_command or '(default)'}, prompt={_sanitize_user_content(prompt)}")
+
+    # 查询 auth_token
+    auth_token = _get_auth_token_from_event(event)
+    if not auth_token:
+        _run_in_background(_send_reject_message, (chat_id, "您尚未注册，无法使用此功能", message_id))
+        return
+
+    # 转发到 Callback 后端（携带 claude_command）
+    _run_in_background(_forward_continue_request, (mapping, prompt, chat_id, message_id, auth_token, claude_command))
+
+
 # =============================================================================
 # 命令映射（放在文件末尾，避免函数未定义的问题）
 # =============================================================================
 
 # 支持的命令映射：命令名 -> (处理函数, 帮助文本)
 _COMMANDS = {
-    'new': (_handle_new_command, "发起新的 Claude 会话\n格式：`/new --dir=/path/to/project prompt` 或回复消息时 `/new prompt`"),
+    'new': (_handle_new_command, "发起新的 Claude 会话\n格式：`/new --dir=/path/to/project [--cmd=0] prompt` 或回复消息时 `/new prompt`"),
+    'reply': (_handle_reply_command, "回复消息时指定 Claude Command 继续会话\n格式：`/reply [--cmd=0] prompt`\n仅支持在回复消息时使用"),
 }

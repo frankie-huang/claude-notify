@@ -136,7 +136,8 @@ render_template() {
         if [[ "$key" != "buttons_json" ]] && \
            [[ "$key" != "description_element" ]] && \
            [[ "$key" != "detail_elements" ]] && \
-           [[ "$key" != "thinking_element" ]]; then
+           [[ "$key" != "thinking_element" ]] && \
+           [[ "$key" != "response_elements" ]]; then
             # 转义特殊字符为 JSON 格式
             # 注意: JSON 解析器（jq/python3）会将转义序列解释为实际字符（如 \t → TAB, \n → LF）
             # 因此需要将这些实际字符重新转义回 JSON 格式
@@ -635,10 +636,10 @@ build_notification_card() {
 # 功能: 构建飞书 Stop 事件完成卡片(用于主 Agent 完成响应时的通知)
 #
 # 参数:
-#   $1 - response_content  Claude 最终响应内容 (Markdown 格式)
+#   $1 - response_elements 响应内容 JSON 片段（多个 markdown 元素，逗号分隔）
 #   $2 - project_name      项目名称
 #   $3 - timestamp         时间戳
-#   $4 - session_id        会话标识 (可选)
+#   $4 - session_id        完整会话标识 (函数内部会截断前 8 字符用于显示)
 #   $5 - thinking_content  思考过程内容 (可选, Markdown 格式)
 #
 # 输出:
@@ -649,11 +650,12 @@ build_notification_card() {
 #   1 - 构建失败
 #
 # 示例:
-#   card=$(build_stop_card "已修复 bug，具体改动如下..." \
-#       "myproject" "2024-01-01 12:00:00" "canyon" "分析了代码结构...")
+#   elements='{"tag":"markdown","content":"已修复 bug","text_align":"left","text_size":"normal_v2"}'
+#   card=$(build_stop_card "$elements" \
+#       "myproject" "2024-01-01 12:00:00" "canyon-abc123-xyz" "分析了代码结构...")
 # ----------------------------------------------------------------------------
 build_stop_card() {
-    local response_content="$1"
+    local response_elements="$1"
     local project_name="$2"
     local timestamp="$3"
     local session_id="${4:-}"
@@ -671,13 +673,17 @@ build_stop_card() {
         thinking_element="${thinking_element},"
     fi
 
+    # 截断 session_id 前 8 字符用于显示
+    local session_id_short="${session_id:0:8}"
+
     render_card_template "stop" \
-        "response_content=$response_content" \
+        "response_elements=$response_elements" \
         "project_name=$project_name" \
         "timestamp=$timestamp" \
-        "session_id=$session_id" \
+        "session_id=$session_id_short" \
         "at_user=$at_user" \
-        "thinking_element=$thinking_element"
+        "thinking_element=$thinking_element" \
+        "resume_session_id=$session_id"
 }
 
 # =============================================================================
@@ -812,16 +818,15 @@ EOF
     local response
     local http_code
 
-    # 构建 headers
-    local headers="-H \"Content-Type: application/json\""
+    # 使用数组构建 headers，避免 shell 解析问题
+    local headers=("-H" "Content-Type: application/json")
     if [ -n "$auth_token" ]; then
-        headers="$headers -H \"X-Auth-Token: $auth_token\""
+        headers+=("-H" "X-Auth-Token: $auth_token")
     fi
 
-    # 执行 curl 请求
+    # 执行 curl 请求，"${headers[@]}" 确保每个元素作为独立参数传递
     response=$(curl -X POST "$url" \
-        -H "Content-Type: application/json" \
-        ${auth_token:+-H "X-Auth-Token: $auth_token"} \
+        "${headers[@]}" \
         -d "$request_body" \
         --max-time "$FEISHU_HTTP_TIMEOUT" \
         --noproxy "*" \
@@ -1000,13 +1005,16 @@ send_feishu_card() {
     local card_json="$1"
     local options="${2:-}"
 
-    # 解析可选参数
-    local webhook_url session_id project_dir callback_url
-    webhook_url=$(json_get "$options" "webhook_url")
+    # 解析可选参数（一次调用获取多个字段，减少进程开销）
+    local -a vals=()
+    while IFS= read -r _line; do
+        vals+=("$_line")
+    done <<< "$(json_get_multi "$options" webhook_url session_id project_dir callback_url)"
+    local webhook_url="${vals[0]:-}"
+    local session_id="${vals[1]:-}"
+    local project_dir="${vals[2]:-}"
+    local callback_url="${vals[3]:-}"
     [ -z "$webhook_url" ] && webhook_url=$(get_config "FEISHU_WEBHOOK_URL" "")
-    session_id=$(json_get "$options" "session_id")
-    project_dir=$(json_get "$options" "project_dir")
-    callback_url=$(json_get "$options" "callback_url")
 
     # 记录卡片内容到日志
     log "Sending feishu card:"
@@ -1106,11 +1114,14 @@ _send_feishu_card_http_endpoint() {
     local target_url="${2:-}"
     local options="${3:-}"
 
-    # 解析可选参数
-    local session_id project_dir callback_url
-    session_id=$(json_get "$options" "session_id")
-    project_dir=$(json_get "$options" "project_dir")
-    callback_url=$(json_get "$options" "callback_url")
+    # 解析可选参数（一次调用获取多个字段，减少进程开销）
+    local -a vals=()
+    while IFS= read -r _line; do
+        vals+=("$_line")
+    done <<< "$(json_get_multi "$options" session_id project_dir callback_url)"
+    local session_id="${vals[0]:-}"
+    local project_dir="${vals[1]:-}"
+    local callback_url="${vals[2]:-}"
 
     # 提取 card 内容
     local card_content

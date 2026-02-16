@@ -157,7 +157,7 @@ def verify_global_auth_token(
     Returns:
         True 表示验证通过，False 表示验证失败（已发送 401 响应）
     """
-    from handlers.register import AuthTokenStore
+    from services.auth_token_store import AuthTokenStore
 
     client_token = handler.headers.get('X-Auth-Token', '')
     stored_token = ''

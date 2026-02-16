@@ -57,7 +57,7 @@ check_socket_tools() {
     HAS_SOCAT=false
 
     # Socket 客户端路径
-    SOCKET_CLIENT="${SRC_DIR}/server/socket-client.py"
+    SOCKET_CLIENT="${SRC_DIR}/server/socket_client.py"
 
     # 检测 Python 客户端（推荐）
     if [ -f "$SOCKET_CLIENT" ] && command -v python3 &> /dev/null; then
@@ -180,28 +180,33 @@ parse_socket_response() {
     RESPONSE_INTERRUPT="false"
     RESPONSE_FALLBACK="false"
 
-    # 使用 json_get 统一解析
-    local value
+    # 一次调用获取所有字段，减少进程开销
+    local -a values=()
+    while IFS= read -r _line; do
+        values+=("$_line")
+    done <<< "$(json_get_multi "$response_json" success decision.behavior decision.message decision.interrupt fallback_to_terminal)"
 
-    value=$(json_get "$response_json" "success")
-    if [ "$value" = "true" ] || [ "$value" = "True" ]; then
+    local success="${values[0]:-}"
+    local behavior="${values[1]:-}"
+    local message="${values[2]:-}"
+    local interrupt="${values[3]:-}"
+    local fallback="${values[4]:-}"
+
+    if [ "$success" = "true" ] || [ "$success" = "True" ]; then
         RESPONSE_SUCCESS="true"
     fi
 
-    value=$(json_get "$response_json" "decision.behavior")
-    if [ -n "$value" ]; then
-        RESPONSE_BEHAVIOR="$value"
+    if [ -n "$behavior" ]; then
+        RESPONSE_BEHAVIOR="$behavior"
     fi
 
-    RESPONSE_MESSAGE=$(json_get "$response_json" "decision.message")
+    RESPONSE_MESSAGE="$message"
 
-    value=$(json_get "$response_json" "decision.interrupt")
-    if [ "$value" = "true" ] || [ "$value" = "True" ]; then
+    if [ "$interrupt" = "true" ] || [ "$interrupt" = "True" ]; then
         RESPONSE_INTERRUPT="true"
     fi
 
-    value=$(json_get "$response_json" "fallback_to_terminal")
-    if [ "$value" = "true" ] || [ "$value" = "True" ]; then
+    if [ "$fallback" = "true" ] || [ "$fallback" = "True" ]; then
         RESPONSE_FALLBACK="true"
     fi
 
@@ -233,18 +238,15 @@ check_socket_service() {
     # 尝试连接以验证服务是否真的在运行
     # 这样可以检测服务异常退出后残留的 socket 文件
     if command -v python3 &> /dev/null; then
-        python3 -c "
-import socket
-import sys
+        _HOOK_SOCK="$socket_path" python3 -c "
+import socket, sys, os
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.settimeout(1)
 try:
-    sock.connect('${socket_path}')
-    # 连接成功，立即关闭（这是一个测试连接）
+    sock.connect(os.environ['_HOOK_SOCK'])
     sock.close()
     sys.exit(0)
-except Exception as e:
-    # 连接失败，说明服务不可用
+except Exception:
     sys.exit(1)
 " 2>/dev/null
         return $?

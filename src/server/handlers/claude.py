@@ -9,9 +9,11 @@ import logging
 import os
 import shlex
 import subprocess
-import threading
 import uuid
 from typing import Tuple, Dict, Any
+
+from services.session_chat_store import SessionChatStore
+from .utils import run_in_background as _run_in_background
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,7 @@ def handle_continue_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]
             - project_dir: 项目工作目录 (必需)
             - prompt: 用户的问题 (必需)
             - chat_id: 群聊 ID (可选)
-            - reply_message_id: 回复消息 ID (可选)
+            - claude_command: 指定使用的 Claude 命令 (可选)
 
     Returns:
         (success, response):
@@ -77,6 +79,7 @@ def handle_continue_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]
     project_dir = data.get('project_dir', '')
     prompt = data.get('prompt', '')
     chat_id = data.get('chat_id', '') or ''  # 确保 None 转为空字符串
+    claude_command = data.get('claude_command', '') or ''
 
     # 参数验证
     if not session_id:
@@ -90,17 +93,30 @@ def handle_continue_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]
     if not os.path.exists(project_dir):
         return Response.error(f'Project directory not found: {project_dir}')
 
-    logger.info(f"[claude-continue] Session: {session_id}, Dir: {project_dir}, Prompt: {prompt[:50]}...")
+    # 验证 claude_command 合法性（如果指定了的话）
+    if claude_command:
+        from config import get_claude_commands
+        if claude_command not in get_claude_commands():
+            return Response.error('invalid claude_command')
 
-    # 如果有 chat_id，保存 session_id -> chat_id 映射
+    # Command 优先级: 请求指定 > SessionChatStore session 记录 > 默认
+    if not claude_command:
+        chat_store = SessionChatStore.get_instance()
+        if chat_store:
+            claude_command = chat_store.get_command(session_id) or ''
+
+    actual_cmd = _get_claude_command(claude_command)
+    logger.info(f"[claude-continue] Session: {session_id}, Dir: {project_dir}, Cmd: {actual_cmd}, Prompt: {prompt[:50]}...")
+
+    # 如果有 chat_id，保存 session_id -> chat_id + claude_command 映射
     if chat_id:
-        from handlers.register import ChatIdStore
-        store = ChatIdStore.get_instance()
+        store = SessionChatStore.get_instance()
         if store:
-            store.save(session_id, chat_id)
+            store.save(session_id, chat_id, claude_command=actual_cmd)
 
     # 同步执行并检查（使用 resume 模式）
-    result = _execute_and_check(session_id, project_dir, prompt, chat_id, session_mode='resume')
+    result = _execute_and_check(session_id, project_dir, prompt, chat_id,
+                                session_mode='resume', claude_command=actual_cmd)
 
     # 记录目录使用历史（仅在会话成功启动时）
     if Response.is_processing(result):
@@ -122,21 +138,25 @@ def _get_shell() -> str:
     return os.environ.get('SHELL', '/bin/bash')
 
 
-def _get_claude_command() -> str:
-    """获取 Claude 命令配置
+def _get_claude_command(claude_command: str = '') -> str:
+    """获取 Claude 命令
 
-    从环境变量 CLAUDE_COMMAND 读取命令配置。
-    返回字符串，支持 shell 别名（因为会通过登录 shell 执行）。
+    优先使用传入的 claude_command，否则从配置列表取默认值。
+
+    Args:
+        claude_command: 指定的命令字符串（可选）
 
     Returns:
         命令字符串，如 'claude' 或 'claude --setting opus'
     """
-    from config import get_config
-    return get_config('CLAUDE_COMMAND', 'claude')
+    if claude_command:
+        return claude_command
+    from config import get_claude_commands
+    return get_claude_commands()[0]
 
 
 def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: str = '',
-                       session_mode: str = 'resume') -> Tuple[bool, Dict[str, Any]]:
+                       session_mode: str = 'resume', claude_command: str = '') -> Tuple[bool, Dict[str, Any]]:
     """
     执行命令并检查启动状态
 
@@ -148,13 +168,14 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
         prompt: 用户的问题
         chat_id: 群聊 ID（用于异常通知）
         session_mode: 会话模式，'resume' 继续会话，'new' 新建会话
+        claude_command: 指定使用的 Claude 命令（可选，为空时使用默认）
 
     Returns:
         (success, response)
     """
     shell = _get_shell()
     shell_name = os.path.basename(shell)
-    claude_cmd = _get_claude_command()
+    claude_cmd = _get_claude_command(claude_command)
     # 使用 shlex.quote 安全处理 prompt 中的特殊字符
     safe_prompt = shlex.quote(prompt)
     safe_session = shlex.quote(session_id)
@@ -226,17 +247,6 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
         # 在后台等待完成
         _run_in_background(_wait_for_completion, (proc, session_id, chat_id))
         return Response.processing()
-
-
-def _run_in_background(func, args=()):
-    """在后台线程中执行函数
-
-    Args:
-        func: 要执行的函数
-        args: 位置参数元组
-    """
-    thread = threading.Thread(target=func, args=args, daemon=True)
-    thread.start()
 
 
 def _wait_for_completion(proc: subprocess.Popen, session_id: str, chat_id: str = ''):
@@ -315,6 +325,7 @@ def handle_new_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
             - prompt: 用户的问题 (必需)
             - chat_id: 群聊 ID (可选)
             - message_id: 原始消息 ID (可选)
+            - claude_command: 指定使用的 Claude 命令 (可选)
 
     Returns:
         (success, response):
@@ -325,6 +336,7 @@ def handle_new_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
     project_dir = data.get('project_dir', '')
     prompt = data.get('prompt', '')
     chat_id = data.get('chat_id', '') or ''  # 确保 None 转为空字符串
+    claude_command = data.get('claude_command', '') or ''
 
     # 参数验证
     if not project_dir:
@@ -336,21 +348,28 @@ def handle_new_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
     if not os.path.exists(project_dir):
         return Response.error(f'Project directory not found: {project_dir}')
 
+    # 验证 claude_command 合法性（如果指定了的话）
+    if claude_command:
+        from config import get_claude_commands
+        if claude_command not in get_claude_commands():
+            return Response.error('invalid claude_command')
+
     # 生成 UUID session_id
     session_id = str(uuid.uuid4())
 
-    logger.info(f"[claude-new] Session: {session_id}, Dir: {project_dir}, Prompt: {prompt[:50]}...")
+    actual_cmd = _get_claude_command(claude_command)
+    logger.info(f"[claude-new] Session: {session_id}, Dir: {project_dir}, Cmd: {actual_cmd}, Prompt: {prompt[:50]}...")
 
-    # 保存 session_id -> chat_id 映射
+    # 保存 session_id -> chat_id + claude_command 映射
     if chat_id:
-        from handlers.register import ChatIdStore
-        store = ChatIdStore.get_instance()
+        store = SessionChatStore.get_instance()
         if store:
-            store.save(session_id, chat_id)
+            store.save(session_id, chat_id, claude_command=actual_cmd)
             logger.info(f"[claude-new] Saved chat_id mapping: {session_id} -> {chat_id}")
 
     # 同步执行并检查（使用 new 模式）
-    result = _execute_and_check(session_id, project_dir, prompt, chat_id, session_mode='new')
+    result = _execute_and_check(session_id, project_dir, prompt, chat_id,
+                                session_mode='new', claude_command=actual_cmd)
     if result[0]:  # success
         # 添加 session_id 到响应
         response = result[1]

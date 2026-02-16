@@ -6,6 +6,7 @@ Callback 后端使用此服务维护用户的工作目录使用历史，
 
 import json
 import os
+import tempfile
 import threading
 import time
 import logging
@@ -168,7 +169,7 @@ class DirHistoryStore:
             return {}
 
     def _save(self, data: Dict[str, Any]) -> bool:
-        """保存目录历史数据
+        """保存目录历史数据（原子写入）
 
         Args:
             data: 目录历史数据字典
@@ -177,10 +178,12 @@ class DirHistoryStore:
             是否保存成功
         """
         try:
-            with open(self._file_path, 'w', encoding='utf-8') as f:
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=self._data_dir, suffix='.tmp')
+            with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, self._file_path)
             return True
-        except IOError as e:
+        except (IOError, OSError) as e:
             logger.error(f"[dir-history-store] Failed to save: {e}")
             return False
 

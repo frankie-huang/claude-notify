@@ -207,9 +207,9 @@ _load_log_config() {
             _LOG_FILE_PATTERN=$(jq -r '.file_patterns.hook // "hook_{date}.log"' "$config_file" 2>/dev/null || echo "hook_{date}.log")
         # 尝试使用 python3 读取配置
         elif command -v python3 &> /dev/null; then
-            _LOG_DATE_FORMAT=$(python3 -c "import json; print(json.load(open('$config_file')).get('date_format', '%Y%m%d'))" 2>/dev/null || echo "%Y%m%d")
-            _LOG_DATETIME_FORMAT=$(python3 -c "import json; print(json.load(open('$config_file')).get('datetime_format', '%Y-%m-%d %H:%M:%S'))" 2>/dev/null || echo "%Y-%m-%d %H:%M:%S")
-            _LOG_FILE_PATTERN=$(python3 -c "import json; print(json.load(open('$config_file')).get('file_patterns', {}).get('hook', 'hook_{date}.log'))" 2>/dev/null || echo "hook_{date}.log")
+            _LOG_DATE_FORMAT=$(python3 -c "import sys, json; print(json.load(open(sys.argv[1])).get('date_format', '%Y%m%d'))" "$config_file" 2>/dev/null || echo "%Y%m%d")
+            _LOG_DATETIME_FORMAT=$(python3 -c "import sys, json; print(json.load(open(sys.argv[1])).get('datetime_format', '%Y-%m-%d %H:%M:%S'))" "$config_file" 2>/dev/null || echo "%Y-%m-%d %H:%M:%S")
+            _LOG_FILE_PATTERN=$(python3 -c "import sys, json; print(json.load(open(sys.argv[1])).get('file_patterns', {}).get('hook', 'hook_{date}.log'))" "$config_file" 2>/dev/null || echo "hook_{date}.log")
         fi
     fi
 }

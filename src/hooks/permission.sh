@@ -153,7 +153,7 @@ run_interactive_mode() {
     # 构建请求 JSON
     local request_json
     local encoded_input
-    encoded_input=$(echo "$INPUT" | base64 -w 0)
+    encoded_input=$(echo "$INPUT" | base64 | tr -d '\n')
 
     if [ "$JSON_HAS_JQ" = "true" ]; then
         request_json=$(jq -n \
@@ -278,7 +278,7 @@ EOF
 check_socket_tools
 
 if [ "$HAS_SOCKET_CLIENT" = "false" ] && [ "$HAS_SOCAT" = "false" ]; then
-    log "Warning: neither socket-client.py (python3) nor socat available, falling back to notification-only mode"
+    log "Warning: neither socket_client.py (python3) nor socat available, falling back to notification-only mode"
     run_fallback_mode
 fi
 

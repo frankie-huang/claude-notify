@@ -18,7 +18,7 @@
       "template": "green",
       "title": {
         "tag": "plain_text",
-        "content": "✅ Claude Code 处理完成"
+        "content": "✅ Claude Code 处理完成 [{{session_id}}]"
       },
       "padding": "12px 8px 12px 8px"
     },
@@ -105,12 +105,7 @@
               "width": "weighted",
               "background_style": "grey-50",
               "elements": [
-                {
-                  "tag": "markdown",
-                  "content": "{{response_content}}",
-                  "text_align": "left",
-                  "text_size": "normal_v2"
-                }
+                {{response_elements}}
               ],
               "padding": "12px 12px 12px 12px",
               "vertical_spacing": "8px",
@@ -122,10 +117,14 @@
           "margin": "0px 0px 0px 0px"
         },
         {
+          "tag": "hr",
+          "margin": "0px 0px 0px 0px"
+        },
+        {
           "tag": "div",
           "text": {
-            "tag": "plain_text",
-            "content": "Claude Code 已完成任务",
+            "tag": "lark_md",
+            "content": "恢复会话：`claude --resume {{resume_session_id}}`",
             "text_size": "notation",
             "text_align": "left",
             "text_color": "grey"

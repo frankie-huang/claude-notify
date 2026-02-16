@@ -4,6 +4,7 @@ Callback Handler - HTTP 请求处理器
 处理权限回调请求（GET）和飞书事件（POST）
 """
 
+import html
 import json
 import logging
 import os
@@ -17,6 +18,9 @@ from config import CLOSE_PAGE_TIMEOUT, VSCODE_URI_PREFIX
 from handlers.feishu import handle_feishu_request, handle_send_message
 from handlers.claude import handle_continue_session, handle_new_session
 from handlers.register import handle_register_request, handle_register_callback, handle_check_owner_id
+
+# 单次请求最大大小限制
+MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10MB
 
 # Action 到 HTML 响应的映射
 ACTION_HTML_RESPONSES = {
@@ -96,12 +100,12 @@ class CallbackHandler(BaseHTTPRequestHandler):
                     正在跳转到 VSCode...
                 </div>
                 <div class="vscode-fallback" id="vscodeFallback">
-                    <p>跳转失败？<a href="{vscode_uri}" class="vscode-link">点击手动打开 VSCode</a></p>
+                    <p>跳转失败？<a href="{html.escape(vscode_uri)}" class="vscode-link">点击手动打开 VSCode</a></p>
                     <p class="vscode-hint">首次使用需在 VSCode settings.json 中添加：<br><code>{setting_hint}</code></p>
                 </div>'''
             vscode_redirect_js = f'''
                 // VSCode 自动跳转
-                const vscodeUri = "{vscode_uri}";
+                const vscodeUri = {json.dumps(vscode_uri)};
                 const vscodeRedirect = document.getElementById('vscodeRedirect');
                 const vscodeFallback = document.getElementById('vscodeFallback');
 
@@ -121,13 +125,13 @@ class CallbackHandler(BaseHTTPRequestHandler):
                     }}, 2000);
                 }}, 500);'''
 
-        html = f'''
+        response_html = f'''
             <!DOCTYPE html>
             <html>
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>{title}</title>
+                <title>{html.escape(title)}</title>
                 <style>
                     body {{
                         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -214,8 +218,8 @@ class CallbackHandler(BaseHTTPRequestHandler):
             <body>
                 <div class="card">
                     <div class="icon">{icon}</div>
-                    <div class="title">{title}</div>
-                    <div class="message">{message}</div>
+                    <div class="title">{html.escape(title)}</div>
+                    <div class="message">{html.escape(message)}</div>
                     {vscode_redirect_html}
                     <div class="countdown" id="countdown">
                         页面将在 <span id="seconds">{close_timeout}</span> 秒后自动关闭
@@ -262,7 +266,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.end_headers()
-        self.wfile.write(html.encode('utf-8'))
+        self.wfile.write(response_html.encode('utf-8'))
 
     def _build_vscode_uri(self, request_id: str) -> str:
         """构建 VSCode URI
@@ -381,11 +385,15 @@ class CallbackHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         content_length = int(self.headers.get('Content-Length', 0))
-        if content_length == 0:
+
+        # 验证 Content-Length 范围
+        if content_length <= 0 or content_length > MAX_REQUEST_SIZE:
+            logger.warning(f"[POST] Invalid Content-Length: {content_length}")
             self.send_response(400)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({'error': 'Empty request body'}).encode())
+            error_msg = 'Empty request body' if content_length <= 0 else 'Request body too large'
+            self.wfile.write(json.dumps({'error': error_msg}).encode())
             return
 
         try:
@@ -433,7 +441,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         if path == '/get-chat-id':
             # 根据 session_id 获取对应的 chat_id（客户端调用）
             # 验证 auth_token
-            from handlers.register import ChatIdStore
+            from services.session_chat_store import SessionChatStore
 
             if not verify_global_auth_token(self, '/get-chat-id'):
                 return
@@ -446,7 +454,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({'chat_id': None}).encode())
                 return
 
-            store = ChatIdStore.get_instance()
+            store = SessionChatStore.get_instance()
             chat_id = ''
             if store:
                 chat_id = store.get(session_id) or ''
@@ -538,6 +546,9 @@ class CallbackHandler(BaseHTTPRequestHandler):
             # 默认起始路径为根目录
             if not request_path:
                 request_path = '/'
+
+            # 规范化路径（消除 .. 、符号链接等）
+            request_path = os.path.realpath(request_path)
 
             # 验证路径必须是绝对路径
             if not request_path.startswith('/'):

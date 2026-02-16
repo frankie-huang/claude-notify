@@ -8,6 +8,7 @@
 
 import json
 import os
+import tempfile
 import threading
 import time
 import logging
@@ -171,7 +172,7 @@ class BindingStore:
             return {}
 
     def _save(self, data: Dict[str, Any]) -> bool:
-        """保存绑定数据
+        """保存绑定数据（原子写入）
 
         Args:
             data: 绑定数据字典
@@ -180,9 +181,11 @@ class BindingStore:
             是否保存成功
         """
         try:
-            with open(self._file_path, 'w', encoding='utf-8') as f:
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=self._data_dir, suffix='.tmp')
+            with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, self._file_path)
             return True
-        except IOError as e:
+        except (IOError, OSError) as e:
             logger.error(f"[binding-store] Failed to save: {e}")
             return False

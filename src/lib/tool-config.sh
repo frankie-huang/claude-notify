@@ -97,7 +97,7 @@ tool_get_color() {
 
     if [ -z "$color" ]; then
         # 默认颜色
-        color=$(_tool_config_get "_defaults.unknown_tool.color")
+        color=$(_tool_config_get "_defaults.unknown_tool" "color")
         echo "${color:-grey}"
     else
         echo "$color"
@@ -134,7 +134,7 @@ tool_get_detail_template() {
 
     if [ -z "$template" ]; then
         # 默认模板
-        template=$(_tool_config_get "_defaults.unknown_tool.detail_template")
+        template=$(_tool_config_get "_defaults.unknown_tool" "detail_template")
     fi
 
     echo "$template"
@@ -155,7 +155,7 @@ tool_get_rule_template() {
 
     if [ -z "$template" ]; then
         # 默认模板
-        template=$(_tool_config_get "_defaults.unknown_tool.rule_template")
+        template=$(_tool_config_get "_defaults.unknown_tool" "rule_template")
     fi
 
     echo "$template"

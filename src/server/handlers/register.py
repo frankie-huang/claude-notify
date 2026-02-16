@@ -7,275 +7,28 @@
     - handle_authorization_decision(): 处理用户授权决策（允许/拒绝）
 
 Callback 后端使用：
-    - AuthTokenStore: 存储 auth_token 的单例类
     - handle_register_callback(): 接收网关的 auth_token 通知
     - handle_check_owner_id(): 验证 owner_id 所属权
+
+数据存储服务（从 services 导入）：
+    - AuthTokenStore: 存储 auth_token
 """
 
 import json
 import logging
 import os
 import socket
-import threading
 import time
-import urllib.request
 import urllib.error
 from typing import Tuple, Dict, Any, Optional
+
+from services.auth_token_store import AuthTokenStore
+from .utils import run_in_background as _run_in_background, post_json as _post_json
 
 logger = logging.getLogger(__name__)
 
 # HTTP 请求超时（秒）
 HTTP_TIMEOUT = 10
-
-
-class AuthTokenStore:
-    """管理 auth_token 的存储
-
-    用于存储网关注册后返回的 auth_token。
-    """
-
-    _instance = None  # type: Optional[AuthTokenStore]
-    _lock = threading.Lock()
-    _token = None  # type: Optional[str]
-
-    def __init__(self, data_dir: str):
-        """初始化 AuthTokenStore
-
-        Args:
-            data_dir: 数据存储目录
-        """
-        self._data_dir = data_dir
-        self._file_path = os.path.join(data_dir, 'auth_token.json')
-        self._file_lock = threading.Lock()
-        os.makedirs(data_dir, exist_ok=True)
-        logger.info(f"[auth-token-store] Initialized with data_dir={data_dir}")
-
-        # 启动时尝试加载已有的 token
-        self._load()
-
-    @classmethod
-    def initialize(cls, data_dir: str) -> 'AuthTokenStore':
-        """初始化单例实例
-
-        Args:
-            data_dir: 数据存储目录
-
-        Returns:
-            AuthTokenStore 实例
-        """
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = cls(data_dir)
-            return cls._instance
-
-    @classmethod
-    def get_instance(cls) -> Optional['AuthTokenStore']:
-        """获取单例实例
-
-        Returns:
-            AuthTokenStore 实例，未初始化返回 None
-        """
-        return cls._instance
-
-    def save(self, owner_id: str, auth_token: str) -> bool:
-        """保存 auth_token
-
-        Args:
-            owner_id: 飞书用户 ID
-            auth_token: 认证令牌
-
-        Returns:
-            是否保存成功
-        """
-        with self._file_lock:
-            try:
-                AuthTokenStore._token = auth_token
-                data = {
-                    'owner_id': owner_id,
-                    'auth_token': auth_token,
-                    'updated_at': int(time.time())
-                }
-                return self._save(data)
-            except Exception as e:
-                logger.error(f"[auth-token-store] Failed to save token: {e}")
-                return False
-
-    def get(self) -> str:
-        """获取存储的 auth_token
-
-        Returns:
-            存储的 auth_token，不存在返回空字符串
-        """
-        return AuthTokenStore._token or ''
-
-    def _load(self):
-        """从文件加载 token"""
-        if not os.path.exists(self._file_path):
-            return
-
-        try:
-            with open(self._file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                AuthTokenStore._token = data.get('auth_token', '')
-                if AuthTokenStore._token:
-                    logger.info(f"[auth-token-store] Loaded token from file")
-        except Exception as e:
-            logger.warning(f"[auth-token-store] Failed to load token: {e}")
-
-    def _save(self, data: Dict[str, Any]) -> bool:
-        """保存数据到文件
-
-        Args:
-            data: 数据字典
-
-        Returns:
-            是否保存成功
-        """
-        try:
-            with open(self._file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            return True
-        except IOError as e:
-            logger.error(f"[auth-token-store] Failed to save: {e}")
-            return False
-
-
-class ChatIdStore:
-    """管理 session_id -> chat_id 的存储
-
-    Callback 后端使用此服务维护会话与群聊的映射关系，
-    用于确定消息发送的目标群聊。
-    """
-
-    _instance = None  # type: Optional[ChatIdStore]
-    _lock = threading.Lock()
-
-    # 过期时间（秒），默认 7 天
-    EXPIRE_SECONDS = 7 * 24 * 3600
-
-    def __init__(self, data_dir: str):
-        """初始化 ChatIdStore
-
-        Args:
-            data_dir: 数据存储目录
-        """
-        self._data_dir = data_dir
-        self._file_path = os.path.join(data_dir, 'session_chats.json')
-        self._file_lock = threading.Lock()
-        os.makedirs(data_dir, exist_ok=True)
-        logger.info(f"[chat-id-store] Initialized with data_dir={data_dir}")
-
-    @classmethod
-    def initialize(cls, data_dir: str) -> 'ChatIdStore':
-        """初始化单例实例
-
-        Args:
-            data_dir: 数据存储目录
-
-        Returns:
-            ChatIdStore 实例
-        """
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = cls(data_dir)
-            return cls._instance
-
-    @classmethod
-    def get_instance(cls) -> Optional['ChatIdStore']:
-        """获取单例实例
-
-        Returns:
-            ChatIdStore 实例，未初始化返回 None
-        """
-        return cls._instance
-
-    def save(self, session_id: str, chat_id: str) -> bool:
-        """保存 session_id -> chat_id 映射
-
-        Args:
-            session_id: Claude 会话 ID
-            chat_id: 飞书群聊 ID
-
-        Returns:
-            是否保存成功
-        """
-        with self._file_lock:
-            try:
-                data = self._load()
-                data[session_id] = {
-                    'chat_id': chat_id,
-                    'updated_at': int(time.time())
-                }
-                result = self._save(data)
-                if result:
-                    logger.info(f"[chat-id-store] Saved mapping: {session_id} -> {chat_id}")
-                return result
-            except Exception as e:
-                logger.error(f"[chat-id-store] Failed to save mapping: {e}")
-                return False
-
-    def get(self, session_id: str) -> Optional[str]:
-        """获取 session_id 对应的 chat_id
-
-        Args:
-            session_id: Claude 会话 ID
-
-        Returns:
-            群聊 chat_id，不存在或已过期返回 None
-        """
-        with self._file_lock:
-            try:
-                data = self._load()
-                item = data.get(session_id)
-                if not item:
-                    return None
-
-                # 检查过期
-                if time.time() - item.get('updated_at', 0) > self.EXPIRE_SECONDS:
-                    logger.info(f"[chat-id-store] Mapping expired: {session_id}")
-                    del data[session_id]
-                    self._save(data)
-                    return None
-
-                return item.get('chat_id')
-            except Exception as e:
-                logger.error(f"[chat-id-store] Failed to get mapping: {e}")
-                return None
-
-    def _load(self) -> Dict[str, Any]:
-        """加载映射数据
-
-        Returns:
-            映射数据字典
-        """
-        if not os.path.exists(self._file_path):
-            return {}
-        try:
-            with open(self._file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            logger.warning(f"[chat-id-store] Invalid JSON in {self._file_path}, starting fresh")
-            return {}
-        except IOError as e:
-            logger.error(f"[chat-id-store] Failed to load: {e}")
-            return {}
-
-    def _save(self, data: Dict[str, Any]) -> bool:
-        """保存映射数据
-
-        Args:
-            data: 映射数据字典
-
-        Returns:
-            是否保存成功
-        """
-        try:
-            with open(self._file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            return True
-        except IOError as e:
-            logger.error(f"[chat-id-store] Failed to save: {e}")
-            return False
 
 
 def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict]:
@@ -505,21 +258,10 @@ def _check_owner_id(callback_url: str, owner_id: str) -> bool:
     logger.info(f"[register] Checking owner_id: {api_url}")
 
     try:
-        req = urllib.request.Request(
-            api_url,
-            data=json.dumps(request_data).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST'
-        )
-
-        # 创建无代理的 opener
-        no_proxy_handler = urllib.request.ProxyHandler({})
-        opener = urllib.request.build_opener(no_proxy_handler)
-        with opener.open(req, timeout=HTTP_TIMEOUT) as response:
-            response_data = json.loads(response.read().decode('utf-8'))
-            is_owner = response_data.get('is_owner', False)
-            logger.info(f"[register] Owner check result: {is_owner}")
-            return is_owner
+        response_data = _post_json(api_url, request_data, timeout=HTTP_TIMEOUT)
+        is_owner = response_data.get('is_owner', False)
+        logger.info(f"[register] Owner check result: {is_owner}")
+        return is_owner
 
     except urllib.error.HTTPError as e:
         logger.error(f"[register] Owner check HTTP error: {e.code} {e.reason}")
@@ -555,22 +297,8 @@ def _notify_callback(callback_url: str, owner_id: str, auth_token: str, client_i
     logger.info(f"[register] Calling {api_url}")
 
     try:
-        req = urllib.request.Request(
-            api_url,
-            data=json.dumps(request_data).encode('utf-8'),
-            headers={
-                'Content-Type': 'application/json',
-                'X-Auth-Token': auth_token
-            },
-            method='POST'
-        )
-
-        # 创建无代理的 opener
-        no_proxy_handler = urllib.request.ProxyHandler({})
-        opener = urllib.request.build_opener(no_proxy_handler)
-        with opener.open(req, timeout=HTTP_TIMEOUT) as response:
-            response_data = json.loads(response.read().decode('utf-8'))
-            logger.info(f"[register] Callback response: {response_data}")
+        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=HTTP_TIMEOUT)
+        logger.info(f"[register] Callback response: {response_data}")
 
     except urllib.error.HTTPError as e:
         logger.error(f"[register] Callback HTTP error: {e.code} {e.reason}")
@@ -954,14 +682,3 @@ def handle_register_unbind(callback_url: str, owner_id: str) -> Dict[str, Any]:
             template='grey'
         )
     }
-
-
-def _run_in_background(func, args=()):
-    """在后台线程中执行函数
-
-    Args:
-        func: 要执行的函数
-        args: 位置参数元组
-    """
-    thread = threading.Thread(target=func, args=args, daemon=True)
-    thread.start()
