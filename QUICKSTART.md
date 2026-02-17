@@ -55,7 +55,7 @@ cd hooks
 >     "PermissionRequest": [
 >       {
 >         "matcher": "",
->         "hooks": [{ "type": "command", "command": "/path/to/hooks/src/hook-router.sh", "timeout": 360 }]
+>         "hooks": [{ "type": "command", "command": "/path/to/hooks/src/hook-router.sh", "timeout": 660 }]
 >       }
 >     ],
 >     "Stop": [
@@ -149,11 +149,18 @@ curl -s http://localhost:8080/status                              # 确认服务
 
 **1. 创建飞书应用**
 
-访问 [飞书开放平台](https://open.feishu.cn)，创建「企业自建应用」，记录 `App ID` 和 `App Secret`。
+前往 [飞书开放平台](https://open.feishu.cn/app)，创建「企业自建应用」。
 
-**2. 开启机器人能力**
+**2. 配置事件与回调**
 
-在「应用功能」→「机器人」中启用机器人能力。
+在「事件与回调」中，**事件配置**和**回调配置**都需要填写订阅方式，请求地址填写 `CALLBACK_SERVER_URL` 的值：
+
+- **事件配置**：添加「接收消息」（`im.message.receive_v1`）事件，并确认以下权限：
+  - 读取用户发给机器人的单聊消息（添加事件后默认开通）
+  - 接收群聊中 @机器人消息事件（**需手动点击开通权限**，否则无法接收群聊中 at 机器人的消息）
+- **回调配置**：添加「卡片回传交互」（`card.action.trigger`）回调
+
+> 中间如果提示「尚未开启机器人功能」，点击开启即可。
 
 **3. 配置权限**
 
@@ -161,26 +168,25 @@ curl -s http://localhost:8080/status                              # 确认服务
 
 | 权限名称 | 权限代码 |
 |----------|----------|
-| 获取用户基本信息 | `contact:user.base:readonly` |
-| 发送消息 | `im:message` |
-| 接收消息 | `im:message:receive_as_bot` |
+| 以应用的身份发消息 | `im:message:send_as_bot` |
+| 获取用户 user ID | `contact:user.employee_id:readonly` |
 
-**4. 配置事件订阅**
+> 权限可访问的数据范围：与应用的可用范围一致即可。
 
-在「事件订阅」中：
+**4. 创建版本并发布**
 
-- **请求地址**：`http://your-server:8080/feishu/event`（需飞书能访问）
-- **订阅事件**：
-  - `card.action.trigger` — 卡片按钮点击
-  - `im.message.receive_v1` — 接收消息（回复继续会话）
+完成权限配置后，前往「版本管理与发布」，填写版本号和更新说明，发布应用。
+
+> 以上权限默认免审批。如果要开放给多人使用，需在「可用范围」中添加，会触发审批流程。
 
 **5. 获取凭证**
 
-在「加密与签名」中启用事件订阅验证，记录 `Verification Token`。
+- `App ID` 和 `App Secret`：在「凭证与基础信息」中获取
+- `Verification Token`：在「事件与回调」→「加密策略」中获取
 
 **6. 获取 OWNER_ID**
 
-`FEISHU_OWNER_ID` 是消息接收者的飞书 user_id（纯数字或字母数字组合）。可通过飞书开放平台「用户管理」查看，或发送消息给机器人后从日志中获取。
+`FEISHU_OWNER_ID` 是消息接收者的飞书 user_id。获取方式参考 [如何获取 User ID](https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-user-id)，也可以通过飞书开放平台的 [获取单个用户信息](https://open.feishu.cn/document/server-docs/contact-v3/user/get) 接口在线调试获取。
 
 ### 配置
 

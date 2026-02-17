@@ -248,55 +248,47 @@ FEISHU_OWNER_ID=ou_user_a  # 此实例的消息接收者
 
 ### 1. 创建应用
 
-1. 访问 [飞书开放平台](https://open.feishu.cn/)
+1. 访问 [飞书开放平台](https://open.feishu.cn/app)
 2. 点击「创建企业自建应用」
 3. 填写应用名称和描述
-4. 记录 `App ID` 和 `App Secret`
 
-### 2. 配置权限
+### 2. 配置事件与回调
+
+在「事件与回调」中，**事件配置**和**回调配置**都需要填写订阅方式，请求地址填写 `CALLBACK_SERVER_URL` 的值：
+
+**事件配置**：添加「接收消息」（`im.message.receive_v1`）事件，并确认以下权限：
+- 读取用户发给机器人的单聊消息（添加事件后默认开通）
+- 接收群聊中 @机器人消息事件（**需手动点击开通权限**，否则无法接收群聊中 at 机器人的消息）
+
+**回调配置**：添加「卡片回传交互」（`card.action.trigger`）回调
+
+> 中间如果提示「尚未开启机器人功能」，点击开启即可。
+
+### 3. 配置权限
 
 在「权限管理」中开通以下权限：
 
-| 权限名称 | 权限代码 | 说明 | 必需 |
-|----------|----------|------|:----:|
-| 获取用户基本信息 | `contact:user.base:readonly` | 获取用户信息 | ✓ |
-| 获取用户统一 ID | `contact:user.union_id:readonly` | 获取用户 union_id | |
-| 发送消息 | `im:message` | 发送飞书消息 | ✓ |
-| 接收消息 | `im:message:receive_as_bot` | 接收飞书事件 | ✓ |
+| 权限名称 | 权限代码 |
+|----------|----------|
+| 以应用的身份发消息 | `im:message:send_as_bot` |
+| 获取用户 user ID | `contact:user.employee_id:readonly` |
 
-### 3. 配置事件订阅
+> 权限可访问的数据范围：与应用的可用范围一致即可。
 
-在「事件订阅」中配置：
+### 4. 创建版本并发布
 
-**请求地址**：
-- 单机部署：`http://your-server:8080/feishu/event`
-- 分离部署：`http://gateway-server:8080/feishu/event`
+完成权限配置后，前往「版本管理与发布」，填写版本号和更新说明，发布应用。
 
-**订阅事件**：
+> 以上权限默认免审批。如果要开放给多人使用，需在「可用范围」中添加，会触发审批流程。
 
-| 事件类型 | 说明 | 必需 |
-|----------|------|:----:|
-| `card.action.trigger` | 卡片按钮点击事件 | ✓ |
-| `im.message.receive_v1` | 接收消息事件（回复继续会话） | ✓ |
+### 5. 获取凭证
 
-### 4. 配置加密与签名
+- `App ID` 和 `App Secret`：在「凭证与基础信息」中获取
+- `Verification Token`：在「事件与回调」→「加密策略」中获取
 
-在「加密与签名」中：
-1. 启用「事件订阅验证」
-2. 记录「验证 Token」（用于 `FEISHU_VERIFICATION_TOKEN`）
-3. 可选：配置「加密 Key」
+### 6. 获取 OWNER_ID
 
-### 5. 发布版本
-
-1. 配置完成后点击「创建版本」
-2. 申请发布到生产环境
-3. 等待管理员审批
-
-### 6. 配置可用范围
-
-在「应用发布」→「可用范围」中：
-- **全员可访问**：所有企业成员可见
-- **指定部门/成员**：仅指定人员可见（推荐生产环境）
+`FEISHU_OWNER_ID` 是消息接收者的飞书 user_id。获取方式参考 [如何获取 User ID](https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-user-id)，也可以通过飞书开放平台的 [获取单个用户信息](https://open.feishu.cn/document/server-docs/contact-v3/user/get) 接口在线调试获取。
 
 ---
 

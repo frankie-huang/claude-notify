@@ -342,15 +342,29 @@ def _send_authorization_card(
             f"**旧设备**: `{old_callback_url}`\n"
             f"**新设备**: `{callback_url}`\n"
             f"**来源 IP**: `{client_ip}`\n\n"
+            f"**授权后该后端将获得以下权限：**\n"
+            f"• 接收你发送给机器人的所有消息\n"
+            f"• 向你发送消息通知（如权限请求、任务状态等）\n\n"
+            f"**安全风险提示：**\n"
+            f"• 后端可读取你的对话内容\n"
+            f"• 后端可主动向你推送消息\n"
+            f"• 请确认该后端来源可信后再授权\n\n"
             f"是否允许更换到新设备？"
         )
     else:
         # 新设备注册场景
         title = "新的 Callback 后端注册请求"
         content = (
-            f"**来源 IP**: `{client_ip}`\n"
-            f"**Callback URL**: `{callback_url}`\n\n"
-            f"是否允许该后端接收你的飞书消息？"
+            f"**Callback URL**: `{callback_url}`\n"
+            f"**来源 IP**: `{client_ip}`\n\n"
+            f"**授权后该后端将获得以下权限：**\n"
+            f"• 接收你发送给机器人的所有消息\n"
+            f"• 向你发送消息通知（如权限请求、任务状态等）\n\n"
+            f"**安全风险提示：**\n"
+            f"• 后端可读取你的对话内容\n"
+            f"• 后端可主动向你推送消息\n"
+            f"• 请确认该后端来源可信后再授权\n\n"
+            f"是否允许该后端绑定？"
         )
 
     # 构建授权卡片
@@ -578,7 +592,10 @@ def handle_authorization_decision(
         content = (
             f"**Callback URL**: `{callback_url}`\n"
             f"**来源 IP**: `{client_ip}`\n\n"
-            f"已成功授权该后端接收你的飞书消息"
+            f"**已授权权限：**\n"
+            f"• 接收你发送给机器人的所有消息\n"
+            f"• 向你发送消息通知\n\n"
+            f"已成功授权该后端"
         )
         return {
             'toast': {
@@ -678,7 +695,12 @@ def handle_register_unbind(callback_url: str, owner_id: str) -> Dict[str, Any]:
         },
         'card': _build_register_status_card(
             title='✗ 已解绑',
-            content=f"**Callback URL**: `{callback_url}`\n\n已解除该后端的绑定，将不再接收飞书消息",
+            content=(
+                f"**Callback URL**: `{callback_url}`\n\n"
+                f"已解除绑定，该后端将：\n"
+                f"• 无法再接收你的消息\n"
+                f"• 无法再向你发送通知"
+            ),
             template='grey'
         )
     }

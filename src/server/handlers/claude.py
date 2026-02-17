@@ -113,18 +113,24 @@ def handle_continue_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]
         store = SessionChatStore.get_instance()
         if store:
             store.save(session_id, chat_id, claude_command=actual_cmd)
+            logger.info(f"[claude-continue] Saved chat_id mapping: {session_id} -> {chat_id}")
 
     # 同步执行并检查（使用 resume 模式）
     result = _execute_and_check(session_id, project_dir, prompt, chat_id,
                                 session_mode='resume', claude_command=actual_cmd)
 
-    # 记录目录使用历史（仅在会话成功启动时）
-    if Response.is_processing(result):
-        from services.dir_history_store import DirHistoryStore
-        store = DirHistoryStore.get_instance()
-        if store:
-            store.record_usage(project_dir)
-            logger.info(f"[claude-continue] Recorded dir usage: {project_dir}")
+    # 添加 session_id 到响应
+    if result[0]:  # success
+        response = result[1]
+        response['session_id'] = session_id
+
+        # 记录目录使用历史（仅在会话成功启动时）
+        if Response.is_processing(result):
+            from services.dir_history_store import DirHistoryStore
+            store = DirHistoryStore.get_instance()
+            if store:
+                store.record_usage(project_dir)
+                logger.info(f"[claude-continue] Recorded dir usage: {project_dir}")
 
     return result
 
@@ -383,5 +389,4 @@ def handle_new_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
                 store.record_usage(project_dir)
                 logger.info(f"[claude-new] Recorded dir usage: {project_dir}")
 
-        return result
     return result

@@ -87,6 +87,10 @@ class ToolConfig:
         """
         field_value = tool_input.get(self.input_field, "")
 
+        # 空值时使用 * 作为通配符
+        if not field_value:
+            field_value = "*"
+
         result = self.rule_template
         result = result.replace(f"{{{self.input_field}}}", str(field_value))
         result = result.replace("{tool_name}", self.name)
@@ -209,6 +213,15 @@ class ToolConfigManager:
                 "detail_template": "{url}",
                 "limit_length": 200,
                 "rule_template": "WebFetch({url})"
+            },
+            "Skill": {
+                "name": "Skill",
+                "display_name": "技能调用",
+                "color": "green",
+                "icon": "skill",
+                "input_field": "skill",
+                "detail_template": "",
+                "rule_template": "Skill({skill})"
             }
         }
 

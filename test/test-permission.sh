@@ -89,6 +89,9 @@ generate_input_json() {
         read) tool_name="Read" ;;
         glob) tool_name="Glob" ;;
         grep) tool_name="Grep" ;;
+        ask) tool_name="AskUserQuestion" ;;
+        askuserquestion) tool_name="AskUserQuestion" ;;
+        skill) tool_name="Skill" ;;
     esac
 
     local tool_use_id=$(generate_tool_use_id)
@@ -122,6 +125,62 @@ generate_input_json() {
             ;;
         Read)
             tool_input="    \"file_path\": \"$escaped_command\""
+            ;;
+        AskUserQuestion)
+            # AskUserQuestion 测试：使用内置示例或用户指定的问题
+            if [ -n "$COMMAND" ]; then
+                # 用户指定了一个问题，构建单个问题
+                tool_input="    \"questions\": [
+        {
+          \"question\": \"$escaped_command\",
+          \"header\": \"选择\",
+          \"options\": [
+            {\"label\": \"选项A\", \"description\": \"第一个选项\"},
+            {\"label\": \"选项B\", \"description\": \"第二个选项\"}
+          ],
+          \"multiSelect\": false
+        }
+      ]"
+            else
+                # 使用默认的多问题示例
+                tool_input="    \"questions\": [
+        {
+          \"question\": \"请选择要使用的数据库类型?\",
+          \"header\": \"数据库\",
+          \"options\": [
+            {\"label\": \"PostgreSQL\", \"description\": \"关系型数据库\"},
+            {\"label\": \"MongoDB\", \"description\": \"文档数据库\"}
+          ],
+          \"multiSelect\": false
+        },
+        {
+          \"question\": \"需要启用缓存吗?\",
+          \"header\": \"缓存\",
+          \"options\": [
+            {\"label\": \"是\", \"description\": \"启用 Redis 缓存\"},
+            {\"label\": \"否\", \"description\": \"不使用缓存\"}
+          ],
+          \"multiSelect\": false
+        }
+      ]"
+            fi
+            ;;
+        Skill)
+            # Skill 测试：使用内置示例或用户指定的 skill 名称
+            # Skill JSON 格式: { "skill": "skill_name", "args": "optional args" }
+            if [ -n "$command" ] && [ "$command" != "echo 'Hello, World!'" ]; then
+                # 用户指定了 skill 名称
+                if [ -n "$content" ]; then
+                    tool_input="    \"skill\": \"$escaped_command\",
+    \"args\": \"$escaped_content\""
+                else
+                    tool_input="    \"skill\": \"$escaped_command\""
+                fi
+            else
+                # 使用默认示例
+                tool_input="    \"skill\": \"commit\",
+    \"args\": \"-m 'test commit'\""
+            fi
             ;;
         *)
             tool_input="    \"prompt\": \"$escaped_command\""
@@ -160,6 +219,8 @@ ${YELLOW}支持的工具类型:${NC}
   read    - 文件读取
   glob    - 文件模式匹配
   grep    - 内容搜索
+  ask     - AskUserQuestion 用户提问
+  skill   - Skill 技能调用
 
 ${YELLOW}示例:${NC}
   $0                                    # 默认 Bash 测试
@@ -168,6 +229,10 @@ ${YELLOW}示例:${NC}
   $0 edit "/etc/hosts"                 # 编辑系统文件测试
   $0 write "/tmp/test.txt" "测试内容"   # 写入文件测试
   $0 read "/etc/passwd"                # 读取敏感文件测试
+  $0 ask                               # AskUserQuestion 默认测试（多问题）
+  $0 ask "你喜欢哪种编程语言?"          # AskUserQuestion 单问题测试
+  $0 skill                             # Skill 默认测试（commit）
+  $0 skill "commit" "-m 'test'"        # Skill 带参数测试
 
 ${YELLOW}环境变量:${NC}
   CLAUDE_PROJECT_DIR    - 项目目录 (默认: 当前目录)

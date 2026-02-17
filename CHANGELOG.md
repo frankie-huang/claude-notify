@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed - 2026-02-16
+
+#### 配置项重命名与默认值调整 (config-rename-and-defaults)
+
+- 重命名配置项，提升语义清晰度：
+  - `REQUEST_TIMEOUT` → `PERMISSION_REQUEST_TIMEOUT`
+  - `CLOSE_PAGE_TIMEOUT` → `CALLBACK_PAGE_CLOSE_DELAY`
+- 调整默认值：
+  - `PERMISSION_REQUEST_TIMEOUT`: 300s → 600s（10 分钟）
+  - Hook timeout: 360s → 660s（匹配服务端超时 + 60s 缓冲）
+- 重组 `.env.example` 配置分类，新增配置速查表
+- 同步更新 `install.sh`、`README.md`、`QUICKSTART.md` 等文档
+
 ### Added - 2026-01-31
 
 #### 飞书卡片回传交互 (card-callback-handler)
@@ -190,7 +203,7 @@ All notable changes to this project will be documented in this file.
   - 客户端等待服务器主动关闭连接
 
 - **服务器端可配置超时**:
-  - 新增 `REQUEST_TIMEOUT` 环境变量（默认: 300 秒）
+  - 新增 `PERMISSION_REQUEST_TIMEOUT` 环境变量（默认: 300 秒）
   - 设为 0 可完全禁用超时清理
   - 清理线程定期检查并关闭超时的 pending 请求
   - 超时后主动关闭 socket 连接，客户端收到后返回 deny
@@ -248,7 +261,7 @@ Claude Code
 - `CALLBACK_SERVER_URL` - 回调服务外部访问地址（默认: http://localhost:8080）
 - `CALLBACK_SERVER_PORT` - HTTP 服务端口（默认: 8080）
 - `PERMISSION_SOCKET_PATH` - Unix Socket 路径（默认: /tmp/claude-permission.sock）
-- `REQUEST_TIMEOUT` - 服务器端超时秒数（默认: 300，设为 0 禁用）
+- `PERMISSION_REQUEST_TIMEOUT` - 服务器端超时秒数（默认: 600，设为 0 禁用）
 
 **依赖**:
 - 可交互模式: socat, python3, curl

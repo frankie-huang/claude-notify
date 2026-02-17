@@ -25,7 +25,7 @@ import json
 import logging
 import time
 
-from config import REQUEST_TIMEOUT, CLIENT_TIMEOUT, CLIENT_TIMEOUT_BUFFER
+from config import PERMISSION_REQUEST_TIMEOUT, CLIENT_TIMEOUT, CLIENT_TIMEOUT_BUFFER
 
 # 日志配置（按日期切分）
 # 从 src/server/socket_client.py 向上两级到 src，再向上到项目根目录
@@ -46,7 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 logger.info(f"Logging to: {log_file}")
-logger.info(f"Client timeout: {CLIENT_TIMEOUT}s (server: {REQUEST_TIMEOUT}s + buffer: {CLIENT_TIMEOUT_BUFFER}s)")
+logger.info(f"Client timeout: {CLIENT_TIMEOUT}s (server: {PERMISSION_REQUEST_TIMEOUT}s + buffer: {CLIENT_TIMEOUT_BUFFER}s)")
 
 
 def main():

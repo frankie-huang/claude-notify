@@ -14,7 +14,7 @@ from urllib.parse import urlparse, parse_qs
 from services.request_manager import RequestManager
 from services.decision_handler import handle_decision
 from services.auth_token import verify_global_auth_token, verify_owner_based_auth_token
-from config import CLOSE_PAGE_TIMEOUT, VSCODE_URI_PREFIX
+from config import CALLBACK_PAGE_CLOSE_DELAY, VSCODE_URI_PREFIX
 from handlers.feishu import handle_feishu_request, handle_send_message
 from handlers.claude import handle_continue_session, handle_new_session
 from handlers.register import handle_register_request, handle_register_callback, handle_check_owner_id
@@ -65,6 +65,26 @@ class CallbackHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         logger.info(f"{self.address_string()} - {format % args}")
 
+    def get_client_ip(self) -> str:
+        """获取真实客户端 IP
+
+        优先从 X-Forwarded-For header 获取，格式为 "client, proxy1, proxy2"，
+        取第一个 IP。如果没有该 header，则使用 socket 连接地址。
+
+        Returns:
+            客户端 IP 地址
+        """
+        # 优先检查 X-Forwarded-For header
+        forwarded_for = self.headers.get('X-Forwarded-For', '')
+        if forwarded_for:
+            # 格式: "client, proxy1, proxy2"，取第一个（真实客户端）
+            client_ip = forwarded_for.split(',')[0].strip()
+            if client_ip:
+                return client_ip
+
+        # 回退到 socket 连接地址
+        return self.client_address[0] if self.client_address else ''
+
     def send_html_response(self, status: int, title: str, message: str,
                            success: bool = True, close_timeout: int = None,
                            vscode_uri: str = None):
@@ -75,11 +95,11 @@ class CallbackHandler(BaseHTTPRequestHandler):
             title: 页面标题
             message: 显示消息
             success: 是否成功
-            close_timeout: 自动关闭页面超时时间（秒），默认从环境变量 CLOSE_PAGE_TIMEOUT 读取
+            close_timeout: 自动关闭页面超时时间（秒），默认从环境变量 CALLBACK_PAGE_CLOSE_DELAY 读取
             vscode_uri: VSCode URI，配置后会自动跳转到 VSCode
         """
         if close_timeout is None:
-            close_timeout = CLOSE_PAGE_TIMEOUT
+            close_timeout = CALLBACK_PAGE_CLOSE_DELAY
         color = '#28a745' if success else '#dc3545'
         icon = '✓' if success else '✗'
 
@@ -410,7 +430,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         # 路由分发
         if path == '/register':
             # 网关注册接口（Callback 后端调用）
-            client_ip = self.client_address[0] if self.client_address else ''
+            client_ip = self.get_client_ip()
             handled, response = handle_register_request(data, client_ip)
             status = 200 if response.get('success') else 400
             self.send_response(status)

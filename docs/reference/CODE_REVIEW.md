@@ -183,7 +183,7 @@ color=$(_tool_config_get "_defaults.unknown_tool.color")
 
 **文件**: `src/server/config.py:224-278`
 
-`REQUEST_TIMEOUT`、`FEISHU_APP_ID` 等在模块加载时已固化，调用 `reload_config()` 后其他模块通过 `from config import REQUEST_TIMEOUT` 获取的仍是旧值。
+`PERMISSION_REQUEST_TIMEOUT`、`FEISHU_APP_ID` 等在模块加载时已固化，调用 `reload_config()` 后其他模块通过 `from config import PERMISSION_REQUEST_TIMEOUT` 获取的仍是旧值。
 
 **说明**: `reload_config()` 当前无调用者，不存在实际风险。已在函数注释中说明此限制。
 

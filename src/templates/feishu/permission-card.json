@@ -100,7 +100,7 @@
           "tag": "div",
           "text": {
             "tag": "plain_text",
-            "content": "请尽快操作以避免 Claude 超时等待",
+            "content": "{{footer_hint}}",
             "text_size": "notation",
             "text_align": "left",
             "text_color": "grey"

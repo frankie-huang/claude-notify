@@ -14,9 +14,9 @@ from typing import Optional, List, Tuple
 # =============================================================================
 # 默认配置值
 # =============================================================================
-DEFAULT_REQUEST_TIMEOUT = 300      # 默认 5 分钟
-CLIENT_TIMEOUT_BUFFER = 30         # 客户端额外缓冲 30 秒
-DEFAULT_CLOSE_PAGE_TIMEOUT = 3     # 默认 3 秒
+DEFAULT_PERMISSION_REQUEST_TIMEOUT = 600  # 默认 10 分钟
+CLIENT_TIMEOUT_BUFFER = 30                # 客户端额外缓冲 30 秒
+DEFAULT_CALLBACK_PAGE_CLOSE_DELAY = 3     # 默认 3 秒
 DEFAULT_SOCKET_PATH = '/tmp/claude-permission.sock'
 DEFAULT_HTTP_PORT = '8080'
 
@@ -118,20 +118,20 @@ def get_config_int(key: str, default: int) -> int:
 def get_request_timeout() -> int:
     """获取请求超时时间
 
-    配置项: REQUEST_TIMEOUT（秒）
+    配置项: PERMISSION_REQUEST_TIMEOUT（秒）
     - 必须为正整数
     - 0 或无效值会使用默认值
 
     Returns:
         超时秒数
     """
-    return get_config_int('REQUEST_TIMEOUT', DEFAULT_REQUEST_TIMEOUT)
+    return get_config_int('PERMISSION_REQUEST_TIMEOUT', DEFAULT_PERMISSION_REQUEST_TIMEOUT)
 
 
 def get_close_page_timeout() -> int:
     """获取回调页面自动关闭超时时间
 
-    配置项: CLOSE_PAGE_TIMEOUT（秒）
+    配置项: CALLBACK_PAGE_CLOSE_DELAY（秒）
     - 必须为正整数
     - 0 或无效值会使用默认值（3秒）
     - 建议范围：1-10 秒
@@ -139,7 +139,7 @@ def get_close_page_timeout() -> int:
     Returns:
         超时秒数
     """
-    return get_config_int('CLOSE_PAGE_TIMEOUT', DEFAULT_CLOSE_PAGE_TIMEOUT)
+    return get_config_int('CALLBACK_PAGE_CLOSE_DELAY', DEFAULT_CALLBACK_PAGE_CLOSE_DELAY)
 
 
 def get_claude_commands():
@@ -226,7 +226,7 @@ def reload_config():
 
     当 .env 文件内容变化后调用此函数刷新缓存。
     注意：此函数仅刷新内部缓存，不会更新模块级导出变量
-    （如 REQUEST_TIMEOUT、FEISHU_APP_ID 等）。其他模块通过
+    （如 PERMISSION_REQUEST_TIMEOUT、FEISHU_APP_ID 等）。其他模块通过
     from config import XXX 获取的值仍为模块首次加载时的旧值。
     如需获取最新值，应直接调用 get_config()。
     """
@@ -240,13 +240,13 @@ def reload_config():
 # =============================================================================
 
 # 服务端超时（用于清理断开连接）
-REQUEST_TIMEOUT = get_request_timeout()
+PERMISSION_REQUEST_TIMEOUT = get_request_timeout()
 
 # 客户端超时（比服务端大，确保服务端先触发超时）
-CLIENT_TIMEOUT = REQUEST_TIMEOUT + CLIENT_TIMEOUT_BUFFER
+CLIENT_TIMEOUT = PERMISSION_REQUEST_TIMEOUT + CLIENT_TIMEOUT_BUFFER
 
 # 回调页面关闭超时
-CLOSE_PAGE_TIMEOUT = get_close_page_timeout()
+CALLBACK_PAGE_CLOSE_DELAY = get_close_page_timeout()
 
 # VSCode URI 前缀（可选，用于从浏览器页面跳转到 VSCode）
 # 示例: vscode://vscode-remote/ssh-remote+myserver 或 vscode://file

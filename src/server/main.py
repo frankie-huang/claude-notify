@@ -26,7 +26,7 @@ import time
 import logging
 
 from config import (
-    REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT,
+    PERMISSION_REQUEST_TIMEOUT, DEFAULT_PERMISSION_REQUEST_TIMEOUT,
     get_config, get_config_int,
     DEFAULT_SOCKET_PATH, DEFAULT_HTTP_PORT,
     FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_SEND_MODE,
@@ -312,11 +312,11 @@ def main():
     logger.info("Starting Claude Code Permission Callback Server")
     logger.info(f"HTTP Port: {HTTP_PORT}")
     logger.info(f"Socket Path: {SOCKET_PATH}")
-    env_timeout = os.environ.get('REQUEST_TIMEOUT', '')
+    env_timeout = os.environ.get('PERMISSION_REQUEST_TIMEOUT', '')
     if env_timeout:
-        logger.info(f"Request Timeout: {REQUEST_TIMEOUT}s (from env: REQUEST_TIMEOUT={env_timeout})")
+        logger.info(f"Request Timeout: {PERMISSION_REQUEST_TIMEOUT}s (from env: PERMISSION_REQUEST_TIMEOUT={env_timeout})")
     else:
-        logger.info(f"Request Timeout: {REQUEST_TIMEOUT}s (default: {DEFAULT_REQUEST_TIMEOUT}s)")
+        logger.info(f"Request Timeout: {PERMISSION_REQUEST_TIMEOUT}s (default: {DEFAULT_PERMISSION_REQUEST_TIMEOUT}s)")
 
     if not FEISHU_WEBHOOK_URL:
         logger.warning("FEISHU_WEBHOOK_URL not set - webhook notifications will be skipped")

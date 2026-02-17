@@ -94,6 +94,26 @@
       "input_field": "url",
       "detail_template": "{url}",
       "rule_template": "mcp__web_reader__webReader"
+    },
+    "AskUserQuestion": {
+      "name": "AskUserQuestion",
+      "display_name": "用户提问",
+      "color": "blue",
+      "icon": "question",
+      "input_field": "questions",
+      "detail_template": "",
+      "rule_template": "AskUserQuestion",
+      "custom_format": true
+    },
+    "Skill": {
+      "name": "Skill",
+      "display_name": "技能调用",
+      "color": "green",
+      "icon": "skill",
+      "input_field": "skill",
+      "detail_template": "",
+      "rule_template": "Skill({skill})",
+      "custom_format": true
     }
   },
   "_defaults": {

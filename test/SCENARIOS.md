@@ -47,7 +47,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `CALLBACK_SERVER_URL` | `http://localhost:8080` | 回调服务外部访问地址 |
 | `CALLBACK_SERVER_PORT` | `8080` | 回调服务 HTTP 端口 |
 | `PERMISSION_SOCKET_PATH` | `/tmp/claude-permission.sock` | Unix Socket 路径 |
-| `REQUEST_TIMEOUT` | `300` | 服务器端超时秒数（0=禁用） |
+| `PERMISSION_REQUEST_TIMEOUT` | `600` | 服务器端超时秒数（0=禁用） |
 
 ---
 
@@ -155,13 +155,13 @@ tail -30 log/callback_$(date +%Y%m%d).log
 
 ---
 
-### 场景 3: 服务端超时（REQUEST_TIMEOUT=300s），用户在超时前操作
+### 场景 3: 服务端超时（PERMISSION_REQUEST_TIMEOUT=300s），用户在超时前操作
 
 #### 测试步骤
 
 1. 设置默认超时（或确认使用默认值 300s）：
 ```bash
-export REQUEST_TIMEOUT=300
+export PERMISSION_REQUEST_TIMEOUT=300
 ./src/start-server.sh restart
 ```
 
@@ -189,13 +189,13 @@ grep "Request.*resolved" log/callback_$(date +%Y%m%d).log
 
 ---
 
-### 场景 4: 服务端超时（REQUEST_TIMEOUT=300s），用户超过超时时间操作
+### 场景 4: 服务端超时（PERMISSION_REQUEST_TIMEOUT=300s），用户超过超时时间操作
 
 #### 测试步骤
 
 1. 设置较短的超时用于测试（如 60 秒）：
 ```bash
-export REQUEST_TIMEOUT=60
+export PERMISSION_REQUEST_TIMEOUT=60
 ./src/start-server.sh restart
 ```
 
@@ -242,7 +242,7 @@ Claude Code 的 hook 超时时间由 Claude 内部控制（通常较短，约 10
 
 1. 使用默认服务端超时（300s）：
 ```bash
-export REQUEST_TIMEOUT=300
+export PERMISSION_REQUEST_TIMEOUT=300
 ./src/start-server.sh restart
 ```
 
@@ -290,7 +290,7 @@ grep "Cleaned up dead connection" log/callback_$(date +%Y%m%d).log
 
 1. 设置极短的服务端超时（如 5 秒）：
 ```bash
-export REQUEST_TIMEOUT=5
+export PERMISSION_REQUEST_TIMEOUT=5
 ./src/start-server.sh restart
 ```
 
@@ -306,13 +306,13 @@ export REQUEST_TIMEOUT=5
 
 ---
 
-### 场景 7: 禁用服务端超时（REQUEST_TIMEOUT=0）
+### 场景 7: 禁用服务端超时（PERMISSION_REQUEST_TIMEOUT=0）
 
 #### 测试步骤
 
 1. 禁用超时：
 ```bash
-export REQUEST_TIMEOUT=0
+export PERMISSION_REQUEST_TIMEOUT=0
 ./src/start-server.sh restart
 ```
 
@@ -740,7 +740,7 @@ touch "/tmp/test file with spaces.txt"
 | 按钮点击无响应 | Socket 文件是否存在 | `ls -l /tmp/claude-permission.sock` |
 | 按钮点击无响应 | `CALLBACK_SERVER_URL` 是否正确 | 检查配置 |
 | 总是回退到终端 | Socket 连接是否成功 | 查看客户端日志 |
-| 总是回退到终端 | 服务是否超时 | 检查 `REQUEST_TIMEOUT` |
+| 总是回退到终端 | 服务是否超时 | 检查 `PERMISSION_REQUEST_TIMEOUT` |
 | 规则未写入 | 项目目录是否正确 | 检查 `project_dir` 字段 |
 | 规则未写入 | `.claude` 目录权限 | 检查目录权限 |
 

@@ -245,7 +245,8 @@ tool_format_rule() {
         field_value=$(json_get "$tool_input_json" "tool_input.${field_name}")
     fi
 
-    field_value="${field_value:-}"
+    # 空值时使用 * 作为通配符
+    field_value="${field_value:-*}"
 
     # 替换模板占位符
     local result="$template"

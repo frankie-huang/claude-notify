@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Tuple, Optional
 
-from config import REQUEST_TIMEOUT
+from config import PERMISSION_REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -226,10 +226,10 @@ class RequestManager:
             - 如果启用超时，超时请求发送"回退终端"响应
 
         Args:
-            max_age: 超时秒数，None 表示使用 REQUEST_TIMEOUT 配置，0 表示禁用超时
+            max_age: 超时秒数，None 表示使用 PERMISSION_REQUEST_TIMEOUT 配置，0 表示禁用超时
         """
         if max_age is None:
-            max_age = REQUEST_TIMEOUT
+            max_age = PERMISSION_REQUEST_TIMEOUT
 
         with self._lock:
             now = time.time()

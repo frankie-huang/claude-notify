@@ -23,7 +23,6 @@ class MessageSessionStore:
         "message_id": {
             "session_id": "xxx",
             "project_dir": "/path/to/project",
-            "callback_url": "http://...",
             "created_at": 1706745600
         }
     }
@@ -71,15 +70,13 @@ class MessageSessionStore:
         """
         return cls._instance
 
-    def save(self, message_id: str, session_id: str,
-             project_dir: str, callback_url: str) -> bool:
+    def save(self, message_id: str, session_id: str, project_dir: str) -> bool:
         """保存映射关系
 
         Args:
             message_id: 飞书消息 ID
             session_id: Claude 会话 ID
             project_dir: 项目工作目录
-            callback_url: Callback 后端 URL
 
         Returns:
             是否保存成功
@@ -90,7 +87,6 @@ class MessageSessionStore:
                 data[message_id] = {
                     'session_id': session_id,
                     'project_dir': project_dir,
-                    'callback_url': callback_url,
                     'created_at': int(time.time())
                 }
                 result = self._save(data)

@@ -262,7 +262,7 @@ vim .env
 ### 核心功能
 - ✅ **权限通知延迟发送**: 支持配置延迟时间，避免快速连续请求时的消息轰炸（`PERMISSION_NOTIFY_DELAY`）
 - ✅ **飞书卡片模板化**: 支持模块化的飞书卡片模板，便于自定义和扩展
-- ✅ **决策页面自动关闭**: 支持定时自动关闭决策页面（`CLOSE_PAGE_TIMEOUT`）
+- ✅ **决策页面自动关闭**: 支持定时自动关闭决策页面（`CALLBACK_PAGE_CLOSE_DELAY`）
 - ✅ **任务完成通知**: Claude 处理完成后自动发送飞书通知，包含响应摘要和会话标识
 
 ### OpenAPI 模式
@@ -415,7 +415,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
           {
             "type": "command",
             "command": "/path/to/claude-notify/src/hook-router.sh",
-            "timeout": 360
+            "timeout": 660
           }
         ]
       }
@@ -435,7 +435,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 }
 ```
 
-> **注意**：PermissionRequest hook 的 `timeout`（秒）建议配置为大于服务端 `REQUEST_TIMEOUT`（默认 300 秒）的值，确保服务端超时先触发，避免 hook 被 Claude Code 强制终止。上例配置为 360 秒。
+> **注意**：PermissionRequest hook 的 `timeout`（秒）建议配置为大于服务端 `PERMISSION_REQUEST_TIMEOUT`（默认 600 秒）的值，确保服务端超时先触发，避免 hook 被 Claude Code 强制终止。上例配置为 660 秒。
 
 ### 环境变量
 
@@ -443,7 +443,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 
 脚本会自动从项目根目录的 `.env` 文件读取配置，无需手动 `source`。如果 `.env` 中未配置某项，则从系统环境变量读取；如果仍未配置，则使用默认值。
 
-#### 发送模式
+#### 一、发送模式（必选）
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
@@ -458,35 +458,31 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | 多实例支持 | 不支持 | 支持（分离部署） |
 | 回复继续会话 | 不支持 | 支持 |
 
-#### Webhook 模式配置
+#### 二、飞书凭证与身份
+
+**Webhook 模式**
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `FEISHU_WEBHOOK_URL` | 飞书 Webhook URL | - |
 
-#### OpenAPI 模式配置
+**OpenAPI 模式 — 应用凭证**
 
 > **重要**：需要在飞书开放平台配置事件订阅「卡片回传交互」(`card.action.trigger`)
 
-OpenAPI 模式支持两种部署方式：
-
-**单机部署**：所有配置在同一台机器
-
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `FEISHU_APP_ID` | 飞书应用 App ID | **必需** |
-| `FEISHU_APP_SECRET` | 飞书应用 App Secret | **必需** |
-| `FEISHU_VERIFICATION_TOKEN` | 飞书验证 Token（双向认证必需） | **必需** |
-| `FEISHU_OWNER_ID` | 默认消息接收者（OpenAPI 模式必需） | **必需** |
+| `FEISHU_APP_ID` | 飞书应用 App ID（单机/网关必填） | - |
+| `FEISHU_APP_SECRET` | 飞书应用 App Secret（单机/网关必填） | - |
+| `FEISHU_VERIFICATION_TOKEN` | 飞书验证 Token（单机/网关必填，用于事件验证 + auth_token 生成） | - |
 
-**分离部署**：飞书网关与 Callback 服务分离（多实例场景）
+**OpenAPI 模式 — 网关（分离部署）**
 
 配置 `FEISHU_GATEWAY_URL` 后启用分离部署：
 
 - 网关服务配置：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_VERIFICATION_TOKEN`
 - Callback 服务配置：`FEISHU_GATEWAY_URL`（不配置则默认使用 `CALLBACK_SERVER_URL`）
 - Callback 服务启动时自动向网关注册获取 `auth_token`（用于后续通信验证）
-- 消息根据 `chat_id` 参数发送：优先级为 `chat_id` 参数 > `FEISHU_CHAT_ID` 配置 > `owner_id`
 
 | 变量 | 网关服务 | Callback 服务 |
 |------|:-------:|:------------:|
@@ -516,25 +512,12 @@ CALLBACK_SERVER_PORT=8081
 FEISHU_OWNER_ID=ou_admin_user
 ```
 
-#### 群聊发送（OpenAPI 模式）
-
-OpenAPI 模式支持将消息发送到飞书群聊：
-
-| 变量 | 说明 |
-|------|------|
-| `FEISHU_CHAT_ID` | 默认群聊 ID（由客户端读取，作为参数传递） |
-
-**消息发送优先级**：`chat_id` 参数 > `owner_id`
-
-**Session 与群聊映射**：当用户在群聊中回复消息继续会话时，系统会自动记录 `session_id → chat_id` 映射，后续该 session 的通知会自动发送到对应群聊。
-
-#### 通用飞书配置
+**消息接收者**
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `FEISHU_OWNER_ID` | 默认消息接收者 / 通知 @ 用户（**必须使用 user_id 格式**） | 空 |
-| `FEISHU_AT_USER` | 通知 @ 用户配置：空=@ `FEISHU_OWNER_ID`，`all`=@ 所有人，`off`=禁用 | 空 |
-| `FEISHU_TEMPLATE_PATH` | 自定义卡片模板目录 | `src/templates/feishu` |
+| `FEISHU_OWNER_ID` | 默认消息接收者（**必须使用 user_id 格式**） | 空 |
+| `FEISHU_CHAT_ID` | 默认群聊 ID（由客户端读取，作为参数传递） | 空 |
 
 > `FEISHU_OWNER_ID` 说明：
 > - **必须使用 user_id 格式**（纯数字或字母数字组合），其他 ID 类型会导致认证问题
@@ -542,23 +525,38 @@ OpenAPI 模式支持将消息发送到飞书群聊：
 > - **Webhook 模式**：可选，仅用于通知 @ 用户
 > - **OpenAPI 模式**：**必需**，用于确定消息接收者和网关注册
 
-#### 回调服务器配置
+**消息发送优先级**：`chat_id` 参数 > `FEISHU_CHAT_ID` 配置 > `owner_id`
+
+**Session 与群聊映射**：当用户在群聊中回复消息继续会话时，系统会自动记录 `session_id → chat_id` 映射，后续该 session 的通知会自动发送到对应群聊。
+
+#### 三、回调服务
 
 > 分离部署时，仅 Callback 服务需要配置此部分，网关服务不需要
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `CALLBACK_SERVER_URL` | 回调服务外部访问地址 | `http://localhost:8080` |
+| `CALLBACK_SERVER_URL` | 回调服务外部访问地址（所有模式建议配置） | `http://localhost:8080` |
 | `CALLBACK_SERVER_PORT` | HTTP 服务端口 | 8080 |
 | `PERMISSION_SOCKET_PATH` | Unix Socket 路径 | `/tmp/claude-permission.sock` |
-| `REQUEST_TIMEOUT` | 服务器端超时秒数 | 300（0 禁用） |
-| `CLOSE_PAGE_TIMEOUT` | 回调页面自动关闭秒数 | 3（建议范围 1-10） |
+
+#### 四、通知与交互行为
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `FEISHU_AT_USER` | 通知 @ 用户配置：空=@ `FEISHU_OWNER_ID`，`all`=@ 所有人，`off`=禁用 | 空 |
+| `PERMISSION_REQUEST_TIMEOUT` | 服务器端超时秒数（0 禁用） | 600 |
 | `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 60 |
+| `CALLBACK_PAGE_CLOSE_DELAY` | 回调页面自动关闭秒数（建议范围 1-10） | 3 |
 | `STOP_THINKING_MAX_LENGTH` | Stop 事件思考过程最大长度（字符数，0 禁用） | 5000 |
 | `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 5000 |
+
+#### 五、Claude 命令
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
 | `CLAUDE_COMMAND` | Claude 命令，支持多命令列表如 `[claude, claude --setting opus]`，详见下文 | `claude` |
 
-**Claude Command 多命令配置**
+**多命令配置**
 
 支持配置多个 Claude 命令，在创建/继续会话时选择使用哪个：
 
@@ -577,7 +575,7 @@ CLAUDE_COMMAND=[claude, claude --setting opus]
 - `/reply --cmd=opus prompt` — 回复消息时指定 Command（仅在回复消息时可用）
 - 每个 session 会记忆最近使用的 Command，后续回复自动复用
 
-**VSCode 自动跳转/激活配置**（以下两种模式二选一）
+#### 六、VSCode 集成（可选，以下两种模式二选一）
 
 | 模式 | 变量 | 说明 | 默认值 |
 |------|------|------|--------|

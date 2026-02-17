@@ -164,7 +164,7 @@ configure_hook() {
     mkdir -p "$(dirname "$SETTINGS_FILE")"
 
     # 构建 hook 配置 JSON
-    # PermissionRequest 的 timeout 需大于服务端 REQUEST_TIMEOUT（默认 300 秒），这里设置为 360 秒
+    # PermissionRequest 的 timeout 需大于服务端 PERMISSION_REQUEST_TIMEOUT（默认 600 秒），这里设置为 660 秒
     local hook_config
     hook_config=$(cat << EOF
 {
@@ -176,7 +176,7 @@ configure_hook() {
           {
             "type": "command",
             "command": "${HOOK_PATH}",
-            "timeout": 360
+            "timeout": 660
           }
         ]
       }
@@ -236,9 +236,9 @@ if 'hooks' not in config:
     config['hooks'] = {}
 
 # 定义需要配置的事件类型及其特殊配置
-# PermissionRequest 需要设置 timeout，需大于服务端 REQUEST_TIMEOUT（默认 300 秒）
+# PermissionRequest 需要设置 timeout，需大于服务端 PERMISSION_REQUEST_TIMEOUT（默认 600 秒）
 event_configs = {
-    'PermissionRequest': {'timeout': 360},  # 360 秒
+    'PermissionRequest': {'timeout': 660},  # 660 秒
     'Stop': {}
 }
 
@@ -322,29 +322,53 @@ generate_env_template() {
 #
 # 配置优先级: .env 文件 > 环境变量 > 默认值
 # =============================================================================
+#
+# 配置速查表
+# ┌──────────────────────────────┬──────────┬──────────┬──────────┬────────────┐
+# │ 配置项                       │ Webhook  │ OpenAPI  │ OpenAPI  │ 默认值     │
+# │                              │          │ 单机     │ 分离     │            │
+# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
+# │ FEISHU_SEND_MODE             │ 必填     │ 必填     │ 必填     │ webhook    │
+# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
+# │ FEISHU_WEBHOOK_URL           │ 必填     │ -        │ -        │ -          │
+# │ FEISHU_APP_ID                │ -        │ 必填     │ 网关必填 │ -          │
+# │ FEISHU_APP_SECRET            │ -        │ 必填     │ 网关必填 │ -          │
+# │ FEISHU_VERIFICATION_TOKEN    │ -        │ 必填     │ 网关必填 │ -          │
+# │ FEISHU_GATEWAY_URL           │ -        │ -        │ CB必填   │ -          │
+# │ FEISHU_OWNER_ID              │ 可选     │ 必填     │ 必填     │ -          │
+# │ FEISHU_CHAT_ID               │ -        │ 可选     │ 可选     │ -          │
+# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
+# │ CALLBACK_SERVER_URL          │ 建议     │ 建议     │ 建议     │ localhost  │
+# │ CALLBACK_SERVER_PORT         │ 可选     │ 可选     │ 可选     │ 8080       │
+# │ PERMISSION_SOCKET_PATH       │ 可选     │ 可选     │ 可选     │ /tmp/...   │
+# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
+# │ FEISHU_AT_USER               │ 可选     │ 可选     │ 可选     │ 空         │
+# │ PERMISSION_REQUEST_TIMEOUT   │ 可选     │ 可选     │ 可选     │ 600        │
+# │ PERMISSION_NOTIFY_DELAY      │ 可选     │ 可选     │ 可选     │ 60         │
+# │ CALLBACK_PAGE_CLOSE_DELAY    │ 可选     │ 可选     │ 可选     │ 3          │
+# │ STOP_THINKING_MAX_LENGTH     │ 可选     │ 可选     │ 可选     │ 5000       │
+# │ STOP_MESSAGE_MAX_LENGTH      │ 可选     │ 可选     │ 可选     │ 5000       │
+# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
+# │ CLAUDE_COMMAND               │ 可选     │ 可选     │ 可选     │ claude     │
+# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
+# │ VSCODE_URI_PREFIX            │ 可选     │ 可选     │ 可选     │ -          │
+# │ ACTIVATE_VSCODE_ON_CALLBACK  │ 可选     │ 可选     │ 可选     │ false      │
+# │ VSCODE_SSH_PROXY_PORT        │ 可选     │ 可选     │ 可选     │ -          │
+# └──────────────────────────────┴──────────┴──────────┴──────────┴────────────┘
+# CB必填 = Callback 服务必填
 
 # =============================================================================
-# 一、发送模式选择
+# 一、发送模式（必选）
 # =============================================================================
 
-# 发送模式 (必选)
+# 发送模式
 # - webhook: 使用飞书 Webhook 发送（简单，按钮跳转浏览器）
 # - openapi: 使用飞书 OpenAPI 发送（按钮在飞书内响应，需配置事件订阅）
 FEISHU_SEND_MODE=webhook
 
 # =============================================================================
-# 二、Webhook 模式配置
+# 二、飞书凭证与身份
 # =============================================================================
-# 仅 FEISHU_SEND_MODE=webhook 时需要配置
-
-# 飞书 Webhook URL
-# 从飞书机器人设置中获取
-FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
-
-# =============================================================================
-# 三、OpenAPI 模式配置
-# =============================================================================
-# 仅 FEISHU_SEND_MODE=openapi 时需要配置
 #
 # 【重要】OpenAPI 模式需要在飞书开放平台配置事件订阅：
 #   1. 进入应用管理 -> 事件订阅 -> 添加事件
@@ -356,7 +380,7 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
 # OpenAPI 模式支持两种部署方式：
 #
 # 【单机部署】所有配置在同一台机器
-#   - 配置 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_OWNER_ID
+#   - 配置 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_VERIFICATION_TOKEN、FEISHU_OWNER_ID
 #   - 不配置 FEISHU_GATEWAY_URL
 #
 # 【分离部署】飞书网关与 Callback 服务分离（多实例场景）
@@ -364,63 +388,63 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
 #   - Callback 服务: 配置 FEISHU_GATEWAY_URL、FEISHU_OWNER_ID
 #   - 每个 Callback 服务可以发给不同用户（通过各自的 FEISHU_OWNER_ID）
 
-# --- 飞书网关地址（分离部署时配置）---
-# 配置后，消息通过飞书网关发送，本机无需配置飞书应用凭证
-# 同时用于网关注册功能（注册接口为 {FEISHU_GATEWAY_URL}/register）
-FEISHU_GATEWAY_URL=
+# --- Webhook 模式 ---
+# 飞书 Webhook URL [Webhook 必填]
+# 从飞书机器人设置中获取
+FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
 
-# --- 飞书应用凭证（单机部署或网关服务配置）---
+# --- OpenAPI 模式 — 应用凭证 [单机/网关 必填] ---
 # 从飞书开放平台 -> 应用管理 -> 凭证与基础信息 获取
 # 分离部署时仅网关服务需要配置
 FEISHU_APP_ID=
 FEISHU_APP_SECRET=
 
-# --- 安全验证配置（网关服务必填）---
-# Verification Token，从飞书开放平台 -> 应用管理 -> 事件订阅 -> 加密与签名 获取
-# 用于验证事件请求是否来自飞书，建议生产环境配置
+# Verification Token [单机/网关 必填]
+# 从飞书开放平台 -> 应用管理 -> 事件订阅 -> 加密与签名 获取
+# 用于验证飞书事件来源 + 生成注册 auth_token
 FEISHU_VERIFICATION_TOKEN=
 
-# =============================================================================
-# 四、回调服务器配置
-# =============================================================================
-# 分离部署时，仅 Callback 服务需要配置此部分，网关服务不需要
+# --- OpenAPI 模式 — 网关（分离部署）---
+# 飞书网关地址 [分离部署 Callback 必填]
+# 配置后，消息通过飞书网关发送，本机无需配置飞书应用凭证
+# 同时用于网关注册功能（注册接口为 {FEISHU_GATEWAY_URL}/register）
+FEISHU_GATEWAY_URL=
 
-# 回调服务器外部访问地址
-# 用于飞书卡片按钮的回调 URL
-# 如果使用内网穿透，填写穿透后的公网地址
-# 启用网关注册功能时必填
-CALLBACK_SERVER_URL=http://localhost:8080
-
-# 回调服务器端口 (可选，默认 8080)
-CALLBACK_SERVER_PORT=8080
-
-# Unix Socket 路径 (可选，默认 /tmp/claude-permission.sock)
-# 用于 hook 脚本与回调服务器之间的通信
-PERMISSION_SOCKET_PATH=/tmp/claude-permission.sock
-
-# 回调页面自动关闭时间，秒 (可选，默认 3)
-# 用户点击按钮后，回调页面显示的倒计时秒数
-# 建议范围: 1-10 秒
-CLOSE_PAGE_TIMEOUT=3
-
-# --- 飞书网关注册配置（可选）---
-# 启用后，Callback 后端启动时自动向飞书网关注册，实现双向认证
-#
-# 飞书用户 ID（网关注册时必填，同时作为 OpenAPI 消息接收者）
+# --- 消息接收者 ---
+# 飞书用户 ID [OpenAPI 必填]
 # 必须使用 user_id 格式（纯数字或字母数字组合），服务启动时会校验格式
 # 获取方式：https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-user-id
+# Webhook 模式下可选，仅用于通知 @ 用户
 FEISHU_OWNER_ID=
 
-# 飞书群聊 ID (可选，默认为空)
+# 飞书群聊 ID [可选]
 # 由客户端读取，用于发送消息到指定群聊
 # 客户端调用 /feishu/send 时可将 chat_id 作为参数传入
 FEISHU_CHAT_ID=
 
 # =============================================================================
-# 五、飞书通知配置
+# 三、回调服务
+# =============================================================================
+# 分离部署时，仅 Callback 服务需要配置此部分，网关服务不需要
+
+# 回调服务器外部访问地址 [所有模式建议配置]
+# 用于飞书卡片按钮的回调 URL
+# 如果使用内网穿透，填写穿透后的公网地址
+# 启用网关注册功能时必填
+CALLBACK_SERVER_URL=http://localhost:8080
+
+# 回调服务器端口 [可选, 默认 8080]
+CALLBACK_SERVER_PORT=8080
+
+# Unix Socket 路径 [可选, 默认 /tmp/claude-permission.sock]
+# 用于 hook 脚本与回调服务器之间的通信
+PERMISSION_SOCKET_PATH=/tmp/claude-permission.sock
+
+# =============================================================================
+# 四、通知与交互行为
 # =============================================================================
 
-# 飞书通知 @ 用户配置 (可选)
+# 飞书通知 @ 用户配置 [可选]
 # 适用于所有飞书通知（权限请求、任务完成等），与发送模式无关
 # 支持以下格式:
 #   - 空: 默认 @ FEISHU_OWNER_ID 用户
@@ -428,21 +452,35 @@ FEISHU_CHAT_ID=
 #   - off: 不 @ 任何人
 FEISHU_AT_USER=
 
-# 请求超时时间，秒 (可选，默认 300)
+# 请求超时时间，秒 [可选, 默认 600]
 # 用户在此时间内未响应，将回退到终端交互
-REQUEST_TIMEOUT=300
+PERMISSION_REQUEST_TIMEOUT=600
 
-# 权限通知延迟时间，秒 (可选，默认 60)
+# 权限通知延迟时间，秒 [可选, 默认 60]
 # 收到权限请求后延迟指定秒数再发送飞书消息
 # 用于避免快速连续请求时的消息轰炸
 # 设为 0 表示立即发送
 PERMISSION_NOTIFY_DELAY=60
 
+# 回调页面自动关闭时间，秒 [可选, 默认 3]
+# 用户点击按钮后，回调页面显示的倒计时秒数
+# 建议范围: 1-10 秒
+CALLBACK_PAGE_CLOSE_DELAY=3
+
+# Stop 事件思考过程最大长度，字符数 [可选, 默认 5000]
+# 设为 0 则不显示思考过程
+STOP_THINKING_MAX_LENGTH=5000
+
+# Stop 事件消息最大长度，字符数 [可选, 默认 5000]
+# 主 Agent 完成时，发送飞书通知中显示的响应内容最大长度
+# 超过此长度会被截断并添加 "..."
+STOP_MESSAGE_MAX_LENGTH=5000
+
 # =============================================================================
-# 六、Claude 命令配置
+# 五、Claude 命令
 # =============================================================================
 
-# Claude 命令 (可选，默认 claude)
+# Claude 命令 [可选, 默认 claude]
 # 用于继续会话和新建会话功能
 #
 # 单命令配置（向后兼容）:
@@ -464,20 +502,7 @@ PERMISSION_NOTIFY_DELAY=60
 CLAUDE_COMMAND=claude
 
 # =============================================================================
-# 七、Stop 事件配置
-# =============================================================================
-
-# Stop 事件思考过程最大长度，字符数 (可选，默认 5000)
-# 设为 0 则不显示思考过程
-STOP_THINKING_MAX_LENGTH=5000
-
-# Stop 事件消息最大长度，字符数 (可选，默认 5000)
-# 主 Agent 完成时，发送飞书通知中显示的响应内容最大长度
-# 超过此长度会被截断并添加 "..."
-STOP_MESSAGE_MAX_LENGTH=5000
-
-# =============================================================================
-# 八、VSCode 自动跳转/激活配置 (可选，以下两种模式二选一)
+# 六、VSCode 集成（可选，以下两种模式二选一）
 # =============================================================================
 #
 # 【模式一】浏览器跳转模式 - VSCODE_URI_PREFIX

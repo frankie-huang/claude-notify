@@ -92,7 +92,7 @@
           "tag": "div",
           "text": {
             "tag": "plain_text",
-            "content": "回调服务未运行，请返回终端操作",
+            "content": "{{footer_hint}}",
             "text_size": "notation",
             "text_align": "left",
             "text_color": "grey"

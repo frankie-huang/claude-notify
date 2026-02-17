@@ -109,6 +109,42 @@ REQUEST_ID=$(generate_request_id)
 log "Request ID: $REQUEST_ID"
 
 # =============================================================================
+# 通用变量准备（被 run_interactive_mode 和 run_fallback_mode 共用）
+# =============================================================================
+prepare_common_vars() {
+    # 提取工具详情
+    extract_tool_detail "$INPUT" "$TOOL_NAME"
+    COMMAND_CONTENT="$EXTRACTED_COMMAND"
+    DESCRIPTION="$EXTRACTED_DESCRIPTION"
+    TEMPLATE_COLOR="$EXTRACTED_COLOR"
+    PROJECT_NAME=$(basename "$PROJECT_DIR")
+
+    # 记录 command 到单独的日志文件
+    log_command "$COMMAND_CONTENT" "$REQUEST_ID" "$TOOL_NAME" "$SESSION_ID"
+}
+
+# =============================================================================
+# 发送飞书通知卡片
+# =============================================================================
+# 参数:
+#   $1 - buttons_json (可选，空则无按钮)
+#   $2 - footer_hint (可选，自定义底部提示)
+# =============================================================================
+send_permission_notification() {
+    local buttons="${1:-}"
+    local custom_footer_hint="${2:-}"
+
+    # 构建飞书卡片
+    local card
+    card=$(build_permission_card "$TOOL_NAME" "$PROJECT_NAME" "$TIMESTAMP" "$COMMAND_CONTENT" "$DESCRIPTION" "$TEMPLATE_COLOR" "$buttons" "${SESSION_ID:0:8}" "$custom_footer_hint")
+
+    # 传递 session_id、project_dir、callback_url 支持回复继续会话
+    local options
+    options=$(json_build_object "webhook_url" "$WEBHOOK_URL" "session_id" "$SESSION_ID" "project_dir" "$PROJECT_DIR" "callback_url" "$CALLBACK_SERVER_URL")
+    send_feishu_card "$card" "$options"
+}
+
+# =============================================================================
 # 交互模式主流程
 # =============================================================================
 run_interactive_mode() {
@@ -120,19 +156,20 @@ run_interactive_mode() {
         return
     fi
 
-    # 提取工具详情
-    extract_tool_detail "$INPUT" "$TOOL_NAME"
-    local command_content="$EXTRACTED_COMMAND"
-    local description="$EXTRACTED_DESCRIPTION"
-    local template_color="$EXTRACTED_COLOR"
-    local project_name
-    project_name=$(basename "$PROJECT_DIR")
-
-    # 记录 command 到单独的日志文件
-    log_command "$command_content" "$REQUEST_ID" "$TOOL_NAME" "$SESSION_ID"
+    # 准备通用变量
+    prepare_common_vars
 
     # 延迟发送
     if ! delay_with_parent_check "$NOTIFY_DELAY"; then
+        exit $EXIT_FALLBACK
+    fi
+
+    # AskUserQuestion 类型：发送通知卡片，不等待响应，回退到终端交互
+    # 因为 AskUserQuestion 需要用户选择选项，而不是简单的批准/拒绝
+    if [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+        log "AskUserQuestion detected, sending notification-only card and falling back to terminal"
+        send_permission_notification "" "请在终端中选择您的答案"
+        log "AskUserQuestion notification sent, falling back to terminal interaction"
         exit $EXIT_FALLBACK
     fi
 
@@ -140,15 +177,9 @@ run_interactive_mode() {
     local buttons
     buttons=$(build_permission_buttons "$CALLBACK_SERVER_URL" "$REQUEST_ID" "$OWNER_ID")
 
-    # 构建飞书卡片
-    local card
-    card=$(build_permission_card "$TOOL_NAME" "$project_name" "$TIMESTAMP" "$command_content" "$description" "$template_color" "$buttons" "${SESSION_ID:0:8}")
-
+    # 发送带按钮的飞书卡片
     log "Sending interactive Feishu card"
-    # 传递 session_id、project_dir、callback_url 支持回复继续会话
-    local options
-    options=$(json_build_object "webhook_url" "$WEBHOOK_URL" "session_id" "$SESSION_ID" "project_dir" "$PROJECT_DIR" "callback_url" "$CALLBACK_SERVER_URL")
-    send_feishu_card "$card" "$options"
+    send_permission_notification "$buttons"
 
     # 构建请求 JSON
     local request_json
@@ -209,30 +240,16 @@ run_fallback_mode() {
         exit $EXIT_FALLBACK
     fi
 
-    # 提取工具详情
-    extract_tool_detail "$INPUT" "$TOOL_NAME"
-    local command_content="$EXTRACTED_COMMAND"
-    local description="$EXTRACTED_DESCRIPTION"
-    local template_color="$EXTRACTED_COLOR"
-    local project_name
-    project_name=$(basename "$PROJECT_DIR")
-
-    # 记录 command 到单独的日志文件
-    log_command "$command_content" "$REQUEST_ID" "$TOOL_NAME" "$SESSION_ID"
+    # 准备通用变量
+    prepare_common_vars
 
     # 延迟发送
     if ! delay_with_parent_check "$NOTIFY_DELAY"; then
         exit $EXIT_FALLBACK
     fi
 
-    # 构建不带按钮的卡片
-    local card
-    card=$(build_permission_card "$TOOL_NAME" "$project_name" "$TIMESTAMP" "$command_content" "$description" "$template_color" "" "${SESSION_ID:0:8}")
-
-    # 传递 session_id、project_dir、callback_url 支持回复继续会话
-    local options
-    options=$(json_build_object "webhook_url" "$WEBHOOK_URL" "session_id" "$SESSION_ID" "project_dir" "$PROJECT_DIR" "callback_url" "$CALLBACK_SERVER_URL")
-    send_feishu_card "$card" "$options"
+    # 发送不带按钮的通知卡片
+    send_permission_notification ""
 
     log "Fallback notification sent"
     exit $EXIT_FALLBACK

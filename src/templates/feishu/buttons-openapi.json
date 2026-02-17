@@ -17,7 +17,6 @@
             "value": {
               "action": "allow",
               "request_id": "{{request_id}}",
-              "callback_url": "{{callback_url}}",
               "owner_id": "{{owner_id}}"
             }
           }
@@ -47,7 +46,6 @@
             "value": {
               "action": "always",
               "request_id": "{{request_id}}",
-              "callback_url": "{{callback_url}}",
               "owner_id": "{{owner_id}}"
             }
           }
@@ -78,7 +76,6 @@
             "value": {
               "action": "deny",
               "request_id": "{{request_id}}",
-              "callback_url": "{{callback_url}}",
               "owner_id": "{{owner_id}}"
             }
           }
@@ -107,7 +104,6 @@
             "value": {
               "action": "interrupt",
               "request_id": "{{request_id}}",
-              "callback_url": "{{callback_url}}",
               "owner_id": "{{owner_id}}"
             }
           }

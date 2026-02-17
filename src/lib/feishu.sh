@@ -469,6 +469,7 @@ build_permission_card() {
     local template_color="$6"
     local buttons_json="${7:-}"
     local session_id="${8:-unknown}"
+    local footer_hint="${9:-}"
 
     # 选择卡片类型
     local card_type
@@ -513,6 +514,16 @@ build_permission_card() {
     local at_user
     at_user=$(_build_at_user_tag)
 
+    # 根据 card_type 设置默认 footer_hint
+    local final_footer_hint="$footer_hint"
+    if [ -z "$final_footer_hint" ]; then
+        if [ -n "$buttons_json" ]; then
+            final_footer_hint="请尽快操作以避免 Claude 超时等待"
+        else
+            final_footer_hint="回调服务未运行，请返回终端操作"
+        fi
+    fi
+
     local card
     if [ -n "$buttons_json" ]; then
         card=$(render_card_template "$card_type" \
@@ -523,7 +534,8 @@ build_permission_card() {
             "session_id=$session_id" \
             "detail_elements=$detail_elements" \
             "buttons_json=$buttons_json" \
-            "at_user=$at_user")
+            "at_user=$at_user" \
+            "footer_hint=$final_footer_hint")
     else
         card=$(render_card_template "$card_type" \
             "template_color=$template_color" \
@@ -532,7 +544,8 @@ build_permission_card() {
             "timestamp=$timestamp" \
             "session_id=$session_id" \
             "detail_elements=$detail_elements" \
-            "at_user=$at_user")
+            "at_user=$at_user" \
+            "footer_hint=$final_footer_hint")
     fi
 
     if [ $? -ne 0 ]; then
@@ -566,7 +579,7 @@ build_permission_card() {
 #   根据 FEISHU_SEND_MODE 选择按钮类型:
 #   - webhook: open_url 类型按钮（点击跳转浏览器）
 #   - openapi: callback 类型按钮（飞书内直接响应）
-#             分离部署时 value 中的 callback_url 用于网关路由
+#             callback_url 从 BindingStore 获取，不需要在 value 中传递
 #   owner_id 用于验证点击按钮的用户是否为本人
 # ----------------------------------------------------------------------------
 build_permission_buttons() {
@@ -581,10 +594,9 @@ build_permission_buttons() {
 
     if [ "$send_mode" = "openapi" ]; then
         # OpenAPI 模式：使用 callback 类型按钮
-        # 分离部署时 value 中的 callback_url 用于网关路由到正确的 Callback 服务
+        # callback_url 从 BindingStore 获取，不需要在 value 中传递
         # owner_id 用于验证操作者身份
         render_card_template "buttons-openapi" \
-            "callback_url=$callback_url" \
             "request_id=$request_id" \
             "owner_id=$owner_id"
     else
@@ -806,10 +818,14 @@ _do_curl_post() {
 
     # 构建 curl 命令用于日志（请求体截断避免过长）
     local curl_log_cmd
+    local truncated_body="${request_body:0:200}"
+    if [ ${#request_body} -gt 200 ]; then
+        truncated_body="${truncated_body}..."
+    fi
     curl_log_cmd=$(cat <<EOF
 curl -X POST "$url" \
     -H "Content-Type: application/json" \
-    -d "${request_body:0:200}${request_body:200:+...}" \
+    -d "$truncated_body" \
     --max-time "$FEISHU_HTTP_TIMEOUT" \
     --noproxy "*"
 EOF
