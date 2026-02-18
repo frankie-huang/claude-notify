@@ -208,8 +208,12 @@ tool_format_detail() {
     fi
 
     # 替换模板占位符
+    # 注意: Bash 5.2+ 中 ${var//pattern/replacement} 的 replacement 部分
+    # & 表示匹配文本，\ 为转义字符，需要预先转义
     local result="$template"
-    result="${result//\{${field_name}\}/${field_value}}"
+    local _safe_value="${field_value//\\/\\\\}"
+    _safe_value="${_safe_value//&/\\&}"
+    result="${result//\{${field_name}\}/${_safe_value}}"
     result="${result//\{tool_name\}/${tool_name}}"
 
     # 检查是否有 description 字段
@@ -249,8 +253,12 @@ tool_format_rule() {
     field_value="${field_value:-*}"
 
     # 替换模板占位符
+    # 注意: Bash 5.2+ 中 ${var//pattern/replacement} 的 replacement 部分
+    # & 表示匹配文本，\ 为转义字符，需要预先转义
     local result="$template"
-    result="${result//\{${field_name}\}/${field_value}}"
+    local _safe_value="${field_value//\\/\\\\}"
+    _safe_value="${_safe_value//&/\\&}"
+    result="${result//\{${field_name}\}/${_safe_value}}"
     result="${result//\{tool_name\}/${tool_name}}"
 
     echo "$result"

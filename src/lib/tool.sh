@@ -265,10 +265,14 @@ extract_tool_detail() {
             # Bash 命令：只提取原始值，转义由模板渲染统一处理
 
             # 获取模板并替换占位符
+            # 注意: Bash 5.2+ 中 ${var//pattern/replacement} 的 replacement 部分
+            # & 表示匹配文本，\ 为转义字符，需要预先转义
             local template
             template=$(tool_get_detail_template "$tool_name")
             EXTRACTED_COMMAND="$template"
-            EXTRACTED_COMMAND="${EXTRACTED_COMMAND//\{${field_name}\}/${field_value}}"
+            local _safe_value="${field_value//\\/\\\\}"
+            _safe_value="${_safe_value//&/\\&}"
+            EXTRACTED_COMMAND="${EXTRACTED_COMMAND//\{${field_name}\}/${_safe_value}}"
             EXTRACTED_COMMAND="${EXTRACTED_COMMAND//\{tool_name\}/${tool_name}}"
         fi
     else

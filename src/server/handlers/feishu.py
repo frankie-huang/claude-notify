@@ -136,7 +136,9 @@ def handle_feishu_request(data: dict) -> Tuple[bool, dict]:
     if event_type == 'card.action.trigger':
         return _handle_card_action(data)
 
-    # 不是飞书请求
+    # 未处理的飞书事件类型或其他请求
+    event_type = data.get('header', {}).get('event_type', '')
+    logger.debug(f"[feishu] Unhandled request, event_type={event_type}, data: {json.dumps(data, ensure_ascii=True)}")
     return False, {}
 
 
@@ -264,6 +266,18 @@ def _handle_message_event(data: dict):
     # 检查是否是回复消息（用于继续会话）
     if parent_id:
         _handle_reply_message(data, parent_id)
+        return
+
+    # 非回复、非命令的普通消息：发送使用提示
+    if text.strip():
+        supported = _get_supported_commands()
+        hint = "💡 我还不能直接对话哦，请通过以下方式使用：\n\n" \
+               "**发起新会话：**\n" \
+               "发送 `/new` 指令创建 Claude 会话\n\n" \
+               "**继续会话：**\n" \
+               "回复 Claude 的消息即可继续对话\n\n" \
+               "**支持的指令：**\n" + supported
+        _run_in_background(_send_reject_message, (chat_id, hint, message_id))
 
 
 def _get_supported_commands() -> str:
