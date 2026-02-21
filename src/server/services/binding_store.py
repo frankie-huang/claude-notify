@@ -1,9 +1,10 @@
 """BindingStore - owner_id 到 callback_url 的绑定存储
 
-维护飞书用户 ID 到 Callback 后端 URL 的映射关系，
-用于网关注册和双向认证。
+归属端: 飞书网关
+使用方: feishu.py, register.py（网关内部逻辑），callback.py 中的网关侧路由（/feishu/send）
 
-注意：此服务仅用于飞书网关，Callback 后端不使用。
+维护飞书用户 ID 到 Callback 后端 URL 的映射关系，用于网关注册和双向认证。
+Callback 后端的路由和逻辑不应直接调用此 Store。
 """
 
 import json

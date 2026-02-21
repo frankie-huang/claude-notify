@@ -1,7 +1,12 @@
 """Session-Chat 映射存储
 
-Callback 后端使用此服务维护会话与群聊的映射关系，
-用于确定消息发送的目标群聊。
+归属端: Callback 后端
+使用方: callback.py, claude.py
+对外接口: /get-chat-id, /get-last-message-id (供 Shell 脚本通过 HTTP 查询)
+          /set-last-message-id (供飞书网关通过 HTTP 写入)
+
+维护 session_id → chat_id 的映射关系，用于确定消息发送的目标群聊。
+飞书网关和 Shell 脚本不应直接调用此 Store，应通过 Callback 后端的 HTTP 接口间接访问。
 """
 
 import json
@@ -16,10 +21,25 @@ logger = logging.getLogger(__name__)
 
 
 class SessionChatStore:
-    """管理 session_id -> chat_id 的存储
+    """管理 session_id -> chat_id 的存储（归属端: Callback 后端）
 
-    Callback 后端使用此服务维护会话与群聊的映射关系，
-    用于确定消息发送的目标群聊。
+    维护会话与群聊的映射关系，用于确定消息发送的目标群聊。
+    外部通过 /get-chat-id, /get-last-message-id, /set-last-message-id 接口间接访问。
+
+    数据结构::
+
+        {
+            "session_id": {
+                "chat_id": "oc_xxx",              # 飞书群聊 ID
+                "claude_command": "claude",        # 使用的 Claude 命令（可选）
+                "last_message_id": "om_xxx",       # 链式回复锚点（可选，由 set_last_message_id 管理）
+                "updated_at": 1706745600           # 最近更新时间戳
+            }
+        }
+
+    写入方式:
+        - save(): 创建/更新 chat_id 和 claude_command，自动保留已有的 last_message_id
+        - set_last_message_id(): 单独更新 last_message_id，同时刷新 updated_at
     """
 
     _instance = None  # type: Optional[SessionChatStore]
@@ -87,6 +107,9 @@ class SessionChatStore:
                 # 保留已有的 claude_command（如果本次未指定但已有记录）
                 elif session_id in data and 'claude_command' in data[session_id]:
                     entry['claude_command'] = data[session_id]['claude_command']
+                # 保留已有的 last_message_id（由 set_last_message_id 单独管理）
+                if session_id in data and 'last_message_id' in data[session_id]:
+                    entry['last_message_id'] = data[session_id]['last_message_id']
                 data[session_id] = entry
                 result = self._save(data)
                 if result:
@@ -148,6 +171,79 @@ class SessionChatStore:
             except Exception as e:
                 logger.error(f"[session-chat-store] Failed to get command: {e}")
                 return None
+
+    def get_last_message_id(self, session_id: str) -> str:
+        """获取 session_id 对应的 last_message_id（最近一条消息 ID）
+
+        Args:
+            session_id: Claude 会话 ID
+
+        Returns:
+            last_message_id 字符串，不存在或已过期返回空字符串
+        """
+        with self._file_lock:
+            try:
+                data = self._load()
+                item = data.get(session_id)
+                if not item:
+                    return ''
+
+                # 检查过期
+                if time.time() - item.get('updated_at', 0) > self.EXPIRE_SECONDS:
+                    return ''
+
+                return item.get('last_message_id', '')
+            except Exception as e:
+                logger.error(f"[session-chat-store] Failed to get last_message_id: {e}")
+                return ''
+
+    def set_last_message_id(self, session_id: str, message_id: str) -> bool:
+        """更新 session_id 的 last_message_id（最近一条消息 ID）
+
+        每次发送消息成功后调用此方法更新，实现链式回复结构。
+        如果 session 不存在，自动创建记录（支持终端直接启动的会话）。
+
+        Args:
+            session_id: Claude 会话 ID
+            message_id: 最近一条消息 ID
+
+        Returns:
+            是否设置成功
+        """
+        with self._file_lock:
+            try:
+                data = self._load()
+                item = data.get(session_id)
+
+                if not item:
+                    # session 不存在，自动创建记录（终端直接启动的会话场景）
+                    item = {
+                        'last_message_id': message_id,
+                        'updated_at': int(time.time())
+                    }
+                    data[session_id] = item
+                    result = self._save(data)
+                    if result:
+                        logger.info(f"[session-chat-store] Created session with last_message_id: {session_id} -> {message_id}")
+                    return result
+
+                # 检查过期
+                if time.time() - item.get('updated_at', 0) > self.EXPIRE_SECONDS:
+                    logger.warning(f"[session-chat-store] Cannot set last_message_id: session expired {session_id}")
+                    return False
+
+                # 更新 last_message_id 并刷新过期时间
+                item['last_message_id'] = message_id
+                item['updated_at'] = int(time.time())
+                data[session_id] = item
+                result = self._save(data)
+                if result:
+                    logger.info(f"[session-chat-store] Updated last_message_id: {session_id} -> {message_id}")
+
+                return result
+            except Exception as e:
+                logger.error(f"[session-chat-store] Failed to set last_message_id: {e}")
+                return False
 
     def cleanup_expired(self) -> int:
         """清理过期数据

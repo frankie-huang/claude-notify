@@ -789,6 +789,58 @@ _get_chat_id() {
 }
 
 # ----------------------------------------------------------------------------
+# _get_last_message_id - 根据 session_id 获取最近一条消息 ID
+# ----------------------------------------------------------------------------
+# 功能: 调用 Callback 后端的 /get-last-message-id 接口查询 session 的最近消息
+#
+# 参数:
+#   $1 - session_id  Claude 会话 ID
+#
+# 输出:
+#   echos 返回: last_message_id 字符串，查询失败返回空字符串
+#
+# 说明:
+#   用于链式回复，后续消息会回复到该消息下
+# ----------------------------------------------------------------------------
+_get_last_message_id() {
+    local session_id="$1"
+
+    if [ -z "$session_id" ]; then
+        echo ""
+        return 0
+    fi
+
+    # 调用 Callback 后端的 /get-last-message-id 接口查询
+    local callback_url="${CALLBACK_SERVER_URL:-http://localhost:${CALLBACK_SERVER_PORT:-8080}}"
+    callback_url=$(echo "$callback_url" | sed 's:/*$::')
+
+    local response
+    response=$(_do_curl_post "${callback_url}/get-last-message-id" \
+        "{\"session_id\":\"$session_id\"}" \
+        "get-last-message-id" \
+        "$(_get_auth_token)")
+
+    local http_code
+    http_code=$(echo "$response" | head -n 1)
+    response=$(echo "$response" | sed '1d')
+
+    if [ "$http_code" != "200" ]; then
+        return 0
+    fi
+
+    local last_message_id
+    last_message_id=$(json_get "$response" "last_message_id")
+    # 移除可能的引号
+    last_message_id=$(echo "$last_message_id" | sed 's/^"//;s/"$//')
+
+    if [ -n "$last_message_id" ] && [ "$last_message_id" != "null" ] && [ "$last_message_id" != "''" ]; then
+        echo "$last_message_id"
+    else
+        echo ""
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # _do_curl_post - 执行 POST 请求的通用函数
 # ----------------------------------------------------------------------------
 # 功能: 执行 JSON POST 请求，并解析响应
@@ -1130,7 +1182,7 @@ _send_feishu_card_http_endpoint() {
     local target_url="${2:-}"
     local options="${3:-}"
 
-    # 解析可选参数（一次调用获取多个字段，减少进程开销）
+    # 解析可选参数
     local -a vals=()
     while IFS= read -r _line; do
         vals+=("$_line")
@@ -1169,39 +1221,43 @@ _send_feishu_card_http_endpoint() {
         fi
     fi
 
+    # 查询 last_message_id 用于链式回复
+    local reply_to_message_id=""
+    if [ -n "$session_id" ]; then
+        reply_to_message_id=$(_get_last_message_id "$session_id")
+        if [ -n "$reply_to_message_id" ]; then
+            log "Found last_message_id for session: $reply_to_message_id"
+        fi
+    fi
+
+    # 构建请求体
     local request_body
-    # 构建 JSON 转义函数
+    local extra_fields=""
+
+    # JSON 转义函数
     _json_escape() {
         printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
     }
 
-    # 构建请求体，chat_id 可以为空，后端会自动判断优先级
+    # 构建额外字段
     if [ -n "$session_id" ] && [ -n "$project_dir" ] && [ -n "$callback_url" ]; then
         local escaped_project_dir=$(_json_escape "$project_dir")
         local escaped_callback_url=$(_json_escape "$callback_url")
+        extra_fields="\"session_id\":\"$session_id\",\"project_dir\":\"$escaped_project_dir\",\"callback_url\":\"$escaped_callback_url\","
+    fi
 
-        request_body=$(cat <<-EOF
-		{
-		  "msg_type": "interactive",
-		  "content": $card_content,
-		  "owner_id": "$owner_id",
-		  "chat_id": "$chat_id",
-		  "session_id": "$session_id",
-		  "project_dir": "$escaped_project_dir",
-		  "callback_url": "$escaped_callback_url"
-		}
-		EOF
-        )
+    if [ -n "$reply_to_message_id" ]; then
+        extra_fields="${extra_fields}\"reply_to_message_id\":\"$reply_to_message_id\","
+    fi
+
+    # 移除末尾的逗号（如果有）
+    extra_fields="${extra_fields%,}"
+
+    # 组装请求体
+    if [ -n "$extra_fields" ]; then
+        request_body="{\"msg_type\":\"interactive\",\"content\":$card_content,\"owner_id\":\"$owner_id\",\"chat_id\":\"$chat_id\",$extra_fields}"
     else
-        request_body=$(cat <<-EOF
-		{
-		  "msg_type": "interactive",
-		  "content": $card_content,
-		  "owner_id": "$owner_id",
-		  "chat_id": "$chat_id"
-		}
-		EOF
-        )
+        request_body="{\"msg_type\":\"interactive\",\"content\":$card_content,\"owner_id\":\"$owner_id\",\"chat_id\":\"$chat_id\"}"
     fi
 
     _send_via_http_endpoint "$request_body" "$target_url" "openapi-card"

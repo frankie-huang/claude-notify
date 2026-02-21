@@ -390,16 +390,29 @@ class CallbackHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """处理 POST 请求
 
-        路由:
-            - /register: 网关注册接口（Callback 后端调用）
-            - /register-callback: 网关回调通知 auth_token
+        callback.py 同时承载飞书网关和 Callback 后端两端的路由。
+        当前两端运行在同一进程中，未来分离时各端只保留自己的路由。
+
+        飞书网关侧路由:
+            - /register: 接收 Callback 后端注册
+            - /feishu/send: 发送飞书消息（Shell 脚本调用，需 owner_id 鉴权）
+            - 其他未匹配路径: 飞书事件回调（URL验证、消息事件、卡片回传交互）
+
+        Callback 后端侧路由:
+            - /register-callback: 接收飞书网关通知的 auth_token
             - /check-owner-id: 验证 owner_id 是否属于该 Callback 后端
             - /get-chat-id: 根据 session_id 获取对应的 chat_id
-            - /callback/decision: 接收飞书网关转发的决策请求（分离部署，需 auth_token）
-            - /feishu/send: 发送飞书消息（OpenAPI）
-            - /claude/continue: 飞书端触发，继续 Claude 会话
-            - /claude/new: 飞书端触发，新建 Claude 会话
-            - 其他: 飞书事件回调（URL验证、消息事件、卡片回传交互）
+            - /get-last-message-id: 获取 session 的最近消息 ID
+            - /set-last-message-id: 设置 session 的最近消息 ID
+            - /callback/decision: 接收飞书网关转发的决策请求
+            - /claude/new: 新建 Claude 会话（飞书网关调用）
+            - /claude/continue: 继续 Claude 会话（飞书网关调用）
+            - /claude/recent-dirs: 获取近期工作目录
+            - /claude/browse-dirs: 浏览子目录
+
+        存储器归属（分离部署时各端只能访问自己归属的存储器）:
+            - Callback 后端: SessionChatStore, AuthTokenStore, DirHistoryStore
+            - 飞书网关: MessageSessionStore, BindingStore
         """
         parsed = urlparse(self.path)
         path = parsed.path
@@ -427,9 +440,12 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({'error': 'Invalid JSON'}).encode())
             return
 
-        # 路由分发
+        # =============================================
+        # 飞书网关侧路由
+        # 存储器: MessageSessionStore, BindingStore
+        # =============================================
         if path == '/register':
-            # 网关注册接口（Callback 后端调用）
+            # 接收 Callback 后端注册
             client_ip = self.get_client_ip()
             handled, response = handle_register_request(data, client_ip)
             status = 200 if response.get('success') else 400
@@ -439,8 +455,27 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(response).encode())
             return
 
+        if path == '/feishu/send':
+            # 发送飞书消息（OpenAPI），Shell 脚本调用此接口
+            # 鉴权: 基于 owner_id 查 BindingStore 中的 auth_token 比对
+            owner_id = verify_owner_based_auth_token(self, data, '/feishu/send')
+            if owner_id is None:
+                return  # 验证失败，已发送响应
+
+            handled, response = handle_send_message(data)
+            status = 200 if response.get('success') else 400
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+            return
+
+        # =============================================
+        # Callback 后端侧路由
+        # 存储器: SessionChatStore, AuthTokenStore, DirHistoryStore
+        # =============================================
         if path == '/register-callback':
-            # 网关回调通知 auth_token
+            # 接收飞书网关通知的 auth_token（网关 → Callback）
             handled, response = handle_register_callback(data)
             status = 200 if response.get('success') else 400
             self.send_response(status)
@@ -485,25 +520,76 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({'chat_id': chat_id}).encode())
             return
 
+        if path == '/get-last-message-id':
+            # 根据 session_id 获取对应的 last_message_id（客户端调用）
+            # 验证 auth_token
+            from services.session_chat_store import SessionChatStore
+
+            if not verify_global_auth_token(self, '/get-last-message-id'):
+                return
+
+            session_id = data.get('session_id', '')
+            if not session_id:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'last_message_id': ''}).encode())
+                return
+
+            store = SessionChatStore.get_instance()
+            last_message_id = ''
+            if store:
+                last_message_id = store.get_last_message_id(session_id)
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'last_message_id': last_message_id}).encode())
+            return
+
+        if path == '/set-last-message-id':
+            # 设置 session 的 last_message_id（飞书网关调用）
+            # 验证 auth_token
+            from services.session_chat_store import SessionChatStore
+
+            if not verify_global_auth_token(self, '/set-last-message-id'):
+                return
+
+            session_id = data.get('session_id', '')
+            message_id = data.get('message_id', '')
+
+            if not session_id or not message_id:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'Missing required parameters'}).encode())
+                return
+
+            store = SessionChatStore.get_instance()
+            if store:
+                success = store.set_last_message_id(session_id, message_id)
+                if success:
+                    logger.info(f"[callback] Set last_message_id: session={session_id}, message_id={message_id}")
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': True}).encode())
+                else:
+                    logger.warning(f"[callback] Failed to set last_message_id: session={session_id}, message_id={message_id}")
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': 'Failed to set last_message_id'}).encode())
+            else:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': 'SessionChatStore not initialized'}).encode())
+            return
+
         if path == '/callback/decision':
             # 接收飞书网关转发的决策请求（分离部署）
             return self._handle_callback_decision(data)
-
-        if path == '/feishu/send':
-            # 发送飞书消息（OpenAPI）
-            # 验证逻辑：客户端在 body 中提供 owner_id，网关从 BindingStore 查找对应的 auth_token 比对
-            owner_id = verify_owner_based_auth_token(self, data, '/feishu/send')
-            if owner_id is None:
-                return  # 验证失败，已发送响应
-
-            # 验证通过，调用处理函数
-            handled, response = handle_send_message(data)
-            status = 200 if response.get('success') else 400
-            self.send_response(status)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(response).encode())
-            return
 
         if path == '/claude/continue':
             # 继续 Claude 会话

@@ -330,7 +330,7 @@ def handle_new_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
             - project_dir: 项目工作目录 (必需)
             - prompt: 用户的问题 (必需)
             - chat_id: 群聊 ID (可选)
-            - message_id: 原始消息 ID (可选)
+            - message_id: 原始消息 ID (可选，用于飞书网关回复用户消息)
             - claude_command: 指定使用的 Claude 命令 (可选)
 
     Returns:

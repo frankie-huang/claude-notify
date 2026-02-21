@@ -1,6 +1,10 @@
 """AuthToken 存储
 
-Callback 后端使用此服务存储网关注册后返回的 auth_token。
+归属端: Callback 后端
+使用方: register.py (注册时保存), auth_token.py (验证时读取)
+
+存储网关注册后返回的全局 auth_token，用于验证来自飞书网关和 Shell 脚本的请求。
+飞书网关不应直接调用此 Store，应通过 X-Auth-Token header 传递令牌。
 """
 
 import json

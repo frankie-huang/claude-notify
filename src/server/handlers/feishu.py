@@ -409,20 +409,38 @@ def _forward_claude_request(callback_url: str, endpoint: str, data: dict, auth_t
         response_data = _post_json(api_url, data, auth_token=auth_token, timeout=30)
         logger.info(f"[feishu] {action.capitalize()} request response: {response_data}")
 
-        # 根据操作类型发送不同的通知
+        # 先保存用户消息到 MessageSessionStore（不更新 last_message_id）
+        if reply_to:
+            session_id = response_data.get('session_id', '') or data.get('session_id', '')
+            project_dir = data.get('project_dir', '')
+            if session_id and project_dir:
+                from services.message_session_store import MessageSessionStore
+                msg_store = MessageSessionStore.get_instance()
+                if msg_store:
+                    msg_store.save(reply_to, session_id, project_dir)
+                    logger.info(f"[feishu] Saved user message mapping: {reply_to} -> {session_id}")
+
+        # 再发送系统通知（内部会更新 last_message_id）
         _send_session_result_notification(chat_id, response_data, data.get('project_dir', ''),
-                                           is_new=is_new, reply_to=reply_to)
+                                           is_new=is_new, reply_to=reply_to,
+                                           callback_url=callback_url, auth_token=auth_token)
 
     except urllib.error.HTTPError as e:
         error_detail = _extract_http_error_detail(e)
         action_text = "新建会话失败" if is_new else "继续会话失败"
         error_msg = f"{action_text}: {error_detail}" if error_detail else f"Callback 服务返回错误: HTTP {e.code}"
         logger.error(f"[feishu] {action.capitalize()} request HTTP error: {e.code} {e.reason}")
-        _send_error_notification(chat_id, error_msg, reply_to=reply_to)
+        # 注意：新建会话时 data 中没有 session_id，对应的错误通知不会关联会话
+        # 这符合预期，因为会话根本没创建成功
+        _send_error_notification(chat_id, error_msg, reply_to=reply_to,
+                                 session_id=data.get('session_id', ''),
+                                 project_dir=data.get('project_dir', ''))
 
     except urllib.error.URLError as e:
         logger.error(f"[feishu] {action.capitalize()} request URL error: {e.reason}")
-        _send_error_notification(chat_id, f"Callback 服务不可达: {e.reason}", reply_to=reply_to)
+        _send_error_notification(chat_id, f"Callback 服务不可达: {e.reason}", reply_to=reply_to,
+                                 session_id=data.get('session_id', ''),
+                                 project_dir=data.get('project_dir', ''))
 
 
 def _extract_http_error_detail(http_error):
@@ -450,23 +468,27 @@ def _forward_continue_request(mapping: dict, prompt: str, chat_id: str, reply_me
         mapping: 映射信息 {session_id, project_dir}
         prompt: 用户回复内容
         chat_id: 群聊 ID
-        reply_message_id: 回复消息 ID（用作 reply_to）
+        reply_message_id: 回复消息 ID（用户消息 ID）
         feishu_event: 飞书事件数据（用于获取绑定信息）
         claude_command: 指定使用的 Claude 命令（可选）
     """
+    session_id = mapping['session_id']
+    project_dir = mapping['project_dir']
+
     # 获取绑定信息
     binding = _get_binding_from_event(feishu_event)
     if not binding:
         logger.warning("[feishu] No binding found, cannot continue session")
-        _send_error_notification(chat_id, "您尚未注册，无法使用此功能", reply_to=reply_message_id)
+        _send_error_notification(chat_id, "您尚未注册，无法使用此功能", reply_to=reply_message_id,
+                                 session_id=session_id, project_dir=project_dir)
         return
 
     auth_token = binding.get('auth_token', '')
     callback_url = binding.get('callback_url', '')
 
     data = {
-        'session_id': mapping['session_id'],
-        'project_dir': mapping['project_dir'],
+        'session_id': session_id,
+        'project_dir': project_dir,
         'prompt': prompt,
         'chat_id': chat_id,
         'reply_message_id': reply_message_id
@@ -479,7 +501,8 @@ def _forward_continue_request(mapping: dict, prompt: str, chat_id: str, reply_me
 
 
 def _send_session_result_notification(chat_id: str, response: dict, project_dir: str,
-                                       is_new: bool = False, reply_to: Optional[str] = None):
+                                       is_new: bool = False, reply_to: Optional[str] = None,
+                                       callback_url: str = '', auth_token: str = ''):
     """根据会话结果发送飞书通知
 
     Args:
@@ -487,7 +510,9 @@ def _send_session_result_notification(chat_id: str, response: dict, project_dir:
         response: Callback 返回的结果
         project_dir: 项目目录
         is_new: 是否为新建会话（True: 新建会话，False: 继续会话）
-        reply_to: 要回复的消息 ID（可选）
+        reply_to: 要回复的消息 ID（可选，用于链式回复）
+        callback_url: Callback 后端 URL（用于跨网络设置 last_message_id）
+        auth_token: 认证令牌（用于跨网络调用）
     """
     from services.feishu_api import FeishuAPIService
     from services.message_session_store import MessageSessionStore
@@ -501,6 +526,9 @@ def _send_session_result_notification(chat_id: str, response: dict, project_dir:
     error = response.get('error', '')
     session_id = response.get('session_id', '')
 
+    success = False
+    result = ''
+
     if status == 'processing':
         # 正在处理
         if is_new:
@@ -512,41 +540,63 @@ def _send_session_result_notification(chat_id: str, response: dict, project_dir:
 
         success, result = _send_text_message(service, chat_id, message, reply_to=reply_to)
 
-        # 保存映射，使后续回复能继续会话
-        if success and result and session_id and project_dir:
-            store = MessageSessionStore.get_instance()
-            if store:
-                store.save(result, session_id, project_dir)
-                session_type = "new" if is_new else "continue"
-                logger.info(f"[feishu] Saved {session_type} session mapping: {result} -> {session_id}")
-
     elif status == 'completed':
         # 快速完成
         output = response.get('output', '')
         message = f"✅ Claude 已完成: {_sanitize_user_content(output, 50)}" if output else "✅ Claude 已完成"
-        _send_text_message(service, chat_id, message, reply_to=reply_to)
+        success, result = _send_text_message(service, chat_id, message, reply_to=reply_to)
+
     elif error:
         # 执行失败
         error_prefix = "新建会话失败" if is_new else "Claude 执行失败"
-        _send_error_notification(chat_id, f"{error_prefix}: {error}", reply_to=reply_to)
+        _send_error_notification(chat_id, f"{error_prefix}: {error}", reply_to=reply_to,
+                                 session_id=session_id, project_dir=project_dir)
+        return
     else:
         logger.warning(f"[feishu] Unknown response status: {status}")
-        _send_error_notification(chat_id, f"未知的响应状态: {status}", reply_to=reply_to)
+        _send_error_notification(chat_id, f"未知的响应状态: {status}", reply_to=reply_to,
+                                 session_id=session_id, project_dir=project_dir)
+        return
+
+    # 发送成功后统一保存消息映射和同步 last_message_id
+    if success and result and session_id and project_dir:
+        msg_store = MessageSessionStore.get_instance()
+        if msg_store:
+            msg_store.save(result, session_id, project_dir)
+            logger.info(f"[feishu] Saved notification mapping: {result} -> {session_id}")
+
+        if callback_url and auth_token:
+            _set_last_message_id_to_callback(callback_url, auth_token, session_id, result)
 
 
-def _send_error_notification(chat_id: str, error_msg: str, reply_to: Optional[str] = None):
+def _send_error_notification(chat_id: str, error_msg: str, reply_to: Optional[str] = None,
+                             session_id: str = '', project_dir: str = ''):
     """发送错误通知到飞书
+
+    注意：错误通知仅保存到 MessageSessionStore（支持用户回复继续会话），
+    不同步 last_message_id 到 Callback 后端。这是符合预期的行为——
+    错误通知不应成为链式回复的锚点，后续正常通知应继续回复到上一条正常消息。
 
     Args:
         chat_id: 群聊 ID
         error_msg: 错误消息
         reply_to: 要回复的消息 ID（可选）
+        session_id: 会话 ID（可选，用于保存消息映射）
+        project_dir: 项目目录（可选，用于保存消息映射）
     """
     from services.feishu_api import FeishuAPIService
 
     service = FeishuAPIService.get_instance()
     if service and service.enabled:
-        _send_text_message(service, chat_id, f"⚠️ {error_msg}", reply_to=reply_to)
+        success, result = _send_text_message(service, chat_id, f"⚠️ {error_msg}", reply_to=reply_to)
+
+        # 保存错误通知消息到 MessageSessionStore
+        if success and result and session_id and project_dir:
+            from services.message_session_store import MessageSessionStore
+            msg_store = MessageSessionStore.get_instance()
+            if msg_store:
+                msg_store.save(result, session_id, project_dir)
+                logger.info(f"[feishu] Saved error notification mapping: {result} -> {session_id}")
 
 
 def _send_text_message(service, chat_id: str, text: str, reply_to: Optional[str] = None) -> Tuple[bool, str]:
@@ -741,7 +791,7 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
     trigger_name = action.get('name', '')
     logger.info(f"[feishu] Form trigger_name: {trigger_name}")
 
-    # 从按钮的 value 中提取 chat_id 和 message_id
+    # 从按钮的 value 中提取 chat_id 和 message_id（用户原始消息 ID）
     button_value = action.get('value', {})
     chat_id = button_value.get('chat_id', '')
     message_id = button_value.get('message_id', '')
@@ -1822,6 +1872,51 @@ def _fetch_browse_dirs_from_callback(callback_url: str, auth_token: str, path: s
         return {}
 
 
+def _set_last_message_id_to_callback(callback_url: str, auth_token: str,
+                                       session_id: str, message_id: str) -> bool:
+    """通过 Callback 后端设置 session 的 last_message_id
+
+    Args:
+        callback_url: Callback 后端 URL
+        auth_token: 认证令牌
+        session_id: Claude 会话 ID
+        message_id: 飞书消息 ID
+
+    Returns:
+        是否设置成功
+    """
+    import urllib.error
+
+    if not callback_url:
+        logger.warning("[feishu] No callback_url available for setting last_message_id")
+        return False
+
+    api_url = f"{callback_url.rstrip('/')}/set-last-message-id"
+    request_data = {
+        'session_id': session_id,
+        'message_id': message_id
+    }
+
+    try:
+        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=5)
+        success = response_data.get('success', False)
+        if success:
+            logger.info(f"[feishu] Set last_message_id via callback: session={session_id}, message_id={message_id}")
+        else:
+            logger.warning(f"[feishu] Failed to set last_message_id: {response_data.get('error', 'unknown')}")
+        return success
+
+    except urllib.error.HTTPError as e:
+        logger.error(f"[feishu] Set last_message_id HTTP error: {e.code} {e.reason}")
+        return False
+    except urllib.error.URLError as e:
+        logger.error(f"[feishu] Set last_message_id URL error: {e.reason}")
+        return False
+    except Exception as e:
+        logger.error(f"[feishu] Set last_message_id error: {e}")
+        return False
+
+
 def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prompt: str,
                            event: dict, claude_command: str = ''):
     """发送工作目录选择卡片
@@ -1949,6 +2044,8 @@ def _forward_new_request(project_dir: str, prompt: str, chat_id: str, message_id
     binding = _get_binding_from_event(feishu_event)
     if not binding:
         logger.warning("[feishu] No binding found, cannot create session")
+        # 注意：此处不关联会话，因为会话尚未创建（用户未注册）
+        # 用户回复此错误通知没有意义，应先完成注册
         _send_error_notification(chat_id, "您尚未注册，无法使用此功能", reply_to=message_id)
         return
 
@@ -1964,6 +2061,8 @@ def _forward_new_request(project_dir: str, prompt: str, chat_id: str, message_id
     if claude_command:
         data['claude_command'] = claude_command
 
+    # 新建会话时传递 reply_to，让第一条通知回复用户的 /new 消息
+    # 后续通知会通过 last_message_id 链式回复
     _forward_claude_request(callback_url, '/claude/new', data,
                             auth_token, chat_id, 'new', reply_to=message_id)
 
@@ -1983,12 +2082,14 @@ def handle_send_message(data: dict) -> Tuple[bool, dict]:
             - receive_id_type: 接收者类型（可选，默认自动检测）
             - session_id: Claude 会话 ID（可选，用于继续会话）
             - project_dir: 项目工作目录（可选，用于继续会话）
+            - reply_to_message_id: 要回复的消息 ID（可选，使用 reply API）
 
     Returns:
         (handled, response): handled 始终为 True，response 包含结果
 
     Note:
         receive_id 优先级：chat_id 参数 > owner_id
+        当提供 reply_to_message_id 时，使用 reply API 发送消息到话题流
     """
     from services.feishu_api import FeishuAPIService, detect_receive_id_type
 
@@ -2000,6 +2101,7 @@ def handle_send_message(data: dict) -> Tuple[bool, dict]:
     # 提取 session 相关参数
     session_id = data.get('session_id', '')
     project_dir = data.get('project_dir', '')
+    reply_to_message_id = data.get('reply_to_message_id', '') or ''
 
     if not msg_type:
         logger.warning("[feishu] /feishu/send: missing msg_type")
@@ -2034,28 +2136,57 @@ def handle_send_message(data: dict) -> Tuple[bool, dict]:
 
         # 如果是 dict 类型，转为 JSON 字符串
         card_json = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-        success, result = service.send_card(card_json, receive_id, receive_id_type)
+
+        if reply_to_message_id:
+            success, result = service.reply_card(card_json, reply_to_message_id)
+            if not success:
+                logger.warning(f"[feishu] /feishu/send: reply_card failed, fallback to send: {result}")
+                success, result = service.send_card(card_json, receive_id, receive_id_type)
+        else:
+            success, result = service.send_card(card_json, receive_id, receive_id_type)
+
     elif msg_type == 'text':
         text = content if isinstance(content, str) else content.get('text', '')
         if not text:
             logger.warning("[feishu] /feishu/send: missing text content")
             return True, {'success': False, 'error': 'Missing text content'}
-        success, result = service.send_text(text, receive_id, receive_id_type)
+
+        if reply_to_message_id:
+            success, result = service.reply_text(text, reply_to_message_id)
+            if not success:
+                logger.warning(f"[feishu] /feishu/send: reply_text failed, fallback to send: {result}")
+                success, result = service.send_text(text, receive_id, receive_id_type)
+        else:
+            success, result = service.send_text(text, receive_id, receive_id_type)
+
     else:
         logger.warning(f"[feishu] /feishu/send: unsupported msg_type: {msg_type}")
         return True, {'success': False, 'error': f'Unsupported msg_type: {msg_type}'}
 
     if success:
         message_id = result
-        logger.info(f"[feishu] /feishu/send: message sent to {receive_id} ({receive_id_type}), id={message_id}")
+        logger.info(f"[feishu] /feishu/send: message sent to {receive_id} ({receive_id_type}), id={message_id}, reply_to={reply_to_message_id}")
 
-        # 发送成功后保存映射（支持继续会话）
+        # 保存到本地 MessageSessionStore（飞书网关维护）
         if message_id and session_id and project_dir:
             from services.message_session_store import MessageSessionStore
-            store = MessageSessionStore.get_instance()
-            if store:
-                store.save(message_id, session_id, project_dir)
-                logger.info(f"[feishu] Saved session mapping: {message_id} -> {session_id}")
+            msg_store = MessageSessionStore.get_instance()
+            if msg_store:
+                msg_store.save(message_id, session_id, project_dir)
+
+        # 通过 Callback 后端设置 last_message_id
+        if message_id and session_id and project_dir and owner_id:
+            # 从 BindingStore 获取 callback_url 和 auth_token
+            from services.binding_store import BindingStore
+            binding_store = BindingStore.get_instance()
+            if binding_store:
+                binding = binding_store.get(owner_id)
+                if binding:
+                    callback_url = binding.get('callback_url', '')
+                    auth_token_from_binding = binding.get('auth_token', '')
+                    if callback_url and auth_token_from_binding:
+                        _set_last_message_id_to_callback(callback_url, auth_token_from_binding,
+                                                          session_id, message_id)
 
         return True, {'success': True, 'message_id': message_id}
     else:
