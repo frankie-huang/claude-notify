@@ -18,7 +18,7 @@ Callback 后端启动时自动向飞书网关注册，获取 `auth_token` 用于
 
 1. **自动注册** - Callback 后端启动时自动获取 auth_token
 2. **Token 更新** - 每次重启更新 auth_token
-3. **双向认证** - `/feishu/send` 接口验证 X-Auth-Token
+3. **双向认证** - `/gw/feishu/send` 接口验证 X-Auth-Token
 4. **用户授权** - 分离模式下新设备需用户确认
 
 ## 注册流程
@@ -46,7 +46,7 @@ Callback 后端启动时自动向飞书网关注册，获取 `auth_token` 用于
        │        ▼                           ▼                               ▼
        │   ┌─────────────────┐      ┌─────────────────┐          ┌─────────────────┐
        │   │调用 check_owner │      │ 回调 callback   │          │ 发飞书卡片       │
-       │   │    _id 验证     │      │ /register-callback│          │ 显示新旧设备     │
+       │   │    _id 验证     │      │ /cb/register    │          │ 显示新旧设备     │
        │   └─────────────────┘      │ 通知 auth_token  │          │ 让用户确认       │
        │        │                   └─────────────────┘          └─────────────────┘
        │        ▼                           │                              │
@@ -55,7 +55,7 @@ Callback 后端启动时自动向飞书网关注册，获取 `auth_token` 用于
        │   │ 请求用户确认     │              │                              ▼
        │   └─────────────────┘              │                    ┌─────────────────┐
        │        │                           │                    │ 回调 callback   │
-       │        ▼                           │                    │ /register-callback│
+       │        ▼                           │                    │ /cb/register    │
        │ ┌─────────────────┐                │                    │ 通知 auth_token  │
        │ │用户点"允许/拒绝" │                │                    └─────────────────┘
        │ └─────────────────┘                │                              │
@@ -71,7 +71,7 @@ Callback 后端启动时自动向飞书网关注册，获取 `auth_token` 用于
 
 **处理逻辑说明：**
 
-1. **未绑定**：先调用 `callback_url/check-owner-id` 验证所属权，验证通过后发送授权卡片
+1. **未绑定**：先调用 `callback_url/cb/check-owner` 验证所属权，验证通过后发送授权卡片
 2. **已绑定 + callback_url 相同**：直接更新 auth_token，无需用户确认
 3. **已绑定 + callback_url 不同**：发送授权卡片，显示新旧设备对比，让用户选择是否更换
 4. **用户拒绝**：如果存在 owner_id + callback_url 精确匹配的绑定则删除（用于解绑）
@@ -83,12 +83,13 @@ Callback 后端启动时自动向飞书网关注册，获取 `auth_token` 用于
 **请求**
 
 ```
-POST /register
+POST /gw/register
 Content-Type: application/json
 
 {
   "callback_url": "https://callback.example.com",
-  "owner_id": "ou_xxx"
+  "owner_id": "ou_xxx",
+  "reply_in_thread": false
 }
 ```
 
@@ -110,7 +111,7 @@ Content-Type: application/json
 **请求**
 
 ```
-POST {callback_url}/check-owner-id
+POST {callback_url}/cb/check-owner
 Content-Type: application/json
 
 {
@@ -132,7 +133,7 @@ Content-Type: application/json
 **请求**
 
 ```
-POST {callback_url}/register-callback
+POST {callback_url}/cb/register
 X-Auth-Token: {auth_token}
 Content-Type: application/json
 
@@ -159,7 +160,7 @@ Callback 后端通过此接口发送飞书消息（卡片或文本），需要�
 **请求**
 
 ```
-POST /feishu/send
+POST /gw/feishu/send
 X-Auth-Token: {auth_token}
 Content-Type: application/json
 
@@ -266,9 +267,9 @@ Content-Type: application/json
               "action": "approve_register",
               "callback_url": "https://callback.example.com",
               "owner_id": "ou_xxx",
-              "auth_token": "...",
               "request_ip": "1.2.3.4",
-              "old_callback_url": ""
+              "old_callback_url": "",
+              "reply_in_thread": false
             }
           },
           {
@@ -327,9 +328,9 @@ Content-Type: application/json
               "action": "approve_register",
               "callback_url": "https://new-callback.example.com",
               "owner_id": "ou_xxx",
-              "auth_token": "...",
               "request_ip": "1.2.3.4",
-              "old_callback_url": "https://old-callback.example.com"
+              "old_callback_url": "https://old-callback.example.com",
+              "reply_in_thread": false
             }
           },
           {
@@ -415,9 +416,9 @@ def verify_auth_token(auth_token: str, owner_id: str) -> bool:
 ## 映射表结构
 
 ```
-owner_id   | callback_url              | auth_token        | updated_at        | registered_ip
------------|---------------------------|-------------------|-------------------|---------------
-ou_xxx     | https://callback.example  | abc123.def456     | 2025-02-05 10:30:00| 1.2.3.4
+owner_id   | callback_url              | auth_token        | reply_in_thread | updated_at        | registered_ip
+-----------|---------------------------|-------------------|-----------------|-------------------|---------------
+ou_xxx     | https://callback.example  | abc123.def456     | false           | 2025-02-05 10:30:00| 1.2.3.4
 ```
 
 - 一个用户（owner_id）同时只能有一个活跃的 callback_url 绑定
@@ -434,7 +435,7 @@ ou_xxx     | https://callback.example  | abc123.def456     | 2025-02-05 10:30:00
 | callback 后端伪造其他用户的 token | 签名包含 owner_id，只能生成自己的 token |
 | 重放攻击 | 虽然不设过期，但每次重启会更新 token，旧的自动失效 |
 | 未授权注册 | 新注册需要用户在飞书中确认 |
-| 恶意注册请求 | 发送授权卡片前先调用 `/check-owner-id` 验证 callback_url 所属 |
+| 恶意注册请求 | 发送授权卡片前先调用 `/cb/check-owner` 验证 callback_url 所属 |
 
 ## 后续请求认证
 
@@ -443,19 +444,19 @@ ou_xxx     | https://callback.example  | abc123.def456     | 2025-02-05 10:30:00
 网关转发消息时在请求头中携带 auth_token：
 
 ```
-POST {callback_url}/claude/continue
+POST {callback_url}/cb/claude/continue
 X-Auth-Token: {auth_token}
 Content-Type: application/json
 
 {...}
 ```
 
-### Callback 后端 → 飞书网关（/feishu/send）
+### Callback 后端 → 飞书网关（/gw/feishu/send）
 
-Callback 后端调用 `/feishu/send` 发送消息时，**前端脚本自动**从 `runtime/auth_token.json` 读取 auth_token 并添加到请求头：
+Callback 后端调用 `/gw/feishu/send` 发送消息时，**前端脚本自动**从 `runtime/auth_token.json` 读取 auth_token 并添加到请求头：
 
 ```
-POST {gateway_url}/feishu/send
+POST {gateway_url}/gw/feishu/send
 X-Auth-Token: {auth_token}
 Content-Type: application/json
 
@@ -475,13 +476,13 @@ _get_auth_token() {
     json_get "$(cat "$auth_token_file")" "auth_token"
 }
 
-# 调用 /feishu/send 时自动附加 token
+# 调用 /gw/feishu/send 时自动附加 token
 _do_curl_post "$url" "$body" "$log_prefix" "$auth_token"
 ```
 
 ### Callback 后端验证（必需）
 
-`/feishu/send` 接口**强制要求**验证 `X-Auth-Token` header：
+`/gw/feishu/send` 接口**强制要求**验证 `X-Auth-Token` header：
 
 | 验证项 | 说明 |
 |--------|------|
@@ -566,4 +567,4 @@ FEISHU_SEND_MODE=webhook
 FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxx
 ```
 
-> **说明**：Webhook 模式直接调用飞书 Webhook URL 发送消息，不经过 `/feishu/send` 接口，无需配置认证相关参数。
+> **说明**：Webhook 模式直接调用飞书 Webhook URL 发送消息，不经过 `/gw/feishu/send` 接口，无需配置认证相关参数。

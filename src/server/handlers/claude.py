@@ -4,7 +4,6 @@
 以及通过 /new 指令发起新的 Claude 会话。
 """
 
-import json
 import logging
 import os
 import shlex
@@ -13,7 +12,7 @@ import uuid
 from typing import Tuple, Dict, Any
 
 from services.session_chat_store import SessionChatStore
-from .utils import run_in_background as _run_in_background
+from handlers.utils import run_in_background as _run_in_background
 
 logger = logging.getLogger(__name__)
 

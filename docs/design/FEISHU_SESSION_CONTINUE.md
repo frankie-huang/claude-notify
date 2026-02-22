@@ -91,10 +91,10 @@ return True, message_id
 
 ## 6. 问题 3：将提问发送给 Claude 会话
 
-飞书网关收到回复消息后，调用对应 Callback 后端的 `/claude/continue` 接口：
+飞书网关收到回复消息后，调用对应 Callback 后端的 `/cb/claude/continue` 接口：
 
 ```bash
-POST {callback_url}/claude/continue
+POST {callback_url}/cb/claude/continue
 {
     "session_id": "550e8400-e29b...",
     "project_dir": "/home/user/project",
@@ -123,7 +123,7 @@ Claude 完成后，通过 Hook 事件自行决定发送结果到哪里。
 │  调用 send_feishu_card，传递 session_id, project_dir, callback_url          │
 └─────────────────────────────────────────────────────────────────────────────┘
                                                │
-                                               │ POST /feishu/send
+                                               │ POST /gw/feishu/send
                                                │ {
                                                │   msg_type, content,
                                                │   session_id, project_dir,
@@ -163,7 +163,7 @@ Claude 完成后，通过 Hook 事件自行决定发送结果到哪里。
 │  4. 调用 Callback 后端                                                        │
 └─────────────────────────────────────────────────────────────────────────────┘
                                                │
-                                               │ POST {callback_url}/claude/continue
+                                               │ POST {callback_url}/cb/claude/continue
                                                │ {
                                                │   session_id, project_dir,
                                                │   prompt, chat_id,
@@ -187,7 +187,7 @@ Claude 完成后，通过 Hook 事件自行决定发送结果到哪里。
 | `src/server/handlers/feishu.py` | 发送成功后保存映射；处理回复消息查映射并调用 Callback |
 | `src/server/services/feishu_api.py` | `send_card` 增加参数，返回 message_id 后由 handler 保存映射 |
 | `src/server/services/message_session_store.py` | **新增** 管理映射关系 |
-| `src/server/handlers/claude.py` | **新增** `/claude/continue` 接口 |
+| `src/server/handlers/claude.py` | **新增** `/cb/claude/continue` 接口 |
 | `src/server/services/claude_invoker.py` | **新增** 封装 Claude 调用 |
 
 ## 9. 详细实现说明
@@ -214,7 +214,7 @@ _send_feishu_card_openapi()  [src/lib/feishu.sh]
   │   "callback_url": "http://..."
   │ }
   │
-  │ POST /feishu/send
+  │ POST /gw/feishu/send
   ▼
 handle_send_message()  [src/server/handlers/feishu.py]
   │
@@ -370,7 +370,7 @@ def _handle_reply_message(event: dict, parent_id: str) -> Tuple[bool, dict]:
     callback_url = mapping['callback_url']
     try:
         resp = requests.post(
-            f"{callback_url}/claude/continue",
+            f"{callback_url}/cb/claude/continue",
             json={
                 'session_id': mapping['session_id'],
                 'project_dir': mapping['project_dir'],
@@ -548,7 +548,7 @@ def _run_claude_async(session_id: str, project_dir: str, prompt: str):
 ```python
 from handlers.claude import handle_continue_session
 
-@app.route('/claude/continue', methods=['POST'])
+@app.route('/cb/claude/continue', methods=['POST'])
 def claude_continue():
     data = request.get_json() or {}
     success, result = handle_continue_session(data)
@@ -686,7 +686,7 @@ CLAUDE_COMMAND=claude-glm
 ### 第二阶段：消息处理
 
 - 扩展 `_handle_message_event` 识别回复消息
-- 新增 `/claude/continue` 接口
+- 新增 `/cb/claude/continue` 接口
 - 实现 Claude 异步调用
 
 ### 第三阶段：优化体验

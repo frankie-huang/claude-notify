@@ -1,7 +1,7 @@
 """BindingStore - owner_id 到 callback_url 的绑定存储
 
 归属端: 飞书网关
-使用方: feishu.py, register.py（网关内部逻辑），callback.py 中的网关侧路由（/feishu/send）
+使用方: feishu.py, register.py（网关内部逻辑），callback.py 中的网关侧路由（/gw/feishu/send）
 
 维护飞书用户 ID 到 Callback 后端 URL 的映射关系，用于网关注册和双向认证。
 Callback 后端的路由和逻辑不应直接调用此 Store。
@@ -26,6 +26,7 @@ class BindingStore:
         "ou_xxx": {
             "callback_url": "https://callback.example.com",
             "auth_token": "abc123.def456",
+            "reply_in_thread": true,
             "updated_at": 1706745600,
             "registered_ip": "1.2.3.4"
         }
@@ -93,7 +94,8 @@ class BindingStore:
         owner_id: str,
         callback_url: str,
         auth_token: str,
-        registered_ip: str = ''
+        registered_ip: str = '',
+        reply_in_thread: bool = False
     ) -> bool:
         """创建或更新绑定
 
@@ -102,6 +104,7 @@ class BindingStore:
             callback_url: Callback 后端 URL
             auth_token: 认证令牌
             registered_ip: 注册来源 IP
+            reply_in_thread: 是否使用回复话题模式
 
         Returns:
             是否保存成功
@@ -123,6 +126,7 @@ class BindingStore:
                 data[owner_id] = {
                     'callback_url': callback_url,
                     'auth_token': auth_token,
+                    'reply_in_thread': reply_in_thread,
                     'updated_at': int(time.time()),
                     'registered_ip': registered_ip
                 }

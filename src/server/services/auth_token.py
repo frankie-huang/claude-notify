@@ -13,7 +13,7 @@ import hmac
 import json
 import logging
 import time
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -182,11 +182,11 @@ def verify_owner_based_auth_token(
     handler,
     data: dict,
     endpoint_name: str
-) -> Optional[str]:
+) -> Optional[Dict[str, Any]]:
     """验证基于 owner_id 的 AuthToken（用于需要绑定关系的接口）
 
     从请求 body 中获取 owner_id，从 BindingStore 查找对应的 auth_token 进行比对。
-    验证成功返回 owner_id，失败则发送 401 响应并返回 None。
+    验证成功返回 binding，失败则发送 401 响应并返回 None。
 
     Args:
         handler: BaseHTTPRequestHandler 实例（用于访问 headers 和发送响应）
@@ -194,7 +194,7 @@ def verify_owner_based_auth_token(
         endpoint_name: 端点名称（用于日志记录）
 
     Returns:
-        owner_id: 验证成功返回 owner_id，失败返回 None（已发送响应）
+        binding: 验证成功返回 binding 字典，失败返回 None（已发送响应）
     """
     from services.binding_store import BindingStore
 
@@ -249,4 +249,4 @@ def verify_owner_based_auth_token(
         handler.wfile.write(json.dumps({'success': False, 'error': 'Invalid X-Auth-Token'}).encode())
         return None
 
-    return owner_id
+    return binding

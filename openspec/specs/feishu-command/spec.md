@@ -14,7 +14,7 @@ TBD - created by archiving change add-new-command. Update Purpose after archive.
 - **WHEN** 网关处理该消息
 - **THEN** 网关判定为 `/new` 指令
 - **AND** 提取指令参数（含 `--dir`、`--cmd`）和 prompt 内容
-- **AND** 转发到 Callback 后端 `/claude/new` 接口
+- **AND** 转发到 Callback 后端 `/cb/claude/new` 接口
 
 #### Scenario: 指令格式解析
 
@@ -73,12 +73,12 @@ TBD - created by archiving change add-new-command. Update Purpose after archive.
 
 ### Requirement: Callback 后端新建会话接口
 
-Callback 后端 SHALL 提供 `/claude/new` 端点，接收并处理新建会话请求，支持指定 Claude Command。
+Callback 后端 SHALL 提供 `/cb/claude/new` 端点，接收并处理新建会话请求，支持指定 Claude Command。
 
 #### Scenario: 接收新建会话请求
 
 - **GIVEN** Callback 后端正在运行
-- **WHEN** 收到 POST `/claude/new` 请求
+- **WHEN** 收到 POST `/cb/claude/new` 请求
 - **AND** 请求包含 `project_dir`、`prompt`、`chat_id`、`message_id`
 - **AND** 请求可选包含 `claude_command`
 - **THEN** 后端验证参数完整性
@@ -102,21 +102,21 @@ Callback 后端 SHALL 提供 `/claude/new` 端点，接收并处理新建会话�
 
 #### Scenario: 参数验证失败
 
-- **GIVEN** 收到 `/claude/new` 请求
+- **GIVEN** 收到 `/cb/claude/new` 请求
 - **WHEN** 缺少 `project_dir` 或 `prompt`
 - **THEN** 返回 `400` 状态码
 - **AND** 返回 `{"error": "missing required fields"}`
 
 #### Scenario: 项目目录不存在
 
-- **GIVEN** 收到 `/claude/new` 请求
+- **GIVEN** 收到 `/cb/claude/new` 请求
 - **WHEN** `project_dir` 目录不存在
 - **THEN** 返回 `400` 状态码
 - **AND** 返回 `{"error": "project directory not found"}`
 
 #### Scenario: 指定的 Command 不在配置列表中
 
-- **GIVEN** 收到 `/claude/new` 请求
+- **GIVEN** 收到 `/cb/claude/new` 请求
 - **AND** `claude_command` 值不在预配置列表中
 - **WHEN** Callback 验证命令
 - **THEN** 返回 `400` 状态码
@@ -148,7 +148,7 @@ Callback 后端 SHALL 提供 `/claude/new` 端点，接收并处理新建会话�
 - **AND** 用户回复"会话已创建"通知消息
 - **WHEN** 飞书网关收到回复
 - **THEN** 查询到 `parent_id` 对应的 session 映射
-- **AND** 转发到 `/claude/continue` 接口
+- **AND** 转发到 `/cb/claude/continue` 接口
 - **AND** 使用创建时的 `session_id` 继续会话
 
 ### Requirement: 错误处理
@@ -331,12 +331,12 @@ Callback 后端 SHALL 提供 `/claude/new` 端点，接收并处理新建会话�
 
 ### Requirement: 路径浏览接口
 
-Callback 后端 SHALL 提供 `/claude/browse-dirs` 端点，列出指定路径下的子目录。
+Callback 后端 SHALL 提供 `/cb/claude/browse-dirs` 端点，列出指定路径下的子目录。
 
 #### Scenario: 列出子目录
 
 - **GIVEN** Callback 后端正在运行
-- **WHEN** 收到 POST `/claude/browse-dirs` 请求
+- **WHEN** 收到 POST `/cb/claude/browse-dirs` 请求
 - **AND** 请求包含 `{"path": "/home/user"}`
 - **THEN** 列出 `/home/user` 下的所有子目录（不含文件）
 - **AND** 过滤以 `.` 开头的隐藏目录
@@ -345,27 +345,27 @@ Callback 后端 SHALL 提供 `/claude/browse-dirs` 端点，列出指定路径�
 
 #### Scenario: 路径验证
 
-- **GIVEN** 收到 `/claude/browse-dirs` 请求
+- **GIVEN** 收到 `/cb/claude/browse-dirs` 请求
 - **WHEN** path 不是绝对路径
 - **THEN** 返回 `400` 状态码
 - **AND** 返回 `{"error": "path must be absolute"}`
 
 #### Scenario: 路径不存在
 
-- **GIVEN** 收到 `/claude/browse-dirs` 请求
+- **GIVEN** 收到 `/cb/claude/browse-dirs` 请求
 - **WHEN** path 不存在或无法访问
 - **THEN** 返回 `400` 状态码
 - **AND** 返回 `{"error": "path not found or not accessible"}`
 
 #### Scenario: 默认起始路径
 
-- **GIVEN** 收到 `/claude/browse-dirs` 请求
+- **GIVEN** 收到 `/cb/claude/browse-dirs` 请求
 - **WHEN** 请求未包含 path 字段或 path 为空
 - **THEN** 默认使用 `/` 作为浏览起始路径
 
 #### Scenario: 认证保护
 
-- **GIVEN** 收到 `/claude/browse-dirs` 请求
+- **GIVEN** 收到 `/cb/claude/browse-dirs` 请求
 - **WHEN** 请求缺少有效的 `X-Auth-Token`
 - **THEN** 返回 `401` 状态码
 - **AND** 拒绝请求
@@ -380,7 +380,7 @@ Callback 后端 SHALL 提供 `/claude/browse-dirs` 端点，列出指定路径�
 - **AND** 常用目录下拉框选择了 "/home/user"
 - **WHEN** 网关收到 form 提交回调
 - **AND** 触发按钮 name 为 `browse_dir_select_btn`
-- **THEN** 调用 Callback 后端 `/claude/browse-dirs` 接口，路径为下拉框选中的值
+- **THEN** 调用 Callback 后端 `/cb/claude/browse-dirs` 接口，路径为下拉框选中的值
 - **AND** 返回更新后的卡片，custom_dir 输入框保持原值（如有）
 - **AND** 在下方新增子目录列表（`select_static`，name 为 `browse_result`）
 
@@ -398,7 +398,7 @@ Callback 后端 SHALL 提供 `/claude/browse-dirs` 端点，列出指定路径�
 - **AND** custom_dir 输入框值为 "/home/user"
 - **WHEN** 网关收到 form 提交回调
 - **AND** 触发按钮 name 为 `browse_custom_btn`
-- **THEN** 调用 Callback 后端 `/claude/browse-dirs` 接口
+- **THEN** 调用 Callback 后端 `/cb/claude/browse-dirs` 接口
 - **AND** 返回更新后的卡片，custom_dir 输入框回填为当前浏览路径
 - **AND** 在下方新增子目录列表（`select_static`，name 为 `browse_result`）
 - **AND** 保持 prompt 输入框的原值（通过 default_value 回填）
@@ -563,7 +563,7 @@ Callback 后端 SHALL 提供 `/claude/browse-dirs` 端点，列出指定路径�
 - **GIVEN** 用户在卡片中选择了 `claude --setting opus`
 - **AND** 用户点击"创建会话"按钮
 - **WHEN** 处理表单提交
-- **THEN** 将选中的 `claude_command` 传递到 Callback 后端 `/claude/new`
+- **THEN** 将选中的 `claude_command` 传递到 Callback 后端 `/cb/claude/new`
 
 ### Requirement: /reply 指令
 

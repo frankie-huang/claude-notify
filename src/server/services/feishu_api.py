@@ -14,12 +14,8 @@ import threading
 import time
 from typing import Optional, Tuple, Dict, Any
 
-# Python 3.6 兼容: 使用 urllib 而非 requests
-try:
-    from urllib.request import Request, build_opener, ProxyHandler
-    from urllib.error import URLError, HTTPError
-except ImportError:
-    from urllib2 import Request, URLError, HTTPError, build_opener, ProxyHandler
+from urllib.request import Request, build_opener, ProxyHandler
+from urllib.error import URLError, HTTPError
 
 from config import (
     FEISHU_APP_ID,
@@ -143,8 +139,8 @@ class TokenManager:
     def __init__(self, app_id: str, app_secret: str):
         self._app_id = app_id
         self._app_secret = app_secret
-        self._token = ''  # type: str
-        self._expire_time = 0  # type: float
+        self._token = ''
+        self._expire_time = 0
         self._lock = threading.Lock()
 
     def get_token(self) -> str:
@@ -291,7 +287,8 @@ class MessageSender:
     def reply_card(
         self,
         card_json: str,
-        message_id: str
+        message_id: str,
+        reply_in_thread: bool = False
     ) -> Tuple[bool, str]:
         """回复卡片消息
 
@@ -300,6 +297,7 @@ class MessageSender:
         Args:
             card_json: 卡片 JSON 字符串
             message_id: 要回复的消息 ID（必需）
+            reply_in_thread: 是否收进话题详情（True 时消息仅出现在话题中，不刷群聊主界面）
 
         Returns:
             (success, new_message_id or error)
@@ -328,6 +326,8 @@ class MessageSender:
             'msg_type': 'interactive',
             'content': json.dumps(card_data, ensure_ascii=False)
         }
+        if reply_in_thread:
+            payload['reply_in_thread'] = True
 
         success, resp = _http_request(
             url,
@@ -346,7 +346,7 @@ class MessageSender:
             return False, f"API error: {error_msg}"
 
         new_message_id = resp.get('data', {}).get('message_id', '')
-        logger.info(f"[feishu-api] Message replied: {new_message_id}, parent_id={message_id}")
+        logger.info(f"[feishu-api] Message replied: {new_message_id}, parent_id={message_id}, in_thread={reply_in_thread}")
         return True, new_message_id
 
     def send_text(
@@ -411,7 +411,8 @@ class MessageSender:
     def reply_text(
         self,
         text: str,
-        message_id: str
+        message_id: str,
+        reply_in_thread: bool = False
     ) -> Tuple[bool, str]:
         """回复文本消息
 
@@ -420,6 +421,7 @@ class MessageSender:
         Args:
             text: 文本内容
             message_id: 要回复的消息 ID（必需）
+            reply_in_thread: 是否收进话题详情（True 时消息仅出现在话题中，不刷群聊主界面）
 
         Returns:
             (success, new_message_id or error)
@@ -442,6 +444,8 @@ class MessageSender:
             'msg_type': 'text',
             'content': json.dumps({'text': text})
         }
+        if reply_in_thread:
+            payload['reply_in_thread'] = True
 
         success, resp = _http_request(
             url,
@@ -460,7 +464,7 @@ class MessageSender:
             return False, f"API error: {error_msg}"
 
         new_message_id = resp.get('data', {}).get('message_id', '')
-        logger.info(f"[feishu-api] Text replied: {new_message_id}, parent_id={message_id}")
+        logger.info(f"[feishu-api] Text replied: {new_message_id}, parent_id={message_id}, in_thread={reply_in_thread}")
         return True, new_message_id
 
 
@@ -555,7 +559,8 @@ class FeishuAPIService:
     def reply_card(
         self,
         card_json: str,
-        message_id: str
+        message_id: str,
+        reply_in_thread: bool = False
     ) -> Tuple[bool, str]:
         """回复卡片消息
 
@@ -564,6 +569,7 @@ class FeishuAPIService:
         Args:
             card_json: 卡片 JSON 字符串
             message_id: 要回复的消息 ID
+            reply_in_thread: 是否收进话题详情
 
         Returns:
             (success, new_message_id or error)
@@ -571,7 +577,7 @@ class FeishuAPIService:
         if not self._enabled:
             return False, "Feishu API service not enabled"
 
-        return self._message_sender.reply_card(card_json, message_id)
+        return self._message_sender.reply_card(card_json, message_id, reply_in_thread)
 
     def send_text(
         self,
@@ -597,7 +603,8 @@ class FeishuAPIService:
     def reply_text(
         self,
         text: str,
-        message_id: str
+        message_id: str,
+        reply_in_thread: bool = False
     ) -> Tuple[bool, str]:
         """回复文本消息
 
@@ -606,6 +613,7 @@ class FeishuAPIService:
         Args:
             text: 文本内容
             message_id: 要回复的消息 ID
+            reply_in_thread: 是否收进话题详情
 
         Returns:
             (success, new_message_id or error)
@@ -613,4 +621,4 @@ class FeishuAPIService:
         if not self._enabled:
             return False, "Feishu API service not enabled"
 
-        return self._message_sender.reply_text(text, message_id)
+        return self._message_sender.reply_text(text, message_id, reply_in_thread)

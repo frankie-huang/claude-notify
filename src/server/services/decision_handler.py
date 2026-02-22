@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 
 def handle_decision(
-    request_manager: RequestManager,
     request_id: str,
     action: str,
     project_dir: Optional[str] = None
@@ -30,7 +29,6 @@ def handle_decision(
     调用方根据返回结果自行生成响应（HTML 页面、Toast、JSON 等）。
 
     Args:
-        request_manager: 请求管理器实例
         request_id: 请求 ID
         action: 动作类型 (allow/always/deny/interrupt)
         project_dir: 项目目录（可选，用于 always 时写入规则）
@@ -41,6 +39,7 @@ def handle_decision(
             - decision: 决策类型 ("allow"/"deny")，失败时为 None
             - message: 状态消息或错误信息
     """
+    request_manager = RequestManager.get_instance()
     # 验证 request_id
     if not request_id:
         return False, None, '缺少请求 ID'

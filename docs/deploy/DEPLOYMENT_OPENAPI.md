@@ -132,7 +132,7 @@ OpenAPI 模式使用飞书开放平台 API 发送消息，支持飞书内直接�
        ↓
 5. 调用飞书 OpenAPI 发送卡片
    - 单机：直接调用 message/send
-   - 分离：通过网关调用 /feishu/send
+   - 分离：通过网关调用 /gw/feishu/send
        ↓
 6. 飞书群聊显示交互卡片
 ```
@@ -241,6 +241,7 @@ FEISHU_OWNER_ID=ou_user_a  # 此实例的消息接收者
 | `FEISHU_GATEWAY_URL` | **Callback** | - | 网关地址（分离部署时 Callback 必需） |
 | `CALLBACK_SERVER_URL` | **是** | `http://localhost:8080` | 回调服务外部访问地址 |
 | `CALLBACK_SERVER_PORT` | 否 | `8080` | 回调服务监听端口 |
+| `FEISHU_REPLY_IN_THREAD` | 否 | `false` | 话题内回复模式：回复消息收进话题详情，不刷群聊主界面 |
 
 ---
 
@@ -387,7 +388,7 @@ EOF
 ```
 ┌─────────────────┐      注册请求      ┌─────────────────┐
 │ Callback 服务   │───────────────────▶│  飞书网关       │
-│ (启动时)        │  /register          │                 │
+│ (启动时)        │  /gw/register       │                 │
 └─────────────────┘                     └────────┬────────┘
                                                 │
                                         验证 VERIFICATION_TOKEN

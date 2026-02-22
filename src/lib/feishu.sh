@@ -738,7 +738,7 @@ _get_auth_token() {
 # ----------------------------------------------------------------------------
 # _get_chat_id - 根据 session_id 获取对应的 chat_id
 # ----------------------------------------------------------------------------
-# 功能: 调用 Callback 后端的 /get-chat-id 接口查询 session_id 对应的 chat_id
+# 功能: 调用 Callback 后端的 /cb/session/get-chat-id 接口查询 session_id 对应的 chat_id
 #
 # 参数:
 #   $1 - session_id  Claude 会话 ID
@@ -758,14 +758,14 @@ _get_chat_id() {
         return 0
     fi
 
-    # 调用 Callback 后端的 /get-chat-id 接口查询
+    # 调用 Callback 后端的 /cb/session/get-chat-id 接口查询
     local callback_url="${CALLBACK_SERVER_URL:-http://localhost:${CALLBACK_SERVER_PORT:-8080}}"
     callback_url=$(echo "$callback_url" | sed 's:/*$::')
 
     local response
-    response=$(_do_curl_post "${callback_url}/get-chat-id" \
+    response=$(_do_curl_post "${callback_url}/cb/session/get-chat-id" \
         "{\"session_id\":\"$session_id\"}" \
-        "get-chat-id" \
+        "cb/session/get-chat-id" \
         "$(_get_auth_token)")
 
     local http_code
@@ -791,7 +791,7 @@ _get_chat_id() {
 # ----------------------------------------------------------------------------
 # _get_last_message_id - 根据 session_id 获取最近一条消息 ID
 # ----------------------------------------------------------------------------
-# 功能: 调用 Callback 后端的 /get-last-message-id 接口查询 session 的最近消息
+# 功能: 调用 Callback 后端的 /cb/session/get-last-message-id 接口查询 session 的最近消息
 #
 # 参数:
 #   $1 - session_id  Claude 会话 ID
@@ -810,14 +810,14 @@ _get_last_message_id() {
         return 0
     fi
 
-    # 调用 Callback 后端的 /get-last-message-id 接口查询
+    # 调用 Callback 后端的 /cb/session/get-last-message-id 接口查询
     local callback_url="${CALLBACK_SERVER_URL:-http://localhost:${CALLBACK_SERVER_PORT:-8080}}"
     callback_url=$(echo "$callback_url" | sed 's:/*$::')
 
     local response
-    response=$(_do_curl_post "${callback_url}/get-last-message-id" \
+    response=$(_do_curl_post "${callback_url}/cb/session/get-last-message-id" \
         "{\"session_id\":\"$session_id\"}" \
-        "get-last-message-id" \
+        "cb/session/get-last-message-id" \
         "$(_get_auth_token)")
 
     local http_code
@@ -935,6 +935,9 @@ EOF
 # 返回:
 #   0 - 发送成功
 #   1 - 发送失败
+#
+# 输出:
+#   失败时输出错误信息到 stdout
 # ----------------------------------------------------------------------------
 _send_via_webhook() {
     local request_body="$1"
@@ -943,6 +946,7 @@ _send_via_webhook() {
 
     if [ -z "$target_url" ]; then
         log_error "${log_prefix}: target_url not set"
+        echo "Webhook URL 未配置"
         return 1
     fi
 
@@ -956,6 +960,20 @@ _send_via_webhook() {
 
     if [ $curl_status -ne 0 ]; then
         log "${log_prefix} failed: http=$http_code, response=$response"
+        # response 可能是 curl 错误信息或飞书返回的 JSON
+        if [ -n "$response" ]; then
+            # 尝试提取 JSON 中的 msg 字段
+            local msg
+            msg=$(json_get "$response" "msg" 2>/dev/null)
+            if [ -n "$msg" ] && [ "$msg" != "null" ]; then
+                echo "飞书返回错误: $msg"
+            else
+                # 使用原始响应（如 curl 错误信息）
+                echo "$response"
+            fi
+        else
+            echo "HTTP 请求失败 (http=$http_code)"
+        fi
         return 1
     fi
 
@@ -964,6 +982,14 @@ _send_via_webhook() {
     code=$(json_get "$response" "code")
     if [ "$code" != "0" ] && [ "$code" != '"0"' ]; then
         log "${log_prefix} failed: code=$code, response=$response"
+        # 提取飞书返回的 msg 字段作为错误信息
+        local msg
+        msg=$(json_get "$response" "msg")
+        if [ -n "$msg" ] && [ "$msg" != "null" ]; then
+            echo "飞书返回错误: $msg"
+        else
+            echo "飞书返回错误码: $code"
+        fi
         return 1
     fi
 
@@ -972,9 +998,9 @@ _send_via_webhook() {
 }
 
 # ----------------------------------------------------------------------------
-# _send_via_http_endpoint - 通用的 /feishu/send 发送函数
+# _send_via_http_endpoint - 通用的 /gw/feishu/send 发送函数
 # ----------------------------------------------------------------------------
-# 功能: 通过指定服务器的 /feishu/send 接口发送消息
+# 功能: 通过指定服务器的 /gw/feishu/send 接口发送消息
 #
 # 参数:
 #   $1 - request_body  请求 JSON 字符串
@@ -985,8 +1011,11 @@ _send_via_webhook() {
 #   0 - 发送成功
 #   1 - 发送失败
 #
+# 输出:
+#   失败时输出错误信息到 stdout
+#
 # 说明:
-#   兼容 callback 服务和飞书网关的 /feishu/send 接口
+#   兼容 callback 服务和飞书网关的 /gw/feishu/send 接口
 #   会自动从 runtime/auth_token.json 读取并传递 auth_token 进行双向认证
 # ----------------------------------------------------------------------------
 _send_via_http_endpoint() {
@@ -999,7 +1028,7 @@ _send_via_http_endpoint() {
         target_url="${CALLBACK_SERVER_URL:-http://localhost:${CALLBACK_SERVER_PORT:-8080}}"
     fi
     target_url=$(echo "$target_url" | sed 's:/*$::')
-    local api_url="${target_url}/feishu/send"
+    local api_url="${target_url}/gw/feishu/send"
 
     log "Sending via ${log_prefix}: $api_url"
 
@@ -1018,6 +1047,20 @@ _send_via_http_endpoint() {
 
     if [ $curl_status -ne 0 ]; then
         log "${log_prefix} failed: http=$http_code, response=$response"
+        # response 可能是 curl 错误信息或服务端返回的 JSON
+        if [ -n "$response" ]; then
+            # 尝试提取 JSON 中的 error 字段
+            local err_msg
+            err_msg=$(json_get "$response" "error" 2>/dev/null)
+            if [ -n "$err_msg" ] && [ "$err_msg" != "null" ]; then
+                echo "$err_msg"
+            else
+                # 使用原始响应（如 curl 错误信息）
+                echo "$response"
+            fi
+        else
+            echo "HTTP 请求失败 (http=$http_code)"
+        fi
         return 1
     fi
 
@@ -1026,6 +1069,17 @@ _send_via_http_endpoint() {
     success=$(json_get "$response" "success" | tr '[:upper:]' '[:lower:]')
     if [ "$success" != "true" ] && [ "$success" != "1" ]; then
         log "${log_prefix} failed: success=$success, response=$response"
+        # 提取 error 或 message 字段作为错误信息
+        local err_msg
+        err_msg=$(json_get "$response" "error")
+        if [ -z "$err_msg" ] || [ "$err_msg" = "null" ]; then
+            err_msg=$(json_get "$response" "message")
+        fi
+        if [ -n "$err_msg" ] && [ "$err_msg" != "null" ]; then
+            echo "$err_msg"
+        else
+            echo "服务端返回失败 (success=$success)"
+        fi
         return 1
     fi
 
@@ -1063,11 +1117,11 @@ _send_via_http_endpoint() {
 #
 # 发送模式:
 #   - webhook: 直接发送到 FEISHU_WEBHOOK_URL
-#   - openapi: 通过 {FEISHU_GATEWAY_URL:-$CALLBACK_SERVER_URL}/feishu/send 发送
+#   - openapi: 通过 {FEISHU_GATEWAY_URL:-$CALLBACK_SERVER_URL}/gw/feishu/send 发送
 #
 # 说明:
 #   - openapi 模式下 FEISHU_GATEWAY_URL 为空时默认使用 CALLBACK_SERVER_URL
-#   - 发送失败时，会发送降级文本消息通知用户
+#   - 发送失败时，会发送降级文本消息通知用户（包含错误信息）
 # ----------------------------------------------------------------------------
 send_feishu_card() {
     local card_json="$1"
@@ -1096,9 +1150,10 @@ send_feishu_card() {
     send_mode=$(get_config "FEISHU_SEND_MODE" "webhook")
 
     local result=1
+    local error_msg=""
 
     if [ "$send_mode" = "openapi" ]; then
-        # OpenAPI 模式：通过 /feishu/send 发送
+        # OpenAPI 模式：通过 /gw/feishu/send 发送
         # 目标：FEISHU_GATEWAY_URL 或 CALLBACK_SERVER_URL
         local gateway_url
         gateway_url=$(get_config "FEISHU_GATEWAY_URL" "")
@@ -1111,11 +1166,11 @@ send_feishu_card() {
             http_options=$(json_build_object "session_id" "$session_id" "project_dir" "$project_dir" "callback_url" "$callback_url")
         fi
 
-        _send_feishu_card_http_endpoint "$card_json" "$target_url" "$http_options"
+        error_msg=$(_send_feishu_card_http_endpoint "$card_json" "$target_url" "$http_options")
         result=$?
     else
         # Webhook 模式（默认）
-        _send_feishu_card_webhook "$card_json" "$webhook_url"
+        error_msg=$(_send_feishu_card_webhook "$card_json" "$webhook_url")
         result=$?
     fi
 
@@ -1128,7 +1183,13 @@ send_feishu_card() {
             fallback_title="$extracted_title"
         fi
 
-        send_feishu_text "⚠️ ${fallback_title} 卡片发送失败，请返回终端查看"
+        # 构建包含错误信息的降级文本
+        local fallback_text="⚠️ ${fallback_title} 卡片发送失败，请返回终端查看"
+        if [ -n "$error_msg" ]; then
+            fallback_text="${fallback_text}（错误: ${error_msg}）"
+        fi
+
+        send_feishu_text "$fallback_text"
     fi
 
     return $result
@@ -1146,6 +1207,9 @@ send_feishu_card() {
 # 返回:
 #   0 - 发送成功
 #   1 - 发送失败
+#
+# 输出:
+#   失败时输出错误信息到 stdout（透传自 _send_via_webhook）
 # ----------------------------------------------------------------------------
 _send_feishu_card_webhook() {
     local card_json="$1"
@@ -1154,9 +1218,9 @@ _send_feishu_card_webhook() {
 }
 
 # ----------------------------------------------------------------------------
-# _send_feishu_card_http_endpoint - 通过 /feishu/send 发送飞书卡片（内部函数）
+# _send_feishu_card_http_endpoint - 通过 /gw/feishu/send 发送飞书卡片（内部函数）
 # ----------------------------------------------------------------------------
-# 功能: 通过 /feishu/send 接口发送卡片（OpenAPI 模式内部使用）
+# 功能: 通过 /gw/feishu/send 接口发送卡片（OpenAPI 模式内部使用）
 #
 # 参数:
 #   $1 - card_json  飞书卡片 JSON 字符串
@@ -1171,6 +1235,9 @@ _send_feishu_card_webhook() {
 # 返回:
 #   0 - 发送成功
 #   1 - 发送失败
+#
+# 输出:
+#   失败时输出错误信息到 stdout
 #
 # 说明:
 #   自动读取 FEISHU_OWNER_ID 配置并作为 owner_id 传递给服务端
@@ -1201,6 +1268,7 @@ _send_feishu_card_http_endpoint() {
 
     if [ -z "$owner_id" ]; then
         log "Error: FEISHU_OWNER_ID not configured"
+        echo "FEISHU_OWNER_ID 未配置"
         return 1
     fi
 
@@ -1281,7 +1349,7 @@ _send_feishu_card_http_endpoint() {
 #
 # 发送模式:
 #   - webhook: 直接发送到 FEISHU_WEBHOOK_URL
-#   - openapi: 通过 {FEISHU_GATEWAY_URL:-$CALLBACK_SERVER_URL}/feishu/send 发送
+#   - openapi: 通过 {FEISHU_GATEWAY_URL:-$CALLBACK_SERVER_URL}/gw/feishu/send 发送
 #
 # 说明:
 #   - openapi 模式自动读取 FEISHU_OWNER_ID 配置
@@ -1294,7 +1362,7 @@ send_feishu_text() {
     send_mode=$(get_config "FEISHU_SEND_MODE" "webhook")
 
     if [ "$send_mode" = "openapi" ]; then
-        # OpenAPI 模式：通过 /feishu/send 发送
+        # OpenAPI 模式：通过 /gw/feishu/send 发送
         local gateway_url
         gateway_url=$(get_config "FEISHU_GATEWAY_URL" "")
         local target_url="${gateway_url:-$CALLBACK_SERVER_URL}"

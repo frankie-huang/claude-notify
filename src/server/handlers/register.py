@@ -16,14 +16,12 @@ Callback 后端使用：
 
 import json
 import logging
-import os
 import socket
-import time
 import urllib.error
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Any
 
 from services.auth_token_store import AuthTokenStore
-from .utils import run_in_background as _run_in_background, post_json as _post_json
+from handlers.utils import run_in_background as _run_in_background, post_json as _post_json
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +33,14 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
     """处理 Callback 后端的注册请求
 
     网关立即返回成功，后续异步处理：
-        - 已绑定：直接调用 Callback 后端的 /register-callback
+        - 已绑定：直接调用 Callback 后端的 /cb/register
         - 未绑定：发送飞书授权卡片
 
     Args:
         data: 请求数据
             - callback_url: Callback 后端 URL（必需）
             - owner_id: 飞书用户 ID（必需）
+            - reply_in_thread: 是否使用回复话题模式（可选，默认 False）
         client_ip: 客户端 IP 地址
 
     Returns:
@@ -49,6 +48,7 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
     """
     callback_url = data.get('callback_url', '')
     owner_id = data.get('owner_id', '')
+    reply_in_thread = data.get('reply_in_thread', False)
 
     # 验证参数
     if not callback_url or not owner_id:
@@ -58,10 +58,10 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
             'error': 'missing required fields: callback_url, owner_id'
         }
 
-    logger.info(f"[register] Registration request: owner_id={owner_id}, callback_url={callback_url}, ip={client_ip}")
+    logger.info(f"[register] Registration request: owner_id={owner_id}, callback_url={callback_url}, ip={client_ip}, reply_in_thread={reply_in_thread}")
 
     # 在后台线程中处理注册逻辑（异步）
-    _run_in_background(_process_registration, (callback_url, owner_id, client_ip))
+    _run_in_background(_process_registration, (callback_url, owner_id, client_ip, reply_in_thread))
 
     # 立即返回成功
     return True, {
@@ -94,7 +94,7 @@ def handle_register_callback(data: dict) -> Tuple[bool, dict]:
     config_owner_id = get_config('FEISHU_OWNER_ID', '')
 
     if not owner_id or not auth_token:
-        logger.warning("[register-callback] Missing params: owner_id or auth_token")
+        logger.warning("[cb/register] Missing params: owner_id or auth_token")
         return True, {
             'success': False,
             'error': 'missing required fields: owner_id, auth_token'
@@ -103,7 +103,7 @@ def handle_register_callback(data: dict) -> Tuple[bool, dict]:
     # 验证 owner_id 是否与配置一致
     if config_owner_id and owner_id != config_owner_id:
         logger.warning(
-            f"[register-callback] owner_id mismatch: received={owner_id}, config={config_owner_id}"
+            f"[cb/register] owner_id mismatch: received={owner_id}, config={config_owner_id}"
         )
         return True, {
             'success': False,
@@ -111,7 +111,7 @@ def handle_register_callback(data: dict) -> Tuple[bool, dict]:
         }
 
     logger.info(
-        f"[register-callback] Storing auth_token for owner_id={owner_id}, "
+        f"[cb/register] Storing auth_token for owner_id={owner_id}, "
         f"gateway_version={gateway_version}"
     )
 
@@ -119,7 +119,7 @@ def handle_register_callback(data: dict) -> Tuple[bool, dict]:
     store = AuthTokenStore.get_instance()
     if store:
         if store.save(owner_id, auth_token):
-            logger.info(f"[register-callback] Auth token stored successfully")
+            logger.info(f"[cb/register] Auth token stored successfully")
             return True, {
                 'success': True,
                 'message': 'Registration successful'
@@ -130,7 +130,7 @@ def handle_register_callback(data: dict) -> Tuple[bool, dict]:
                 'error': 'Failed to store token'
             }
     else:
-        logger.warning("[register-callback] AuthTokenStore not initialized")
+        logger.warning("[cb/register] AuthTokenStore not initialized")
         return True, {
             'success': False,
             'error': 'AuthTokenStore not initialized'
@@ -155,16 +155,16 @@ def handle_check_owner_id(data: dict) -> Tuple[bool, dict]:
     request_owner_id = data.get('owner_id', '')
     config_owner_id = get_config('FEISHU_OWNER_ID', '')
 
-    logger.info(f"[check-owner-id] Request: owner_id={request_owner_id}")
+    logger.info(f"[cb/check-owner] Request: owner_id={request_owner_id}")
 
     # 验证 owner_id 是否与配置一致
     is_owner = bool(request_owner_id and request_owner_id == config_owner_id)
 
     if is_owner:
-        logger.info(f"[check-owner-id] Verification passed")
+        logger.info(f"[cb/check-owner] Verification passed")
     else:
         logger.warning(
-            f"[check-owner-id] Verification failed: request={request_owner_id}, config={config_owner_id}"
+            f"[cb/check-owner] Verification failed: request={request_owner_id}, config={config_owner_id}"
         )
 
     return True, {
@@ -173,11 +173,11 @@ def handle_check_owner_id(data: dict) -> Tuple[bool, dict]:
     }
 
 
-def _process_registration(callback_url: str, owner_id: str, client_ip: str):
+def _process_registration(callback_url: str, owner_id: str, client_ip: str, reply_in_thread: bool = False):
     """处理注册逻辑（后台线程）
 
     1. 查询绑定关系
-    2. 已绑定且 callback_url 相同：直接调用 /register-callback 通知新 token
+    2. 已绑定且 callback_url 相同：直接调用 /cb/register 通知新 token
     3. 已绑定但 callback_url 不同：发送飞书授权卡片让用户确认是否更新
     4. 未绑定：先验证 callback_url 所属，再发送飞书授权卡片
 
@@ -187,10 +187,10 @@ def _process_registration(callback_url: str, owner_id: str, client_ip: str):
         callback_url: Callback 后端 URL
         owner_id: 飞书用户 ID
         client_ip: 客户端 IP
+        reply_in_thread: 是否使用回复话题模式
     """
     from services.binding_store import BindingStore
     from services.auth_token import generate_auth_token
-    from services.feishu_api import FeishuAPIService
     from config import FEISHU_VERIFICATION_TOKEN
 
     # 验证配置
@@ -214,7 +214,7 @@ def _process_registration(callback_url: str, owner_id: str, client_ip: str):
             logger.info(f"[register] Existing binding with same callback_url, updating token")
             auth_token = generate_auth_token(FEISHU_VERIFICATION_TOKEN, owner_id)
             _notify_callback(callback_url, owner_id, auth_token, client_ip)
-            store.upsert(owner_id, callback_url, auth_token, client_ip)
+            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread)
         else:
             # callback_url 不同：发送授权卡片让用户确认是否更换设备
             # 不提前生成 auth_token，等用户批准后再生成
@@ -222,7 +222,7 @@ def _process_registration(callback_url: str, owner_id: str, client_ip: str):
                 f"[register] Existing binding with different callback_url: "
                 f"old={bound_callback_url}, new={callback_url}"
             )
-            _send_authorization_card(callback_url, owner_id, client_ip, old_callback_url=bound_callback_url)
+            _send_authorization_card(callback_url, owner_id, client_ip, old_callback_url=bound_callback_url, reply_in_thread=reply_in_thread)
     else:
         # 未绑定：先验证 callback_url 是否属于该 owner_id
         logger.info(f"[register] No existing binding, verifying callback_url ownership")
@@ -234,13 +234,13 @@ def _process_registration(callback_url: str, owner_id: str, client_ip: str):
             return
         # 验证通过，发送飞书授权卡片
         # 不提前生成 auth_token，等用户批准后再生成
-        _send_authorization_card(callback_url, owner_id, client_ip)
+        _send_authorization_card(callback_url, owner_id, client_ip, reply_in_thread=reply_in_thread)
 
 
 def _check_owner_id(callback_url: str, owner_id: str) -> bool:
     """验证 callback_url 是否属于该 owner_id
 
-    调用 Callback 后端的 /check-owner-id 接口进行验证。
+    调用 Callback 后端的 /cb/check-owner 接口进行验证。
 
     Args:
         callback_url: Callback 后端 URL
@@ -249,7 +249,7 @@ def _check_owner_id(callback_url: str, owner_id: str) -> bool:
     Returns:
         True 表示验证通过，False 表示验证失败
     """
-    api_url = f"{callback_url.rstrip('/')}/check-owner-id"
+    api_url = f"{callback_url.rstrip('/')}/cb/check-owner"
 
     request_data = {
         'owner_id': owner_id
@@ -286,7 +286,7 @@ def _notify_callback(callback_url: str, owner_id: str, auth_token: str, client_i
         auth_token: 认证令牌
         client_ip: 客户端 IP
     """
-    api_url = f"{callback_url.rstrip('/')}/register-callback"
+    api_url = f"{callback_url.rstrip('/')}/cb/register"
 
     request_data = {
         'owner_id': owner_id,
@@ -314,7 +314,8 @@ def _send_authorization_card(
     callback_url: str,
     owner_id: str,
     client_ip: str,
-    old_callback_url: str = ''
+    old_callback_url: str = '',
+    reply_in_thread: bool = False
 ):
     """发送飞书授权卡片
 
@@ -326,6 +327,7 @@ def _send_authorization_card(
         owner_id: 飞书用户 ID
         client_ip: 客户端 IP
         old_callback_url: 旧的 callback_url（如果有，表示更换设备场景）
+        reply_in_thread: 是否使用回复话题模式
     """
     from services.feishu_api import FeishuAPIService
 
@@ -419,7 +421,8 @@ def _send_authorization_card(
                                                 "callback_url": callback_url,
                                                 "owner_id": owner_id,
                                                 "request_ip": client_ip,
-                                                "old_callback_url": old_callback_url
+                                                "old_callback_url": old_callback_url,
+                                                "reply_in_thread": reply_in_thread
                                             }
                                         }
                                     ]
@@ -548,7 +551,8 @@ def handle_authorization_decision(
     callback_url: str,
     owner_id: str,
     client_ip: str,
-    approved: bool
+    approved: bool,
+    reply_in_thread: bool = False
 ) -> Dict[str, Any]:
     """处理用户授权决策
 
@@ -557,6 +561,7 @@ def handle_authorization_decision(
         owner_id: 飞书用户 ID
         client_ip: 客户端 IP
         approved: 用户是否批准
+        reply_in_thread: 是否使用回复话题模式
 
     Returns:
         飞书响应（包含 toast 和更新的卡片）
@@ -583,7 +588,7 @@ def handle_authorization_decision(
         # 用户允许：通知 Callback 后端并创建绑定
         store = BindingStore.get_instance()
         if store:
-            store.upsert(owner_id, callback_url, auth_token, client_ip)
+            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread)
 
         # 通知 Callback 后端
         _notify_callback(callback_url, owner_id, auth_token, client_ip)

@@ -339,10 +339,10 @@ vim .env
 
 | 处理器 | 功能 | 端点 |
 |--------|------|------|
-| `callback.py` | 权限回调处理器（接收按钮操作） | `/callback` |
-| `feishu.py` | 飞书事件处理器（OpenAPI 网关） | `/feishu/*` |
-| `claude.py` | Claude 会话继续处理器 | `/claude/continue` |
-| `register.py` | 网关注册处理器 | `/register` |
+| `callback.py` | 权限回调处理器（接收按钮操作） | `/cb/*` |
+| `feishu.py` | 飞书事件处理器（OpenAPI 网关） | `/gw/feishu/*` |
+| `claude.py` | Claude 会话继续处理器 | `/cb/claude/continue` |
+| `register.py` | 网关注册处理器 | `/gw/register` |
 | `utils.py` | 处理器通用工具函数 | - |
 
 ## VSCode SSH 远程开发代理
@@ -544,11 +544,12 @@ FEISHU_OWNER_ID=ou_admin_user
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `FEISHU_AT_USER` | 通知 @ 用户配置：空=@ `FEISHU_OWNER_ID`，`all`=@ 所有人，`off`=禁用 | 空 |
+| `FEISHU_REPLY_IN_THREAD` | 话题内回复模式：回复消息是否收进话题详情（仅 OpenAPI 模式） | `false` |
 | `PERMISSION_REQUEST_TIMEOUT` | 服务器端超时秒数（0 禁用） | 600 |
 | `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 60 |
 | `CALLBACK_PAGE_CLOSE_DELAY` | 回调页面自动关闭秒数（建议范围 1-10） | 3 |
-| `STOP_THINKING_MAX_LENGTH` | Stop 事件思考过程最大长度（字符数，0 禁用） | 5000 |
-| `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 5000 |
+| `STOP_THINKING_MAX_LENGTH` | Stop 事件思考过程最大长度（字符数，0 禁用） | 10000 |
+| `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 10000 |
 
 #### 五、Claude 命令
 

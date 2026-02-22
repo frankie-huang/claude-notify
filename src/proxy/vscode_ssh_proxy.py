@@ -43,7 +43,6 @@ import socketserver
 import shutil
 import subprocess
 import sys
-import threading
 import time
 import urllib.parse
 from datetime import datetime

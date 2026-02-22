@@ -32,13 +32,12 @@ from config import (
     FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_SEND_MODE,
     CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL
 )
-from models.decision import Decision
 from services.request_manager import RequestManager
 from services.feishu_api import FeishuAPIService
 from services.message_session_store import MessageSessionStore
 from services.dir_history_store import DirHistoryStore
 from services.binding_store import BindingStore
-from handlers.callback import CallbackHandler
+from handlers.http_handler import HttpRequestHandler
 from services.auth_token_store import AuthTokenStore
 from services.session_chat_store import SessionChatStore
 
@@ -69,14 +68,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 logger.info(f"Logging to: {log_file}")
-
-
-# =============================================================================
-# 全局请求管理器
-# =============================================================================
-
-request_manager = RequestManager()
-CallbackHandler.request_manager = request_manager
 
 
 # =============================================================================
@@ -143,6 +134,14 @@ def handle_socket_client(conn: socket.socket, addr):
         logger.info(f"[socket] Received {len(data)} bytes of JSON data")
 
         request = json.loads(data.decode('utf-8'))
+
+        # 健康检查探测：收到 ping 消息，回复 pong 后关闭
+        if request.get('type') == 'ping':
+            conn.sendall(json.dumps({'type': 'pong'}).encode())
+            conn.close()
+            logger.debug("[socket] Health check ping received, pong sent")
+            return
+
         request_id = request.get('request_id')
         hook_pid = request.get('hook_pid')  # 新增：hook 脚本的进程 ID
 
@@ -174,7 +173,7 @@ def handle_socket_client(conn: socket.socket, addr):
         logger.info(f"[socket] Request ID: {request_id}, Session: {session_id}, Hook PID: {hook_pid}")
 
         # 注册请求（保存 socket 连接供后续 resolve 使用）
-        request_manager.register(request_id, conn, request)
+        RequestManager.get_instance().register(request_id, conn, request)
 
         # 发送确认响应
         conn.sendall(json.dumps({
@@ -232,7 +231,7 @@ def run_cleanup_thread():
     def cleanup_disconnected_loop():
         while True:
             time.sleep(CLEANUP_INTERVAL)
-            request_manager.cleanup_disconnected()
+            RequestManager.get_instance().cleanup_disconnected()
 
     # 低频清理：过期数据（1小时间隔）
     def cleanup_expired_loop():
@@ -284,7 +283,7 @@ def _cleanup_expired_data():
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     """支持多线程的 HTTP Server
 
-    允许多个请求并发处理，避免飞书回调转发到 /callback/decision 时死锁。
+    允许多个请求并发处理，避免飞书回调转发到 /cb/decision 时死锁。
     """
     allow_reuse_address = True
     daemon_threads = True
@@ -301,13 +300,14 @@ def main():
         1. Unix Socket 服务器 - 接收 permission-notify.sh 的连接
         2. 清理线程 - 定期清理断开连接和过期 session
         3. HTTP 服务器 - 接收飞书按钮的回调请求
-        4. MessageSessionStore - 维护 message_id 到 session 的映射
-        5. SessionChatStore - 维护 session_id 到 chat_id 的映射
-        6. DirHistoryStore - 记录目录使用历史
-        7. BindingStore - 维护 owner_id 到 callback_url 的绑定（网关专用）
-        8. AuthTokenStore - 存储网关注册的 auth_token（Callback 后端专用）
-        9. FeishuAPIService - 飞书 OpenAPI 服务（OpenAPI 模式）
-        10. AutoRegister - 启动时自动向飞书网关注册（可选）
+        4. RequestManager - 管理待处理的权限请求
+        5. MessageSessionStore - 维护 message_id 到 session 的映射
+        6. SessionChatStore - 维护 session_id 到 chat_id 的映射
+        7. DirHistoryStore - 记录目录使用历史
+        8. BindingStore - 维护 owner_id 到 callback_url 的绑定（网关专用）
+        9. AuthTokenStore - 存储网关注册的 auth_token（Callback 后端专用）
+        10. FeishuAPIService - 飞书 OpenAPI 服务（OpenAPI 模式）
+        11. AutoRegister - 启动时自动向飞书网关注册（可选）
     """
     logger.info("Starting Claude Code Permission Callback Server")
     logger.info(f"HTTP Port: {HTTP_PORT}")
@@ -320,6 +320,9 @@ def main():
 
     if not FEISHU_WEBHOOK_URL:
         logger.warning("FEISHU_WEBHOOK_URL not set - webhook notifications will be skipped")
+
+    # 初始化 RequestManager（权限请求管理）
+    RequestManager.initialize()
 
     # 初始化 MessageSessionStore（用于继续会话功能）
     runtime_dir = os.path.join(project_root, 'runtime')
@@ -361,8 +364,8 @@ def main():
     run_cleanup_thread()
 
     # 启动 HTTP 服务器（使用 ThreadedHTTPServer 支持并发请求）
-    # 这样飞书回调请求和转发到 /callback/decision 的请求可以并发处理
-    server = ThreadedHTTPServer(('0.0.0.0', HTTP_PORT), CallbackHandler)
+    # 这样飞书回调请求和转发到 /cb/decision 的请求可以并发处理
+    server = ThreadedHTTPServer(('0.0.0.0', HTTP_PORT), HttpRequestHandler)
     logger.info(f"HTTP server listening on port {HTTP_PORT} (threading enabled)")
 
     # 自动注册到飞书网关（需在 HTTP 服务启动后执行）

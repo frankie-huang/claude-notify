@@ -239,13 +239,17 @@ check_socket_service() {
     # 这样可以检测服务异常退出后残留的 socket 文件
     if command -v python3 &> /dev/null; then
         _HOOK_SOCK="$socket_path" python3 -c "
-import socket, sys, os
+import socket, sys, os, json
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-sock.settimeout(1)
+sock.settimeout(2)
 try:
     sock.connect(os.environ['_HOOK_SOCK'])
+    sock.sendall(json.dumps({'type': 'ping'}).encode())
+    sock.shutdown(socket.SHUT_WR)
+    data = sock.recv(1024)
+    resp = json.loads(data.decode('utf-8'))
     sock.close()
-    sys.exit(0)
+    sys.exit(0 if resp.get('type') == 'pong' else 1)
 except Exception:
     sys.exit(1)
 " 2>/dev/null
@@ -255,7 +259,7 @@ except Exception:
     # 如果没有 Python，尝试使用 socat 或 nc
     if command -v socat &> /dev/null; then
         # 尝试连接，超时 1 秒
-        echo "" | timeout 1 socat - "UNIX-CONNECT:${socket_path}" >/dev/null 2>&1
+        echo '{"type":"ping"}' | timeout 1 socat - "UNIX-CONNECT:${socket_path}" >/dev/null 2>&1
         local exit_code=$?
         # socat 连接成功返回 0，连接失败返回非 0
         # 141 是 SIGPIPE（连接后对端关闭），也是成功的表现

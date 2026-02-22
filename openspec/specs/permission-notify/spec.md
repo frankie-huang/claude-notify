@@ -534,7 +534,7 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 
 - **GIVEN** 用户配置了 `FEISHU_GATEWAY_URL`
 - **WHEN** 系统需要发送飞书消息
-- **THEN** POST 请求到 `${FEISHU_GATEWAY_URL}/feishu/send`
+- **THEN** POST 请求到 `${FEISHU_GATEWAY_URL}/gw/feishu/send`
 - **AND** 网关负责实际的消息发送
 - **AND** Callback 服务无需配置飞书凭证
 
@@ -546,13 +546,13 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 
 ### Requirement: Feishu Send HTTP Endpoint
 
-回调服务 SHALL 提供 `/feishu/send` HTTP 端点，支持通过 OpenAPI 发送飞书消息。
+回调服务 SHALL 提供 `/gw/feishu/send` HTTP 端点，支持通过 OpenAPI 发送飞书消息。
 
 #### Scenario: 发送卡片消息
 
 - **GIVEN** 回调服务正在运行
 - **AND** 飞书 OpenAPI 服务已初始化
-- **WHEN** 收到 POST `/feishu/send` 请求，body 包含 `{"msg_type": "interactive", "content": {...}}`
+- **WHEN** 收到 POST `/gw/feishu/send` 请求，body 包含 `{"msg_type": "interactive", "content": {...}}`
 - **THEN** 通过 OpenAPI 发送卡片消息到配置的接收者
 - **AND** 返回 `{"success": true, "message_id": "..."}` 或 `{"success": false, "error": "..."}`
 
@@ -560,13 +560,13 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 
 - **GIVEN** 回调服务正在运行
 - **AND** 飞书 OpenAPI 服务已初始化
-- **WHEN** 收到 POST `/feishu/send` 请求，body 包含 `{"msg_type": "text", "content": "..."}`
+- **WHEN** 收到 POST `/gw/feishu/send` 请求，body 包含 `{"msg_type": "text", "content": "..."}`
 - **THEN** 通过 OpenAPI 发送文本消息到配置的接收者
 
 #### Scenario: 服务未启用时拒绝请求
 
 - **GIVEN** 飞书 OpenAPI 服务未初始化（缺少凭证配置）
-- **WHEN** 收到 POST `/feishu/send` 请求
+- **WHEN** 收到 POST `/gw/feishu/send` 请求
 - **THEN** 返回 `{"success": false, "error": "Feishu API service not enabled"}`
 
 ### Requirement: 飞书网关分离部署支持
@@ -578,7 +578,7 @@ permission-notify.sh 脚本 SHALL 与回调服务协作，等待用户通过飞�
 - **GIVEN** 用户配置了 `FEISHU_GATEWAY_URL` 环境变量
 - **WHEN** permission.sh 初始化
 - **THEN** 系统启用分离部署
-- **AND** 消息发送使用 `${FEISHU_GATEWAY_URL}/feishu/send`
+- **AND** 消息发送使用 `${FEISHU_GATEWAY_URL}/gw/feishu/send`
 - **AND** 按钮 value 中包含 `callback_url: ${CALLBACK_SERVER_URL}`
 
 #### Scenario: 未配置时使用单机模式

@@ -7,7 +7,7 @@ OpenAPI 模式下：
   - 单机部署（未配置 FEISHU_GATEWAY_URL）：向本地网关注册（CALLBACK_SERVER_URL）
 
 需配置：CALLBACK_SERVER_URL、FEISHU_OWNER_ID
-注册接口：{FEISHU_GATEWAY_URL}/register
+注册接口：{FEISHU_GATEWAY_URL}/gw/register
 """
 
 import json
@@ -97,16 +97,19 @@ class AutoRegister:
 
     def _register(self):
         """执行注册"""
+        from config import FEISHU_REPLY_IN_THREAD
+
         logger.info(
             f"[auto-register] Starting registration in background: "
             f"owner_id={self._owner_id}, callback_url={self._callback_url}, gateway={self._gateway_url}"
         )
 
-        register_url = self._gateway_url.rstrip('/') + '/register'
+        register_url = self._gateway_url.rstrip('/') + '/gw/register'
         success, message = self._do_register(
             self._callback_url,
             self._owner_id,
-            register_url
+            register_url,
+            reply_in_thread=FEISHU_REPLY_IN_THREAD
         )
 
         if success:
@@ -118,14 +121,16 @@ class AutoRegister:
         self,
         callback_url: str,
         owner_id: str,
-        register_url: str
+        register_url: str,
+        reply_in_thread: bool = False
     ) -> Tuple[bool, str]:
         """向飞书网关注册
 
         Args:
             callback_url: Callback 后端 URL
             owner_id: 飞书用户 ID
-            register_url: 飞书网关注册接口完整 URL（已包含 /register）
+            register_url: 飞书网关注册接口完整 URL（已包含 /gw/register）
+            reply_in_thread: 是否使用回复话题模式
 
         Returns:
             (success, message): success 表示是否成功，message 是响应消息或错误信息
@@ -134,7 +139,8 @@ class AutoRegister:
 
         request_data = {
             'callback_url': callback_url,
-            'owner_id': owner_id
+            'owner_id': owner_id,
+            'reply_in_thread': reply_in_thread
         }
 
         logger.info(f"[auto-register] Registering to gateway: {api_url}")

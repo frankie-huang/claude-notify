@@ -1,7 +1,7 @@
 """Message-Session 映射存储
 
 归属端: 飞书网关
-使用方: feishu.py（网关内部逻辑），callback.py 中的网关侧路由（/feishu/send）
+使用方: feishu.py（网关内部逻辑），callback.py 中的网关侧路由（/gw/feishu/send）
 
 维护 message_id → session 信息的映射，用于将用户回复消息路由到正确的 Callback 后端。
 Callback 后端的路由和逻辑不应直接调用此 Store。

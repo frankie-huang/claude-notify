@@ -2,8 +2,8 @@
 
 归属端: Callback 后端
 使用方: callback.py, claude.py
-对外接口: /get-chat-id, /get-last-message-id (供 Shell 脚本通过 HTTP 查询)
-          /set-last-message-id (供飞书网关通过 HTTP 写入)
+对外接口: /cb/session/get-chat-id, /cb/session/get-last-message-id (供 Shell 脚本通过 HTTP 查询)
+          /cb/session/set-last-message-id (供飞书网关通过 HTTP 写入)
 
 维护 session_id → chat_id 的映射关系，用于确定消息发送的目标群聊。
 飞书网关和 Shell 脚本不应直接调用此 Store，应通过 Callback 后端的 HTTP 接口间接访问。
@@ -24,7 +24,7 @@ class SessionChatStore:
     """管理 session_id -> chat_id 的存储（归属端: Callback 后端）
 
     维护会话与群聊的映射关系，用于确定消息发送的目标群聊。
-    外部通过 /get-chat-id, /get-last-message-id, /set-last-message-id 接口间接访问。
+    外部通过 /cb/session/get-chat-id, /cb/session/get-last-message-id, /cb/session/set-last-message-id 接口间接访问。
 
     数据结构::
 

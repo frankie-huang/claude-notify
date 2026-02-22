@@ -295,8 +295,8 @@ print(','.join(elements))
 send_stop_notification_async() {
     # 捕获当前环境变量供后台使用
     local WEBHOOK_URL=$(get_config "FEISHU_WEBHOOK_URL" "")
-    local STOP_MAX_LENGTH=$(get_config "STOP_MESSAGE_MAX_LENGTH" "5000")
-    local STOP_THINKING_MAX_LENGTH=$(get_config "STOP_THINKING_MAX_LENGTH" "5000")
+    local STOP_MAX_LENGTH=$(get_config "STOP_MESSAGE_MAX_LENGTH" "10000")
+    local STOP_THINKING_MAX_LENGTH=$(get_config "STOP_THINKING_MAX_LENGTH" "10000")
     local CALLBACK_URL=$(get_config "CALLBACK_SERVER_URL" "http://localhost:8080")
     local TRANSCRIPT_PATH=$(json_get "$INPUT" "transcript_path")
     local PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(json_get "$INPUT" "cwd")}"

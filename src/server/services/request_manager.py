@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 class RequestManager:
     """管理待处理的权限请求"""
 
+    # 单例
+    _instance = None  # type: Optional[RequestManager]
+    _singleton_lock = threading.Lock()
+
     # 请求状态常量
     STATUS_PENDING = 'pending'          # 等待用户响应
     STATUS_RESOLVED = 'resolved'        # 已处理（用户已决策）
@@ -33,6 +37,20 @@ class RequestManager:
     ERR_ALREADY_RESOLVED = 'already_resolved'  # 请求已被处理
     ERR_DISCONNECTED = 'disconnected'   # 连接已断开
     ERR_UNKNOWN = 'unknown'             # 未知错误
+
+    @classmethod
+    def initialize(cls):
+        """初始化单例实例"""
+        with cls._singleton_lock:
+            if cls._instance is None:
+                cls._instance = cls()
+                logger.info("RequestManager initialized")
+            return cls._instance
+
+    @classmethod
+    def get_instance(cls) -> Optional['RequestManager']:
+        """获取单例实例"""
+        return cls._instance
 
     def __init__(self):
         self._requests = {}  # request_id -> {conn, data, timestamp, status, resolved_decision}

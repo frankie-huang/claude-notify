@@ -9,6 +9,25 @@
 - **last_message_id**：会话中最近一条系统消息的 ID，用于后续消息的回复目标
 - **链式回复**：每条新消息回复到上一条消息，形成链式话题结构
 - **MessageSessionStore**：message_id → session 映射，用于用户回复时找到对应会话
+- **话题内回复**：回复消息收进话题详情，不刷群聊主界面（通过 binding 级别配置）
+
+### 配置项
+
+| 配置项 | 归属端 | 默认值 | 说明 |
+|--------|--------|--------|------|
+| `FEISHU_REPLY_IN_THREAD` | Callback 后端 → 飞书网关 | `false` | 回复消息是否收进话题详情 |
+
+配置流程：
+1. Callback 后端在 `.env` 中配置 `FEISHU_REPLY_IN_THREAD=true`
+2. 注册时，Callback 后端将此配置发送给飞书网关
+3. 飞书网关存储到 binding 中（每个用户/binding 独立配置）
+4. 发送消息时，从 binding 中读取配置决定是否使用话题内回复
+
+效果：
+- `false`：回复消息正常显示在群聊主界面
+- `true`：回复消息仅出现在话题详情中，不会冒泡到群聊主界面
+
+**注意**：此配置仅在 `FEISHU_SEND_MODE=openapi` 时生效，Webhook 模式不支持回复 API。
 
 ### 存储架构
 
@@ -21,8 +40,8 @@
 
 | 接口 | 端 | 用途 |
 |-----|---|------|
-| `/get-last-message-id` | Callback 后端 | Shell 脚本查询 last_message_id |
-| `/set-last-message-id` | Callback 后端 | 飞书网关跨网络写入 last_message_id |
+| `/cb/session/get-last-message-id` | Callback 后端 | Shell 脚本查询 last_message_id |
+| `/cb/session/set-last-message-id` | Callback 后端 | 飞书网关跨网络写入 last_message_id |
 
 ---
 
@@ -32,11 +51,11 @@
 
 ```
 permission.sh/stop.sh
-    ↓ 查询 /get-last-message-id
+    ↓ 查询 /cb/session/get-last-message-id
     ↓ 传递 reply_to_message_id
-/feishu/send
+/gw/feishu/send
     ↓ 发送成功
-    ↓ 调用 /set-last-message-id
+    ↓ 调用 /cb/session/set-last-message-id
 更新 SessionChatStore
 ```
 
@@ -137,8 +156,8 @@ _send_session_result_notification
 **消息流：**
 1. 终端启动 Claude，SessionChatStore 中无该 session 记录
 2. 触发权限请求，`permission.sh` 查询 `last_message_id`（为空）
-3. `permission.sh` 发送权限卡片（无回复目标），调用 `/set-last-message-id`
-4. `/set-last-message-id` **自动创建** session 记录，设置 `last_message_id`
+3. `permission.sh` 发送权限卡片（无回复目标），调用 `/cb/session/set-last-message-id`
+4. `/cb/session/set-last-message-id` **自动创建** session 记录，设置 `last_message_id`
 5. 会话完成，`stop.sh` 查询 `last_message_id`（已存在）
 6. `stop.sh` 发送完成通知，回复 `last_message_id`
 
@@ -256,4 +275,4 @@ _send_session_result_notification
 
 ### 终端启动会话
 
-终端直接启动的会话，SessionChatStore 中无记录。首次发送通知时，`/set-last-message-id` 会自动创建 session 记录。
+终端直接启动的会话，SessionChatStore 中无记录。首次发送通知时，`/cb/session/set-last-message-id` 会自动创建 session 记录。

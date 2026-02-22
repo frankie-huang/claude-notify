@@ -343,11 +343,12 @@ generate_env_template() {
 # │ PERMISSION_SOCKET_PATH       │ 可选     │ 可选     │ 可选     │ /tmp/...   │
 # ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
 # │ FEISHU_AT_USER               │ 可选     │ 可选     │ 可选     │ 空         │
+# │ FEISHU_REPLY_IN_THREAD       │ 可选     │ 可选     │ 可选     │ false      │
 # │ PERMISSION_REQUEST_TIMEOUT   │ 可选     │ 可选     │ 可选     │ 600        │
 # │ PERMISSION_NOTIFY_DELAY      │ 可选     │ 可选     │ 可选     │ 60         │
 # │ CALLBACK_PAGE_CLOSE_DELAY    │ 可选     │ 可选     │ 可选     │ 3          │
-# │ STOP_THINKING_MAX_LENGTH     │ 可选     │ 可选     │ 可选     │ 5000       │
-# │ STOP_MESSAGE_MAX_LENGTH      │ 可选     │ 可选     │ 可选     │ 5000       │
+# │ STOP_THINKING_MAX_LENGTH     │ 可选     │ 可选     │ 可选     │ 10000      │
+# │ STOP_MESSAGE_MAX_LENGTH      │ 可选     │ 可选     │ 可选     │ 10000      │
 # ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
 # │ CLAUDE_COMMAND               │ 可选     │ 可选     │ 可选     │ claude     │
 # ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
@@ -407,7 +408,7 @@ FEISHU_VERIFICATION_TOKEN=
 # --- OpenAPI 模式 — 网关（分离部署）---
 # 飞书网关地址 [分离部署 Callback 必填]
 # 配置后，消息通过飞书网关发送，本机无需配置飞书应用凭证
-# 同时用于网关注册功能（注册接口为 {FEISHU_GATEWAY_URL}/register）
+# 同时用于网关注册功能（注册接口为 {FEISHU_GATEWAY_URL}/gw/register）
 FEISHU_GATEWAY_URL=
 
 # --- 消息接收者 ---
@@ -452,6 +453,13 @@ PERMISSION_SOCKET_PATH=/tmp/claude-permission.sock
 #   - off: 不 @ 任何人
 FEISHU_AT_USER=
 
+# 话题内回复模式 [可选, 默认 false]
+# 控制回复消息是否收进话题详情（不刷群聊主界面）
+#   - false: 回复消息正常显示在群聊主界面（默认）
+#   - true: 回复消息仅出现在话题详情中，不会冒泡到群聊主界面
+# 注意：仅在 FEISHU_SEND_MODE=openapi 时生效
+FEISHU_REPLY_IN_THREAD=false
+
 # 请求超时时间，秒 [可选, 默认 600]
 # 用户在此时间内未响应，将回退到终端交互
 PERMISSION_REQUEST_TIMEOUT=600
@@ -467,14 +475,15 @@ PERMISSION_NOTIFY_DELAY=60
 # 建议范围: 1-10 秒
 CALLBACK_PAGE_CLOSE_DELAY=3
 
-# Stop 事件思考过程最大长度，字符数 [可选, 默认 5000]
+# Stop 事件思考过程最大长度，字符数 [可选, 默认 10000]
 # 设为 0 则不显示思考过程
-STOP_THINKING_MAX_LENGTH=5000
+# 注意：飞书卡片 JSON 限制 30KB，message + thinking 总字符数建议不超过 20000
+STOP_THINKING_MAX_LENGTH=10000
 
-# Stop 事件消息最大长度，字符数 [可选, 默认 5000]
+# Stop 事件消息最大长度，字符数 [可选, 默认 10000]
 # 主 Agent 完成时，发送飞书通知中显示的响应内容最大长度
 # 超过此长度会被截断并添加 "..."
-STOP_MESSAGE_MAX_LENGTH=5000
+STOP_MESSAGE_MAX_LENGTH=10000
 
 # =============================================================================
 # 五、Claude 命令

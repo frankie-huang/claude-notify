@@ -142,8 +142,7 @@ def get_close_page_timeout() -> int:
     return get_config_int('CALLBACK_PAGE_CLOSE_DELAY', DEFAULT_CALLBACK_PAGE_CLOSE_DELAY)
 
 
-def get_claude_commands():
-    # type: () -> List[str]
+def get_claude_commands() -> List[str]:
     """解析 CLAUDE_COMMAND 配置为命令列表
 
     支持格式:
@@ -181,8 +180,7 @@ def get_claude_commands():
     return [raw]
 
 
-def resolve_claude_command(cmd_arg):
-    # type: (str) -> Tuple[bool, str]
+def resolve_claude_command(cmd_arg: str) -> Tuple[bool, str]:
     """根据索引或名称匹配从配置列表中选择 Claude Command
 
     Args:
@@ -287,9 +285,14 @@ if FEISHU_OWNER_ID:
             f"请在飞书开放平台获取用户的 user_id（纯数字或字母数字组合）。"
         )
 
-# 飞书网关地址（分离部署时配置，网关注册接口为 {FEISHU_GATEWAY_URL}/register）
+# 飞书网关地址（分离部署时配置，网关注册接口为 {FEISHU_GATEWAY_URL}/gw/register）
 # OpenAPI 模式下未配置时，默认使用 CALLBACK_SERVER_URL（单机模式）
 _FEISHU_GATEWAY_URL = get_config('FEISHU_GATEWAY_URL', '')
 FEISHU_GATEWAY_URL = _FEISHU_GATEWAY_URL if _FEISHU_GATEWAY_URL else (
     CALLBACK_SERVER_URL if FEISHU_SEND_MODE == 'openapi' else ''
 )
+
+# 话题内回复模式：回复消息时是否收进话题详情（不刷群聊主界面）
+# True: 回复消息仅出现在话题详情中，不会冒泡到群聊主界面
+# False (默认): 回复消息正常显示在群聊主界面
+FEISHU_REPLY_IN_THREAD = get_config('FEISHU_REPLY_IN_THREAD', 'false').lower() in ('true', '1', 'yes')

@@ -31,7 +31,7 @@
 - **GIVEN** 飞书网关返回注册成功响应
 - **WHEN** 后续查询映射表
 - **THEN** 根据绑定状态决定：
-  - 已绑定：直接调用 Callback 后端的 `/register-callback` 接口
+  - 已绑定：直接调用 Callback 后端的 `/cb/register` 接口
   - 未绑定：向用户发送飞书授权卡片
 
 ### Requirement: 绑定关系存储
@@ -88,12 +88,12 @@
 
 ### Requirement: Callback 后端注册回调接口
 
-Callback 后端 MUST 提供 `POST /register-callback` 接口，接收网关的 auth_token。
+Callback 后端 MUST 提供 `POST /cb/register` 接口，接收网关的 auth_token。
 
 #### Scenario: 接收 auth_token
 
 - **GIVEN** Callback 后端正在运行
-- **WHEN** 收到 POST `/register-callback` 请求
+- **WHEN** 收到 POST `/cb/register` 请求
 - **AND** 请求 body 包含 `owner_id` 和 `auth_token`
 - **THEN** 验证 `owner_id` 与配置的 `FEISHU_OWNER_ID` 一致
 - **AND** 存储 `auth_token` 到内存/文件
@@ -102,7 +102,7 @@ Callback 后端 MUST 提供 `POST /register-callback` 接口，接收网关的 a
 #### Scenario: owner_id 不匹配
 
 - **GIVEN** Callback 后端正在运行
-- **WHEN** 收到 POST `/register-callback` 请求
+- **WHEN** 收到 POST `/cb/register` 请求
 - **AND** 请求 body 中的 `owner_id` 与配置不一致
 - **THEN** 返回 `403` 状态码
 - **AND** 返回 `{"error": "owner_id mismatch"}`
@@ -124,7 +124,7 @@ Callback 后端 MUST 提供 `POST /register-callback` 接口，接收网关的 a
 - **GIVEN** 用户点击授权卡片中的"允许"按钮
 - **WHEN** 网关收到 `card.action.trigger` 事件
 - **AND** `action.value.action` 为 `approve_register`
-- **THEN** 调用 `action.value.callback_url` 指向的 `/register-callback` 接口
+- **THEN** 调用 `action.value.callback_url` 指向的 `/cb/register` 接口
 - **AND** 传递 `owner_id` 和生成的 `auth_token`
 - **AND** 创建绑定记录
 - **AND** 返回 `{"toast": {"type": "success", "content": "已授权绑定"}}`

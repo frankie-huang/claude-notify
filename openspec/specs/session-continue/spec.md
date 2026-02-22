@@ -66,7 +66,7 @@ TBD - created by archiving change add-session-continue. Update Purpose after arc
 - **GIVEN** 查询到有效的映射
 - **AND** 提取到用户回复内容
 - **WHEN** 飞书网关处理回复消息
-- **THEN** POST 请求到 `{callback_url}/claude/continue`
+- **THEN** POST 请求到 `{callback_url}/cb/claude/continue`
 - **AND** 请求 body 包含 `session_id`、`project_dir`、`prompt`
 - **AND** 可选包含 `chat_id`、`reply_message_id`
 - **AND** 如果用户通过 `/reply --cmd=` 指定了 command，携带 `claude_command` 参数
@@ -91,12 +91,12 @@ TBD - created by archiving change add-session-continue. Update Purpose after arc
 
 ### Requirement: Callback 后端继续会话接口
 
-Callback 后端 SHALL 提供 `/claude/continue` 端点，接收并处理继续会话请求，支持指定 Claude Command。
+Callback 后端 SHALL 提供 `/cb/claude/continue` 端点，接收并处理继续会话请求，支持指定 Claude Command。
 
 #### Scenario: 接收继续会话请求
 
 - **GIVEN** Callback 后端正在运行
-- **WHEN** 收到 POST `/claude/continue` 请求
+- **WHEN** 收到 POST `/cb/claude/continue` 请求
 - **AND** 请求包含 `session_id`、`project_dir`、`prompt`
 - **AND** 请求可选包含 `claude_command`
 - **THEN** 后端验证参数完整性
@@ -119,14 +119,14 @@ Callback 后端 SHALL 提供 `/claude/continue` 端点，接收并处理继续�
 
 #### Scenario: 参数验证失败
 
-- **GIVEN** 收到 `/claude/continue` 请求
+- **GIVEN** 收到 `/cb/claude/continue` 请求
 - **WHEN** 缺少 `session_id`、`project_dir` 或 `prompt`
 - **THEN** 返回 `400` 状态码
 - **AND** 返回 `{"error": "missing required fields"}`
 
 #### Scenario: 项目目录不存在
 
-- **GIVEN** 收到 `/claude/continue` 请求
+- **GIVEN** 收到 `/cb/claude/continue` 请求
 - **WHEN** `project_dir` 目录不存在
 - **THEN** 返回 `400` 状态码
 - **AND** 返回 `{"error": "project directory not found"}`
@@ -151,7 +151,7 @@ Callback 后端 SHALL 提供 `/claude/continue` 端点，接收并处理继续�
 
 #### Scenario: 指定的 Command 不在配置列表中
 
-- **GIVEN** 收到 `/claude/continue` 请求
+- **GIVEN** 收到 `/cb/claude/continue` 请求
 - **AND** `claude_command` 值不在预配置列表中
 - **WHEN** Callback 验证命令
 - **THEN** 返回 `400` 状态码
@@ -189,7 +189,7 @@ stop.sh 和 permission.sh SHALL 在发送通知时传递 session 相关参数，
 
 #### Scenario: 飞书网关接收参数
 
-- **GIVEN** Callback 后端调用飞书网关 `/feishu/send`
+- **GIVEN** Callback 后端调用飞书网关 `/gw/feishu/send`
 - **AND** 请求包含 `session_id`、`project_dir`、`callback_url`
 - **WHEN** 飞书网关处理请求
 - **THEN** 提取这些参数
@@ -198,7 +198,7 @@ stop.sh 和 permission.sh SHALL 在发送通知时传递 session 相关参数，
 
 #### Scenario: 向后兼容
 
-- **GIVEN** Callback 后端调用飞书网关 `/feishu/send`
+- **GIVEN** Callback 后端调用飞书网关 `/gw/feishu/send`
 - **AND** 请求不包含 `session_id` 等参数
 - **WHEN** 飞书网关处理请求
 - **THEN** 正常发送消息
@@ -288,7 +288,7 @@ Callback 后端 SHALL 按以下优先级确定使用哪个 Claude Command：请�
 
 #### Scenario: 请求指定的 command 最优先
 
-- **GIVEN** `/claude/continue` 请求中包含 `claude_command` 参数
+- **GIVEN** `/cb/claude/continue` 请求中包含 `claude_command` 参数
 - **AND** SessionChatStore 中该 session 记录的 command 为另一个值
 - **WHEN** Callback 后端确定使用哪个命令
 - **THEN** 使用请求中指定的 `claude_command`
@@ -296,14 +296,14 @@ Callback 后端 SHALL 按以下优先级确定使用哪个 Claude Command：请�
 
 #### Scenario: SessionChatStore session 记录次优先
 
-- **GIVEN** `/claude/continue` 请求中未指定 `claude_command`
+- **GIVEN** `/cb/claude/continue` 请求中未指定 `claude_command`
 - **AND** SessionChatStore 中该 session 记录了 `claude_command` 为 `claude --setting opus`
 - **WHEN** Callback 后端确定使用哪个命令
 - **THEN** 使用 SessionChatStore 中记录的 `claude --setting opus`
 
 #### Scenario: 默认命令兜底
 
-- **GIVEN** `/claude/continue` 请求中未指定 `claude_command`
+- **GIVEN** `/cb/claude/continue` 请求中未指定 `claude_command`
 - **AND** SessionChatStore 中该 session 无 `claude_command` 记录
 - **WHEN** Callback 后端确定使用哪个命令
 - **THEN** 使用配置列表第一个命令（默认命令）
@@ -324,7 +324,7 @@ Callback 后端 SHALL 按以下优先级确定使用哪个 Claude Command：请�
 
 - **GIVEN** 用户在终端直接启动 Claude Code（非通过飞书 `/new` 指令）
 - **AND** 该会话尚无 `last_message_id`
-- **WHEN** 首次通过 `/feishu/send` 发送消息（权限请求或完成通知）
+- **WHEN** 首次通过 `/gw/feishu/send` 发送消息（权限请求或完成通知）
 - **THEN** 发送新消息（无回复目标）
 - **AND** 发送成功后，将返回的 `message_id` 保存为该 session 的 `last_message_id`
 - **AND** 后续该会话的消息都使用 reply API 回复到 `last_message_id`
@@ -413,13 +413,13 @@ SessionChatStore SHALL 扩展支持存储每个 session 的 `last_message_id`，
 - **THEN** 返回空字符串
 - **AND** 系统使用默认行为（发送新消息）
 
-### Requirement: /feishu/send 接口支持 reply 模式
+### Requirement: /gw/feishu/send 接口支持 reply 模式
 
-飞书网关的 `/feishu/send` 端点 SHALL 支持 `reply_to_message_id` 可选参数，启用时使用 reply API 发送消息。
+飞书网关的 `/gw/feishu/send` 端点 SHALL 支持 `reply_to_message_id` 可选参数，启用时使用 reply API 发送消息。
 
 #### Scenario: 携带 reply_to_message_id 发送卡片
 
-- **GIVEN** 收到 POST `/feishu/send` 请求
+- **GIVEN** 收到 POST `/gw/feishu/send` 请求
 - **AND** 请求包含 `reply_to_message_id` 字段（非空）
 - **AND** `msg_type` 为 `interactive`
 - **WHEN** 飞书网关处理请求
@@ -428,7 +428,7 @@ SessionChatStore SHALL 扩展支持存储每个 session 的 `last_message_id`，
 
 #### Scenario: 携带 reply_to_message_id 发送文本
 
-- **GIVEN** 收到 POST `/feishu/send` 请求
+- **GIVEN** 收到 POST `/gw/feishu/send` 请求
 - **AND** 请求包含 `reply_to_message_id` 字段（非空）
 - **AND** `msg_type` 为 `text`
 - **WHEN** 飞书网关处理请求
@@ -436,7 +436,7 @@ SessionChatStore SHALL 扩展支持存储每个 session 的 `last_message_id`，
 
 #### Scenario: reply 失败降级为 send
 
-- **GIVEN** 收到 POST `/feishu/send` 请求
+- **GIVEN** 收到 POST `/gw/feishu/send` 请求
 - **AND** 请求包含 `reply_to_message_id`
 - **WHEN** reply API 调用失败
 - **THEN** 降级为使用 `send_card()` / `send_text()` 发送新消息
@@ -444,14 +444,14 @@ SessionChatStore SHALL 扩展支持存储每个 session 的 `last_message_id`，
 
 #### Scenario: 发送成功后更新 last_message_id
 
-- **GIVEN** 收到 POST `/feishu/send` 请求
+- **GIVEN** 收到 POST `/gw/feishu/send` 请求
 - **AND** 请求包含有效的 `session_id` 和 `project_dir`
 - **WHEN** 消息发送成功
 - **THEN** 调用 `set_last_message_id(session_id, message_id)` 更新链式回复状态
 
 #### Scenario: 向后兼容
 
-- **GIVEN** 收到 POST `/feishu/send` 请求
+- **GIVEN** 收到 POST `/gw/feishu/send` 请求
 - **AND** 请求不包含 `reply_to_message_id` 字段
 - **WHEN** 飞书网关处理请求
 - **THEN** 行为与变更前完全一致
@@ -466,15 +466,15 @@ Hook 脚本 SHALL 在发送飞书通知时查询并传递 `last_message_id`，�
 - **GIVEN** Hook 脚本需要发送飞书通知
 - **AND** 已获取到 `session_id`
 - **WHEN** 脚本调用 `_get_last_message_id(session_id)`
-- **THEN** 函数调用 `POST /get-last-message-id` 接口
+- **THEN** 函数调用 `POST /cb/session/get-last-message-id` 接口
 - **AND** 返回 `last_message_id`（可能为空）
 
-#### Scenario: 传递 last_message_id 到 /feishu/send
+#### Scenario: 传递 last_message_id 到 /gw/feishu/send
 
 - **GIVEN** 脚本已查询到 `last_message_id`
 - **AND** `last_message_id` 非空
 - **WHEN** 调用 `send_feishu_card()` 发送卡片
-- **THEN** 将 `last_message_id` 作为 `reply_to_message_id` 传递给 `/feishu/send`
+- **THEN** 将 `last_message_id` 作为 `reply_to_message_id` 传递给 `/gw/feishu/send`
 - **AND** 消息将作为话题回复发送
 
 #### Scenario: last_message_id 为空时正常发送
@@ -482,18 +482,18 @@ Hook 脚本 SHALL 在发送飞书通知时查询并传递 `last_message_id`，�
 - **GIVEN** 脚本查询 `last_message_id` 结果为空
 - **WHEN** 调用 `send_feishu_card()` 发送卡片
 - **THEN** 不传递 `reply_to_message_id`
-- **AND** `/feishu/send` 发送新消息
+- **AND** `/gw/feishu/send` 发送新消息
 - **AND** 如果请求包含 `session_id`，发送成功后自动设置 `last_message_id`
 
 ### Requirement: Callback 后端提供 last_message_id 查询接口
 
-Callback 后端 SHALL 提供 `POST /get-last-message-id` 端点，供 Shell 脚本查询 session 的 last_message_id。
+Callback 后端 SHALL 提供 `POST /cb/session/get-last-message-id` 端点，供 Shell 脚本查询 session 的 last_message_id。
 
 #### Scenario: 查询存在的 last_message_id
 
 - **GIVEN** Callback 后端正在运行
 - **AND** SessionChatStore 中某 session 已有 `last_message_id`
-- **WHEN** 收到 `POST /get-last-message-id` 请求，body 为 `{"session_id": "xxx"}`
+- **WHEN** 收到 `POST /cb/session/get-last-message-id` 请求，body 为 `{"session_id": "xxx"}`
 - **THEN** 返回 `{"last_message_id": "om_xxx"}`
 
 #### Scenario: 查询不存在的 last_message_id
@@ -510,7 +510,7 @@ Callback 后端 SHALL 提供 `POST /get-last-message-id` 端点，供 Shell 脚�
 
 #### Scenario: 缺少 session_id 参数
 
-- **GIVEN** 收到 `POST /get-last-message-id` 请求
+- **GIVEN** 收到 `POST /cb/session/get-last-message-id` 请求
 - **AND** 请求 body 中 `session_id` 为空或缺失
 - **WHEN** Callback 后端处理请求
 - **THEN** 返回 HTTP 400，body 为 `{"last_message_id": ""}`
@@ -518,7 +518,7 @@ Callback 后端 SHALL 提供 `POST /get-last-message-id` 端点，供 Shell 脚�
 
 ### Requirement: Callback 后端提供 last_message_id 写入接口
 
-Callback 后端 SHALL 提供 `POST /set-last-message-id` 端点，供飞书网关在发送消息成功后同步 `last_message_id`。
+Callback 后端 SHALL 提供 `POST /cb/session/set-last-message-id` 端点，供飞书网关在发送消息成功后同步 `last_message_id`。
 
 在分离部署模式下，SessionChatStore 归属 Callback 后端，飞书网关不能直接调用 `set_last_message_id()`，需通过此 HTTP 接口间接写入。
 
@@ -526,7 +526,7 @@ Callback 后端 SHALL 提供 `POST /set-last-message-id` 端点，供飞书网�
 
 - **GIVEN** Callback 后端正在运行
 - **AND** SessionChatStore 中该 session 存在且未过期
-- **WHEN** 收到 `POST /set-last-message-id` 请求，body 为 `{"session_id": "xxx", "message_id": "om_xxx"}`
+- **WHEN** 收到 `POST /cb/session/set-last-message-id` 请求，body 为 `{"session_id": "xxx", "message_id": "om_xxx"}`
 - **AND** 请求携带有效的 `X-Auth-Token` header
 - **THEN** 更新该 session 的 `last_message_id` 并刷新 `updated_at`
 - **AND** 返回 `{"success": true}`
@@ -534,7 +534,7 @@ Callback 后端 SHALL 提供 `POST /set-last-message-id` 端点，供飞书网�
 #### Scenario: session 不存在时自动创建
 
 - **GIVEN** SessionChatStore 中无该 session_id（终端直接启动的会话场景）
-- **WHEN** 收到 `POST /set-last-message-id` 请求
+- **WHEN** 收到 `POST /cb/session/set-last-message-id` 请求
 - **THEN** 自动创建该 session 的记录，包含 `last_message_id` 和 `updated_at`
 - **AND** 返回 `{"success": true}`
 
@@ -546,14 +546,14 @@ Callback 后端 SHALL 提供 `POST /set-last-message-id` 端点，供飞书网�
 
 #### Scenario: 缺少必要参数
 
-- **GIVEN** 收到 `POST /set-last-message-id` 请求
+- **GIVEN** 收到 `POST /cb/session/set-last-message-id` 请求
 - **AND** `session_id` 或 `message_id` 为空
 - **WHEN** Callback 后端处理请求
 - **THEN** 返回 HTTP 400，body 为 `{"success": false, "error": "Missing required parameters"}`
 
 #### Scenario: 鉴权失败
 
-- **GIVEN** 收到 `POST /set-last-message-id` 请求
+- **GIVEN** 收到 `POST /cb/session/set-last-message-id` 请求
 - **AND** 请求未携带或携带无效的 `X-Auth-Token` header
 - **WHEN** Callback 后端处理请求
 - **THEN** 返回 HTTP 401，body 为 `{"error": "Unauthorized"}`
