@@ -68,6 +68,7 @@ claude-notify/
 │   │   │   ├── auth_token_store.py  # 认证令牌存储
 │   │   │   └── feishu_api.py        # 飞书 API 封装
 │   │   └── handlers/           # HTTP 处理器
+│   │       ├── http_handler.py # HTTP 请求处理器（GET/POST 路由分发）
 │   │       ├── callback.py     # 权限回调处理器
 │   │       ├── feishu.py       # 飞书事件处理器（OpenAPI 网关）
 │   │       ├── claude.py       # Claude 会话继续处理器
@@ -339,6 +340,7 @@ vim .env
 
 | 处理器 | 功能 | 端点 |
 |--------|------|------|
+| `http_handler.py` | HTTP 请求处理器（GET/POST 路由分发入口） | 全部 |
 | `callback.py` | 权限回调处理器（接收按钮操作） | `/cb/*` |
 | `feishu.py` | 飞书事件处理器（OpenAPI 网关） | `/gw/feishu/*` |
 | `claude.py` | Claude 会话继续处理器 | `/cb/claude/continue` |
@@ -680,6 +682,8 @@ brew install python3 curl jq socat
 ### 架构设计
 - [飞书网关认证与注册机制](docs/design/GATEWAY_AUTH.md) - Callback 后端自动注册与双向认证机制
 - [飞书消息回复继续会话方案](docs/design/FEISHU_SESSION_CONTINUE.md) - 飞书回复继续 Claude 会话的设计与实现
+- [飞书话题内回复模式](docs/design/FEISHU_THREAD_REPLY.md) - 同一会话消息收敛到话题流的链式回复设计
+- [交互式 Claude 会话调研](docs/design/INTERACTIVE_CLAUDE_SESSION_INVESTIGATION.md) - 交互式 CLI 会话方案调研报告
 - [通信鉴权与安全分析](docs/design/SECURITY_ANALYSIS.md) - 通信安全风险评估与加固建议
 - [Socket 通信协议](src/shared/protocol.md) - Unix Socket 通信规范
 
@@ -690,7 +694,7 @@ brew install python3 curl jq socat
 - [飞书卡片模板说明](src/templates/feishu/README.md) - 卡片模板使用指南
 
 ### OpenSpec
-- [Agent 规范](docs/AGENTS.md) - OpenSpec Agent 使用说明
+- [Agent 规范](openspec/AGENTS.md) - OpenSpec Agent 使用说明
 - [OpenSpec 规范](openspec/specs/) - 项目变更规范管理
 
 ### 测试文档

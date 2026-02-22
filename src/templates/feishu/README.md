@@ -15,8 +15,10 @@
 - `{{tool_name}}` - 工具名称(Bash/Edit/Write/Read 等)
 - `{{project_name}}` - 项目名称
 - `{{timestamp}}` - 时间戳
+- `{{session_id}}` - 会话标识（session_id）
 - `{{detail_elements}}` - 详情元素(JSON 对象,由子模板渲染生成)
 - `{{buttons_json}}` - 按钮数组(JSON 字符串)
+- `{{footer_hint}}` - 卡片底部提示文本
 
 **使用场景**: 回调服务运行时的权限请求通知
 
@@ -49,10 +51,12 @@
 
 **变量**:
 - `{{at_user}}` - @ 用户标签（由 `FEISHU_AT_USER` 配置控制，默认 @ `FEISHU_OWNER_ID`）
-- `{{response_content}}` - Claude 最终响应内容（Markdown 格式）
 - `{{project_name}}` - 项目名称
-- `{{timestamp}}` - 时间戳
 - `{{session_id}}` - 会话标识（session_id）
+- `{{timestamp}}` - 时间戳
+- `{{thinking_element}}` - 思考过程元素（仅在启用思考且有内容时出现）
+- `{{response_elements}}` - 响应内容元素数组（Markdown 格式）
+- `{{resume_session_id}}` - 恢复会话的命令 ID
 
 **使用场景**: 主 Agent 完成响应时的任务完成通知
 
@@ -127,6 +131,7 @@
 
 **变量**:
 - `{{request_id}}` - 请求 ID
+- `{{owner_id}}` - 飞书用户 ID（用于回调时标识操作者）
 
 **按钮类型**: `callback`（点击后飞书内直接响应，显示 toast 提示）
 
@@ -140,7 +145,7 @@
 
 ```bash
 # 加载函数库
-source shell-lib/feishu.sh
+source src/lib/feishu.sh
 
 # 渲染 Bash 命令元素
 cmd_element=$(render_sub_template "command-bash" "command=npm install")
@@ -292,7 +297,7 @@ export DEBUG=1
 
 ```bash
 # 加载函数库
-source shell-lib/feishu.sh
+source src/lib/feishu.sh
 
 # 方法1: 使用 build_permission_card (推荐)
 buttons=$(build_permission_buttons "http://localhost:8080" "123-456")
@@ -337,4 +342,4 @@ git commit -am "Customize Feishu card templates"
 
 - [飞书官方文档 - 卡片消息](https://open.feishu.cn/document/ukTMukTMukTM/uEjNwUjLxYDM14SM2ATN)
 - [项目 README](../../README.md)
-- [Shell 函数库说明](../../shell-lib/feishu.sh)
+- [Shell 函数库说明](../../src/lib/feishu.sh)

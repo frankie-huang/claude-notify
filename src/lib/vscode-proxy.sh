@@ -15,14 +15,14 @@
 #   vscode_proxy_open "/path/to/project"
 #   vscode_proxy_activate "/path/to/project"
 #
-# 测试代理服务是否可用:
-#   source .env && curl --noproxy "*" -s http://localhost:${VSCODE_SSH_PROXY_PORT}/
+# 测试代理服务是否可用 (假设端口 9527):
+#   curl --noproxy "*" -s http://localhost:9527/
 #   # 预期返回: {"status":"ok"}
 #
-# 服务端检测端口占用 (先 source .env 加载配置):
-#   - lsof -i :${VSCODE_SSH_PROXY_PORT}              # macOS/Linux，查看占用进程
-#   - ss -tuln | grep :${VSCODE_SSH_PROXY_PORT}      # Linux，检查监听状态
-#   - netstat -an | grep ${VSCODE_SSH_PROXY_PORT}    # 通用，检查端口状态
+# 服务端检测端口占用:
+#   - lsof -i :9527              # macOS/Linux，查看占用进程
+#   - ss -tuln | grep :9527      # Linux，检查监听状态
+#   - netstat -an | grep 9527    # 通用，检查端口状态
 #
 
 # =============================================================================
@@ -35,7 +35,7 @@ _VSCODE_PROXY_TIMEOUT=5
 # 获取代理端口
 # =============================================================================
 _vscode_proxy_get_port() {
-    get_config "VSCODE_SSH_PROXY_PORT" "9527"
+    get_config "VSCODE_SSH_PROXY_PORT" ""
 }
 
 # =============================================================================
@@ -151,7 +151,7 @@ _vscode_normalize_home_path() {
 # 激活 VSCode 窗口
 # =============================================================================
 # 功能：根据配置自动选择激活方式
-#       - 如果配置了 VSCODE_PROXY_PORT，使用本地代理
+#       - 如果配置了 VSCODE_SSH_PROXY_PORT，使用本地代理
 #       - 否则使用 code . 命令
 #
 # 参数: $1 - 项目路径
@@ -173,7 +173,7 @@ vscode_proxy_activate() {
 
     # 检查是否配置了代理端口
     local proxy_port
-    proxy_port=$(get_config "VSCODE_SSH_PROXY_PORT" "")
+    proxy_port=$(_vscode_proxy_get_port)
 
     if [ -n "$proxy_port" ]; then
         # 使用本地代理激活

@@ -65,12 +65,12 @@ x: Optional[int] = None  # 或 Union[int, None]
 
 **Bash 脚本中读取配置：**
 
-使用 `shell-lib/env.sh` 提供的 `get_config` 函数：
+使用 `src/lib/core.sh` 提供的 `get_config` 函数：
 
 ```bash
-# 引入 env.sh（如果尚未引入）
+# 引入 core.sh（如果尚未引入）
 if ! type get_config &> /dev/null; then
-    source "${BASH_SOURCE[0]%/*}/env.sh"
+    source "${BASH_SOURCE[0]%/*}/core.sh"
 fi
 
 # 读取配置，第二个参数为默认值

@@ -88,7 +88,7 @@ def main():
         logger.debug(f"Request sent ({len(request_data)} bytes), waiting for response (timeout={CLIENT_TIMEOUT}s)...")
 
         # 先读取并丢弃服务器的确认响应（不带长度前缀的 JSON）
-        # server.py:624 发送: {"success": true, "message": "Request registered"}
+        # main.py:178-179 发送: {"success": true, "message": "Request registered"}
         ack_data = b''
         while True:
             chunk = sock.recv(4096)

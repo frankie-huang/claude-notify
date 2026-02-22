@@ -1,14 +1,17 @@
 #!/bin/bash
 # =============================================================================
-# shell-lib/json.sh - JSON 解析函数库
+# src/lib/json.sh - JSON 解析函数库
 #
 # 提供统一的 JSON 解析功能，支持多种解析工具（jq > python3 > grep/sed）
 #
 # 函数:
-#   json_init()          - 初始化 JSON 解析器（检测可用工具）
-#   json_get()           - 获取 JSON 字段值
-#   json_get_object()    - 获取 JSON 对象
-#   json_build_object()  - 构建 JSON 对象（无 jq 时使用）
+#   json_init()              - 初始化 JSON 解析器（检测可用工具）
+#   json_get()               - 获取 JSON 字段值
+#   json_get_multi()         - 批量获取多个 JSON 字段值
+#   json_get_object()        - 获取 JSON 对象
+#   json_get_array_value()   - 从数组中提取指定条件的值
+#   json_has_field()         - 检查字段是否存在
+#   json_build_object()      - 构建 JSON 对象（无 jq 时使用）
 #
 # 全局变量:
 #   JSON_PARSER          - 当前使用的解析器（jq/python3/native）
@@ -16,7 +19,7 @@
 #   JSON_HAS_PYTHON3     - 是否支持 python3（true/false）
 #
 # 使用示例:
-#   source lib/json.sh
+#   source src/lib/json.sh
 #   json_init
 #   tool_name=$(json_get "$json" "tool_name")
 #   command=$(json_get "$json" "tool_input.command")

@@ -68,6 +68,7 @@ tool_config_init() {
 #   tool_name  - 工具名称（如 Bash, Edit）
 #   field_path - JSON 字段路径（如 color, input_field, detail_template）
 # 输出：字段值，如果不存在则输出空字符串
+# 返回：0 = 成功，1 = 配置初始化失败或字段不存在
 # =============================================================================
 _tool_config_get() {
     local tool_name="$1"

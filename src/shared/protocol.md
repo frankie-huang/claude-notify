@@ -158,8 +158,8 @@ Client (permission-notify.sh)           Server (callback server)
 
 | 配置项 | 默认值 | 环境变量 | 说明 |
 |--------|--------|----------|------|
-| 服务端超时 | 300s | PERMISSION_REQUEST_TIMEOUT | 等待用户决策的最大时间 |
-| 客户端超时 | 330s | - | 服务端超时 + 30s 缓冲 |
+| 服务端超时 | 600s | PERMISSION_REQUEST_TIMEOUT | 等待用户决策的最大时间 |
+| 客户端超时 | 630s | - | 服务端超时 + 30s 缓冲 |
 
 客户端超时设计为比服务端大，确保服务端先触发超时并发送回退响应。
 

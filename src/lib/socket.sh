@@ -222,6 +222,11 @@ parse_socket_response() {
 #   socket_path - 可选，Socket 路径（默认为 /tmp/claude-permission.sock）
 # 输出：0 表示可用，1 表示不可用
 #
+# Ping 协议（Python3 模式）：
+#   请求：{"type": "ping"}
+#   响应：{"type": "pong"}
+#   说明：发送 ping 消息后等待服务端返回 pong，超时 2 秒
+#
 # 示例：
 #   if check_socket_service; then
 #       echo "Service is available"

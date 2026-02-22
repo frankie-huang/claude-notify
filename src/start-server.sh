@@ -80,7 +80,7 @@ start_service() {
         echo "Warning: FEISHU_WEBHOOK_URL is not set. Notifications will be skipped."
     fi
 
-    # 后台启动服务（日志由 Python FileHandler 写入，stderr 写入单独文件用于捕获启动错误）
+    # 后台启动服务：stdout 丢弃（由 Python 内部 FileHandler 直接写日志文件），stderr 捕获到错误文件
     local log_file="$LOG_DIR/callback_$(date +%Y%m%d).log"
     local error_file="$LOG_DIR/startup_error.log"
     nohup python3 "${SERVER_DIR}/main.py" >/dev/null 2>"$error_file" &

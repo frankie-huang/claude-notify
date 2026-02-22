@@ -326,6 +326,16 @@ log_input() {
 # -----------------------------------------------------------------------------
 # 记录命令日志
 # -----------------------------------------------------------------------------
+# 功能：将工具命令内容记录到按 session 分组的日志文件
+# 用法：log_command "command_content" "request_id" "tool_name" "session_id"
+# 参数：
+#   $1 - command_content  - 命令内容（必填）
+#   $2 - request_id       - 请求 ID（可选，默认 unknown）
+#   $3 - tool_name        - 工具名称（可选，默认 unknown）
+#   $4 - session_id       - 会话 ID（可选，默认 unknown）
+# 输出：写入日志到 ${LOG_DIR}/command/command_${date}_${session_id}.log
+# 返回：0 = 成功
+# -----------------------------------------------------------------------------
 log_command() {
     local command_content="$1"
     local request_id="${2:-unknown}"

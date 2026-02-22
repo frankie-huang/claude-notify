@@ -13,6 +13,7 @@ import logging
 import socket
 import threading
 import time
+import traceback
 from typing import Tuple, Optional
 
 from config import PERMISSION_REQUEST_TIMEOUT
@@ -164,7 +165,6 @@ class RequestManager:
 
             except Exception as e:
                 logger.error(f"[resolve] Unexpected error: {type(e).__name__}: {e}")
-                import traceback
                 logger.error(f"[resolve] Traceback:\n{traceback.format_exc()}")
                 return False, self.ERR_UNKNOWN, f"发送决策失败: {str(e)}"
 

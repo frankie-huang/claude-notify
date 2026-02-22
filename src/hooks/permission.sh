@@ -294,9 +294,11 @@ EOF
 # 检查 Socket 通信工具可用性
 check_socket_tools
 
+# 无 Socket 工具时直接降级
 if [ "$HAS_SOCKET_CLIENT" = "false" ] && [ "$HAS_SOCAT" = "false" ]; then
     log "Warning: neither socket_client.py (python3) nor socat available, falling back to notification-only mode"
     run_fallback_mode
+    exit $EXIT_FALLBACK
 fi
 
 # 检查回调服务并选择模式
