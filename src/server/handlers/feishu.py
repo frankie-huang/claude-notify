@@ -19,6 +19,9 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
+# setup_logging 由 main.py 启动时将 shared/ 加入 sys.path
+from logging_config import setup_logging
+
 from handlers.utils import run_in_background as _run_in_background, post_json as _post_json
 
 logger = logging.getLogger(__name__)
@@ -77,26 +80,11 @@ def _get_message_logger():
     if _feishu_message_logger is None:
         with _feishu_message_logger_lock:
             if _feishu_message_logger is None:  # 双重检查
-                _feishu_message_logger = logging.getLogger('feishu_message')
-                _feishu_message_logger.setLevel(logging.INFO)
-                _feishu_message_logger.propagate = False  # 不传播到父 logger
-
-                # 日志目录: src/server/handlers -> src/server -> src -> project_root -> log
-                handlers_dir = os.path.dirname(__file__)
-                server_dir = os.path.dirname(handlers_dir)
-                src_dir = os.path.dirname(server_dir)
-                project_root = os.path.dirname(src_dir)
-                log_dir = os.path.join(project_root, 'log')
-                os.makedirs(log_dir, exist_ok=True)
-
-                log_file = os.path.join(log_dir, f"feishu_message_{time.strftime('%Y%m%d')}.log")
-                handler = logging.FileHandler(log_file, encoding='utf-8')
-                handler.setFormatter(logging.Formatter(
-                    '%(asctime)s.%(msecs)03d %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S'
-                ))
-                _feishu_message_logger.addHandler(handler)
-                logger.info(f"Feishu message logging to: {log_file}")
+                _feishu_message_logger = setup_logging(
+                    'feishu_message', console=False, propagate=False, encoding='utf-8'
+                )
+                logger.info("Feishu message logging to: %s (daily rotating)",
+                            _feishu_message_logger.handlers[0].baseFilename)
 
     return _feishu_message_logger
 
@@ -381,40 +369,49 @@ def _handle_reply_message(data: dict, parent_id: str):
         _run_in_background(_send_reject_message, (chat_id, "无法找到对应的会话（可能已过期或被清理），请重新发起 /new 指令", message_id))
         return
 
-    # 在后台线程中转发到 Callback 后端（绑定查询和错误处理在 _forward_continue_request 内部）
-    _run_in_background(_forward_continue_request, (mapping, prompt, chat_id, message_id, event))
+    # 获取 binding（用于转发请求）
+    binding = _get_binding_from_event(event)
+
+    # 在后台线程中转发到 Callback 后端
+    _run_in_background(_forward_continue_request, (binding, mapping['session_id'], mapping['project_dir'], prompt, chat_id, message_id))
 
 
-def _forward_claude_request(callback_url: str, endpoint: str, data: dict, auth_token: str,
-                            chat_id: str, action: str, reply_to: Optional[str] = None,
+def _forward_claude_request(callback_url: str, endpoint: str, auth_token: str,
+                            payload: dict, chat_id: str,
+                            reply_to: Optional[str] = None,
                             reply_in_thread: bool = False):
     """转发 Claude 会话请求到 Callback 后端
 
     Args:
         callback_url: Callback 后端 URL
-        endpoint: API 端点（如 /cb/claude/continue, /cb/claude/new）
-        data: 请求数据
+        endpoint: API 端点（如 /cb/claude/new, /cb/claude/continue）
         auth_token: 认证令牌
+        payload: 请求数据
         chat_id: 群聊 ID（用于错误通知）
-        action: 操作类型（用于日志，如 'continue', 'new'）
         reply_to: 要回复的消息 ID（可选）
         reply_in_thread: 是否收进话题详情
     """
     import urllib.error
 
+    # 从 endpoint 提取 action（如 /cb/claude/new -> new）
+    action = endpoint.rstrip('/').split('/')[-1]
+    known_actions = ('new', 'continue')
+    if action not in known_actions:
+        logger.warning(f"[feishu] Unknown endpoint action: {action}, expected one of {known_actions}")
+        action = 'continue'  # 默认使用 continue
     is_new = (action == 'new')
     api_url = f"{callback_url.rstrip('/')}{endpoint}"
 
     logger.info(f"[feishu] Forwarding {action} request to {api_url}")
 
     try:
-        response_data = _post_json(api_url, data, auth_token=auth_token, timeout=30)
+        response_data = _post_json(api_url, payload, auth_token=auth_token, timeout=30)
         logger.info(f"[feishu] {action.capitalize()} request response: {response_data}")
 
         # 先保存用户消息到 MessageSessionStore（不更新 last_message_id）
         if reply_to:
-            session_id = response_data.get('session_id', '') or data.get('session_id', '')
-            project_dir = data.get('project_dir', '')
+            session_id = response_data.get('session_id', '') or payload.get('session_id', '')
+            project_dir = payload.get('project_dir', '')
             if session_id and project_dir:
                 from services.message_session_store import MessageSessionStore
                 msg_store = MessageSessionStore.get_instance()
@@ -423,28 +420,30 @@ def _forward_claude_request(callback_url: str, endpoint: str, data: dict, auth_t
                     logger.info(f"[feishu] Saved user message mapping: {reply_to} -> {session_id}")
 
         # 再发送系统通知（内部会更新 last_message_id）
-        _send_session_result_notification(chat_id, response_data, data.get('project_dir', ''),
-                                           is_new=is_new, reply_to=reply_to,
-                                           callback_url=callback_url, auth_token=auth_token,
-                                           reply_in_thread=reply_in_thread)
+        _send_session_result_notification(chat_id, response_data, payload.get('project_dir', ''),
+                                           is_new=is_new,
+                                           claude_command=payload.get('claude_command', ''),
+                                           reply_to=reply_to,
+                                           reply_in_thread=reply_in_thread,
+                                           callback_url=callback_url, auth_token=auth_token)
 
     except urllib.error.HTTPError as e:
         error_detail = _extract_http_error_detail(e)
         action_text = "新建会话失败" if is_new else "继续会话失败"
         error_msg = f"{action_text}: {error_detail}" if error_detail else f"Callback 服务返回错误: HTTP {e.code}"
         logger.error(f"[feishu] {action.capitalize()} request HTTP error: {e.code} {e.reason}")
-        # 注意：新建会话时 data 中没有 session_id，对应的错误通知不会关联会话
+        # 注意：新建会话时 payload 中没有 session_id，对应的错误通知不会关联会话
         # 这符合预期，因为会话根本没创建成功
         _send_error_notification(chat_id, error_msg, reply_to=reply_to,
-                                 session_id=data.get('session_id', ''),
-                                 project_dir=data.get('project_dir', ''),
+                                 session_id=payload.get('session_id', ''),
+                                 project_dir=payload.get('project_dir', ''),
                                  reply_in_thread=reply_in_thread)
 
     except urllib.error.URLError as e:
         logger.error(f"[feishu] {action.capitalize()} request URL error: {e.reason}")
         _send_error_notification(chat_id, f"Callback 服务不可达: {e.reason}", reply_to=reply_to,
-                                 session_id=data.get('session_id', ''),
-                                 project_dir=data.get('project_dir', ''),
+                                 session_id=payload.get('session_id', ''),
+                                 project_dir=payload.get('project_dir', ''),
                                  reply_in_thread=reply_in_thread)
 
 
@@ -465,26 +464,23 @@ def _extract_http_error_detail(http_error):
         return ''
 
 
-def _forward_continue_request(mapping: dict, prompt: str, chat_id: str, reply_message_id: str,
-                              feishu_event: dict, claude_command: str = ''):
+def _forward_continue_request(binding: dict, session_id: str, project_dir: str,
+                              prompt: str, chat_id: str, message_id: str,
+                              claude_command: str = ''):
     """转发继续会话请求到 Callback 后端
 
     Args:
-        mapping: 映射信息 {session_id, project_dir}
+        binding: 绑定信息（包含 auth_token, callback_url 等）
+        session_id: 会话 ID
+        project_dir: 项目目录
         prompt: 用户回复内容
         chat_id: 群聊 ID
-        reply_message_id: 回复消息 ID（用户消息 ID）
-        feishu_event: 飞书事件数据（用于获取绑定信息）
+        message_id: 用户消息 ID（用于回复）
         claude_command: 指定使用的 Claude 命令（可选）
     """
-    session_id = mapping['session_id']
-    project_dir = mapping['project_dir']
-
-    # 获取绑定信息
-    binding = _get_binding_from_event(feishu_event)
     if not binding:
         logger.warning("[feishu] No binding found, cannot continue session")
-        _send_error_notification(chat_id, "您尚未注册，无法使用此功能", reply_to=reply_message_id,
+        _send_error_notification(chat_id, "您尚未注册，无法使用此功能", reply_to=message_id,
                                  session_id=session_id, project_dir=project_dir)
         return
 
@@ -497,20 +493,21 @@ def _forward_continue_request(mapping: dict, prompt: str, chat_id: str, reply_me
         'project_dir': project_dir,
         'prompt': prompt,
         'chat_id': chat_id,
-        'reply_message_id': reply_message_id
+        'reply_message_id': message_id
     }
     if claude_command:
         data['claude_command'] = claude_command
 
-    _forward_claude_request(callback_url, '/cb/claude/continue', data,
-                            auth_token, chat_id, 'continue', reply_to=reply_message_id,
+    _forward_claude_request(callback_url, '/cb/claude/continue', auth_token,
+                            data, chat_id, reply_to=message_id,
                             reply_in_thread=reply_in_thread)
 
 
 def _send_session_result_notification(chat_id: str, response: dict, project_dir: str,
-                                      is_new: bool = False, reply_to: Optional[str] = None,
-                                      callback_url: str = '', auth_token: str = '',
-                                      reply_in_thread: bool = False):
+                                      is_new: bool = False, claude_command: str = '',
+                                      reply_to: Optional[str] = None,
+                                      reply_in_thread: bool = False,
+                                      callback_url: str = '', auth_token: str = ''):
     """根据会话结果发送飞书通知
 
     Args:
@@ -518,10 +515,11 @@ def _send_session_result_notification(chat_id: str, response: dict, project_dir:
         response: Callback 返回的结果
         project_dir: 项目目录
         is_new: 是否为新建会话（True: 新建会话，False: 继续会话）
+        claude_command: 使用的 Claude 命令（可选，如 'opus', 'sonnet'）
         reply_to: 要回复的消息 ID（可选，用于链式回复）
+        reply_in_thread: 是否收进话题详情
         callback_url: Callback 后端 URL（用于跨网络设置 last_message_id）
         auth_token: 认证令牌（用于跨网络调用）
-        reply_in_thread: 是否收进话题详情
     """
     from services.feishu_api import FeishuAPIService
     from services.message_session_store import MessageSessionStore
@@ -542,8 +540,10 @@ def _send_session_result_notification(chat_id: str, response: dict, project_dir:
         # 正在处理
         if is_new:
             message = f"🆕 Claude 会话已创建\n📁 项目: {_truncate_path(project_dir)}"
+            if claude_command:
+                message += f"\n🔧 命令: `{claude_command}`"
             if session_id:
-                message += f"\n🔑 Session: `{session_id[:8]}...`"
+                message += f"\n🔑 Session: `{session_id}`"
         else:
             message = "⏳ Claude 正在处理您的问题，请稍候..."
 
@@ -736,16 +736,103 @@ def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, 
     return None
 
 
-def _build_creating_session_card(selected_dir: str, prompt: str) -> dict:
+def _resolve_claude_command_from_binding(
+    binding: Optional[Dict[str, Any]],
+    cmd_arg: str
+) -> Tuple[bool, str]:
+    """从 binding 中获取 claude_commands 并解析用户输入的命令参数
+
+    Args:
+        binding: 绑定信息字典（包含 claude_commands）
+        cmd_arg: 用户输入的 --cmd 参数值，可以是:
+            - 空字符串：返回默认命令（列表第一个）
+            - 数字字符串（索引，从 0 开始）
+            - 名称子串（大小写敏感匹配）
+
+    Returns:
+        (success, result):
+            - success=True, result=匹配到的命令字符串
+            - success=False, result=错误提示信息
+    """
+    if not binding:
+        return False, '用户未注册，无法获取命令列表'
+
+    commands = binding.get('claude_commands')
+    if not commands:
+        return False, '该用户注册信息中没有命令列表，请重新注册'
+
+    if not cmd_arg:
+        return True, commands[0]
+
+    # 尝试索引匹配
+    if cmd_arg.isdigit():
+        idx = int(cmd_arg)
+        if 0 <= idx < len(commands):
+            return True, commands[idx]
+        cmd_list = ', '.join(
+            '`[{}] {}`'.format(i, c) for i, c in enumerate(commands)
+        )
+        return False, '索引 {} 超出范围，可用命令: {}'.format(idx, cmd_list)
+
+    # 名称子串匹配
+    for cmd in commands:
+        if cmd_arg in cmd:
+            return True, cmd
+
+    cmd_list = ', '.join(
+        '`[{}] {}`'.format(i, c) for i, c in enumerate(commands)
+    )
+    return False, '未找到匹配的命令，可用命令: {}'.format(cmd_list)
+
+
+def _build_creating_session_card(selected_dir: str, prompt: str, claude_command: str = '') -> dict:
     """构建"正在创建会话"状态卡片
 
     Args:
         selected_dir: 选择的工作目录
         prompt: 用户输入的提示词
+        claude_command: 使用的 Claude 命令（可选）
 
     Returns:
         卡片字典（包含 type 和 data）
     """
+    elements = [
+        {
+            'tag': 'div',
+            'text': {
+                'tag': 'plain_text',
+                'content': '请稍候，正在启动 Claude...'
+            }
+        },
+        {
+            'tag': 'hr'
+        },
+        {
+            'tag': 'div',
+            'text': {
+                'tag': 'plain_text',
+                'content': f'📁 工作目录：{selected_dir}'
+            }
+        }
+    ]
+
+    if claude_command:
+        elements.append({
+            'tag': 'div',
+            'text': {
+                'tag': 'plain_text',
+                'content': f'🔧 命令：{claude_command}'
+            }
+        })
+
+    elements.append({
+        'tag': 'div',
+        'text': {
+            'tag': 'plain_text',
+            'content': f'💬 提示词：{prompt}'
+        }
+    })
+
     return {
         'type': 'raw',
         'data': {
@@ -757,32 +844,7 @@ def _build_creating_session_card(selected_dir: str, prompt: str) -> dict:
             },
             'body': {
                 'direction': 'vertical',
-                'elements': [
-                    {
-                        'tag': 'div',
-                        'text': {
-                            'tag': 'plain_text',
-                            'content': '请稍候，正在启动 Claude...'
-                        }
-                    },
-                    {
-                        'tag': 'hr'
-                    },
-                    {
-                        'tag': 'div',
-                        'text': {
-                            'tag': 'plain_text',
-                            'content': f'📁 工作目录：{selected_dir}'
-                        }
-                    },
-                    {
-                        'tag': 'div',
-                        'text': {
-                            'tag': 'plain_text',
-                            'content': f'💬 提示词：{prompt[:100]}{"..." if len(prompt) > 100 else ""}'
-                        }
-                    }
-                ]
+                'elements': elements
             }
         }
     }
@@ -797,7 +859,7 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
 
     Args:
         card_data: 完整的飞书卡片事件数据
-        form_values: 表单提交的数据（包含 directory, custom_dir, prompt, browse_result）
+        form_values: 表单提交的数据（包含 recent_dir, custom_dir, prompt, browse_result）
 
     Returns:
         (handled, response): handled 始终为 True，response 包含 toast 和卡片更新
@@ -815,13 +877,28 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
     message_id = button_value.get('message_id', '')
 
     # 从表单数据中提取字段
-    directory = form_values.get('directory', '')  # 常用目录下拉选择的值
+    recent_dir = form_values.get('recent_dir', '')  # 常用目录下拉选择的值
     custom_dir = form_values.get('custom_dir', '')  # 自定义路径输入框的值
     browse_result = form_values.get('browse_result', '')  # 浏览结果下拉选择的值
     prompt = form_values.get('prompt', '')
     claude_command = form_values.get('claude_command', '')  # Command 选择下拉的值
 
-    logger.info(f"[feishu] Form values: directory={directory}, custom_dir={custom_dir}, browse_result={browse_result}, claude_command={claude_command}, prompt={_sanitize_user_content(prompt)}, trigger={trigger_name}")
+    # 获取 binding（用于解析默认命令和后续请求）
+    binding = _get_binding_from_event(event)
+
+    # 如果没有选择命令，从 binding 获取默认命令
+    if not claude_command:
+        ok, result = _resolve_claude_command_from_binding(binding, '')
+        if not ok:
+            return True, {
+                'toast': {
+                    'type': TOAST_ERROR,
+                    'content': result
+                }
+            }
+        claude_command = result
+
+    logger.info(f"[feishu] Form values: recent_dir={recent_dir}, custom_dir={custom_dir}, browse_result={browse_result}, claude_command={claude_command}, prompt={_sanitize_user_content(prompt)}, trigger={trigger_name}")
 
     if not chat_id:
         logger.warning("[feishu] No chat_id in button value")
@@ -836,18 +913,18 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
     # │ 分支 1: 点击"浏览"按钮（支持 browse_custom_btn 和 browse_result_btn）│
     # └────────────────────────────────────────────────────────────────┘
     if trigger_name in ('browse_dir_select_btn', 'browse_custom_btn', 'browse_result_btn'):
-        return _handle_browse_directory(trigger_name, directory, custom_dir, chat_id, message_id, event, form_values)
+        return _handle_browse_directory(trigger_name, recent_dir, custom_dir, chat_id, message_id, event, form_values)
 
     # ┌────────────────────────────────────────────────────────────────┐
     # │ 分支 2: 点击"创建会话"按钮（trigger_name = submit_btn）           │
     # └────────────────────────────────────────────────────────────────┘
 
-    # 按优先级确定目录：browse_result > custom_dir > directory
+    # 按优先级确定目录：browse_result > custom_dir > recent_dir
     # 用户从"选择子目录"中选中的优先级最高，其次才是自定义路径输入框
-    selected_dir = browse_result or custom_dir or directory
+    selected_dir = browse_result or custom_dir or recent_dir
 
     if not selected_dir:
-        logger.warning("[feishu] No directory selected in form submission")
+        logger.warning("[feishu] No working directory selected in form submission")
         return True, {
             'toast': {
                 'type': TOAST_ERROR,
@@ -870,16 +947,16 @@ def _handle_new_session_form(card_data: dict, form_values: dict) -> Tuple[bool, 
             'type': TOAST_INFO,
             'content': '正在创建会话...'
         },
-        'card': _build_creating_session_card(selected_dir, prompt)
+        'card': _build_creating_session_card(selected_dir, prompt, claude_command)
     }
 
     # 在后台线程中异步执行会话创建
-    _run_in_background(_forward_new_request, (selected_dir, prompt, chat_id, message_id, event, claude_command))
+    _run_in_background(_forward_new_request, (binding, selected_dir, prompt, chat_id, message_id, claude_command))
 
     return True, response
 
 
-def _handle_browse_directory(trigger_name: str, directory: str, custom_dir: str,
+def _handle_browse_directory(trigger_name: str, recent_dir: str, custom_dir: str,
                              chat_id: str, message_id: str, feishu_event: dict,
                              form_values: dict) -> Tuple[bool, dict]:
     """处理浏览目录按钮点击
@@ -888,7 +965,7 @@ def _handle_browse_directory(trigger_name: str, directory: str, custom_dir: str,
 
     Args:
         trigger_name: 触发的按钮名称 (browse_dir_select_btn, browse_custom_btn 或 browse_result_btn)
-        directory: 常用目录下拉框选择的值
+        recent_dir: 常用目录下拉框选择的值
         custom_dir: 用户输入的自定义路径
         chat_id: 群聊 ID
         message_id: 原始消息 ID
@@ -918,16 +995,16 @@ def _handle_browse_directory(trigger_name: str, directory: str, custom_dir: str,
     # 根据按钮名称确定浏览路径
     if trigger_name == 'browse_dir_select_btn':
         # 点击常用目录旁边的"浏览"：必须先选择目录
-        if not directory:
-            logger.warning("[feishu] No directory selected")
+        if not recent_dir:
+            logger.warning("[feishu] No recent_dir selected")
             return True, {
                 'toast': {
                     'type': TOAST_ERROR,
                     'content': '请先从常用目录中选择一个目录'
                 }
             }
-        browse_path = directory
-        logger.info(f"[feishu] Browse directory select: {browse_path}")
+        browse_path = recent_dir
+        logger.info(f"[feishu] Browse recent_dir select: {browse_path}")
     elif trigger_name == 'browse_custom_btn':
         # 点击自定义路径旁边的"浏览"：使用 custom_dir
         browse_path = custom_dir or '/'
@@ -945,8 +1022,8 @@ def _handle_browse_directory(trigger_name: str, directory: str, custom_dir: str,
         browse_path = browse_result
         logger.info(f"[feishu] Browse result path: {browse_path}")
     else:
-        # 默认：优先使用 custom_dir（用户主动输入），其次使用 directory
-        browse_path = custom_dir or directory or '/'
+        # 默认：优先使用 custom_dir（用户主动输入），其次使用 recent_dir
+        browse_path = custom_dir or recent_dir or '/'
         logger.info(f"[feishu] Browse default path: {browse_path}")
 
     # 调用 browse-dirs 接口
@@ -987,11 +1064,12 @@ def _build_new_session_card(
     chat_id: str,
     message_id: str,
     recent_dirs: list,
-    custom_dir: str,
-    prompt: str,
-    claude_command: str = '',
+    selected_recent_dir: str = '',
+    custom_dir: str = '',
     browse_data: Optional[dict] = None,
-    directory: str = ''
+    prompt: str = '',
+    claude_commands: list = None,
+    claude_command: str = ''
 ) -> dict:
     """构建新建会话卡片（统一构建逻辑）
 
@@ -1000,24 +1078,27 @@ def _build_new_session_card(
         chat_id: 群聊 ID
         message_id: 原始消息 ID
         recent_dirs: 常用目录列表
+        selected_recent_dir: 常用目录下拉的选中值（回填用）
         custom_dir: 自定义路径输入框默认值
-        prompt: 提示词输入框默认值
-        claude_command: 预选的 Claude 命令
         browse_data: 浏览结果数据 {dirs, parent, current}，为 None 则不显示浏览结果区域
-        directory: 常用目录下拉的选中值（回填用）
+        prompt: 提示词输入框默认值
+        claude_commands: 可用的 Claude 命令列表（从 binding 获取）
+        claude_command: 预选的 Claude 命令
 
     Returns:
         飞书卡片字典
     """
-    from config import get_claude_commands
-
-    # 构建常用目录下拉选项
+    # 构建常用目录下拉选项（显示：folder_name (/full/path)，value 保持完整路径）
     dir_options = []
     for dir_path in recent_dirs:
+        # 提取文件夹名称（路径末尾）
+        folder_name = dir_path.rstrip('/').split('/')[-1] if dir_path else ''
+        # 格式：folder_name (/full/path/to/folder)
+        display_text = f"{folder_name} ({dir_path})" if folder_name else dir_path
         dir_options.append({
             'text': {
                 'tag': 'plain_text',
-                'content': dir_path
+                'content': display_text
             },
             'value': dir_path
         })
@@ -1044,8 +1125,8 @@ def _build_new_session_card(
     # 常用目录下拉菜单（如果有），标签和下拉框同行
     if recent_dirs:
         # 决定 initial_option
-        if directory and directory in [d['value'] for d in dir_options]:
-            initial_option = directory
+        if selected_recent_dir and selected_recent_dir in [d['value'] for d in dir_options]:
+            initial_option = selected_recent_dir
         else:
             initial_option = dir_options[0]['value'] if dir_options else ''
 
@@ -1074,7 +1155,7 @@ def _build_new_session_card(
                     'elements': [
                         {
                             'tag': 'select_static',
-                            'name': 'directory',
+                            'name': 'recent_dir',
                             'placeholder': {
                                 'tag': 'plain_text',
                                 'content': '选择工作目录'
@@ -1280,8 +1361,7 @@ def _build_new_session_card(
         })
 
     # Claude Command 选择（仅当配置了多个命令时显示）
-    claude_commands = get_claude_commands()
-    if len(claude_commands) > 1:
+    if claude_commands:
         prompt_step = '3️⃣'
 
         # 分割线：目录选择区域结束
@@ -1477,11 +1557,13 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
 
     card = _build_new_session_card(
         owner_id=owner_id, chat_id=chat_id, message_id=message_id,
-        recent_dirs=recent_dirs, custom_dir=custom_dir_value,
-        prompt=form_values.get('prompt', ''),
-        claude_command=form_values.get('claude_command', ''),
+        recent_dirs=recent_dirs,
+        selected_recent_dir=form_values.get('recent_dir', ''),
+        custom_dir=custom_dir_value,
         browse_data=browse_data,
-        directory=form_values.get('directory', '')
+        prompt=form_values.get('prompt', ''),
+        claude_commands=binding.get('claude_commands') if binding else None,
+        claude_command=form_values.get('claude_command', '')
     )
 
     browse_dirs = browse_data.get('dirs', [])
@@ -1581,10 +1663,10 @@ def _handle_card_action(data: dict) -> Tuple[bool, dict]:
         }
 
     # 调用 callback_url 的决策接口（callback_url 从 BindingStore 获取）
-    return _forward_permission_request(action_type, request_id, data)
+    return _forward_permission_request(request_id, data, action_type)
 
 
-def _forward_permission_request(action_type: str, request_id: str, original_data: dict) -> Tuple[bool, dict]:
+def _forward_permission_request(request_id: str, original_data: dict, action_type: str) -> Tuple[bool, dict]:
     """转发权限请求到 Callback 服务
 
     调用 callback 服务的纯决策接口，根据返回的决策结果生成 toast。
@@ -1593,9 +1675,9 @@ def _forward_permission_request(action_type: str, request_id: str, original_data
     注意：飞书要求在 3 秒内返回响应，timeout 设置为 2 秒预留时间。
 
     Args:
-        action_type: 动作类型 (allow/always/deny/interrupt)
         request_id: 请求 ID
         original_data: 原始飞书事件数据（用于提取绑定信息和 project_dir）
+        action_type: 动作类型 (allow/always/deny/interrupt)
 
     Returns:
         (handled, toast_response)
@@ -1729,6 +1811,7 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
             - owner_id: 飞书用户 ID
             - request_ip: 注册来源 IP（仅 approve_register 需要）
             - reply_in_thread: 是否使用回复话题模式（仅 approve_register 需要）
+            - claude_commands: 可用的 Claude 命令列表（仅 approve_register 需要）
 
     Returns:
         (handled, response) - response 包含 toast 和可选的 card 更新
@@ -1740,11 +1823,12 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
     owner_id = value.get('owner_id', '')
     request_ip = value.get('request_ip', '')
     reply_in_thread = value.get('reply_in_thread', False)
+    claude_commands = value.get('claude_commands', None)
 
     if action == 'approve_register':
         logger.info(f"[feishu] Registration approved: owner_id={owner_id}, callback_url={callback_url}, reply_in_thread={reply_in_thread}")
         return True, handle_authorization_decision(
-            callback_url, owner_id, request_ip, approved=True, reply_in_thread=reply_in_thread
+            callback_url, owner_id, request_ip, approved=True, reply_in_thread=reply_in_thread, claude_commands=claude_commands
         )
     elif action == 'deny_register':
         logger.info(f"[feishu] Registration denied: owner_id={owner_id}")
@@ -1933,16 +2017,18 @@ def _set_last_message_id_to_callback(callback_url: str, auth_token: str,
         return False
 
 
-def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prompt: str,
-                           feishu_event: dict, claude_command: str = ''):
+def _send_new_session_card(binding: dict, owner_id: str, chat_id: str,
+                           message_id: str, project_dir: str, prompt: str,
+                           claude_command: str = ''):
     """发送工作目录选择卡片
 
     Args:
+        binding: 绑定信息（包含 auth_token, callback_url, claude_commands 等）
+        owner_id: 用户 ID
         chat_id: 群聊 ID
         message_id: 原始消息 ID（用于回复）
         project_dir: 项目目录（用作 custom_dir 输入框的默认值）
         prompt: 用户输入的 prompt（作为 prompt 输入框的默认值）
-        feishu_event: 飞书事件数据（用于获取 auth_token 和 owner_id）
         claude_command: 预选的 Claude 命令（可选，来自 --cmd 参数）
     """
     from services.feishu_api import FeishuAPIService
@@ -1951,12 +2037,6 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
     if not service or not service.enabled:
         logger.warning("[feishu] FeishuAPIService not enabled, cannot send new session card")
         return
-
-    # 获取绑定信息和 owner_id
-    binding = _get_binding_from_event(feishu_event)
-    sender = feishu_event.get('sender', {})
-    sender_id_obj = sender.get('sender_id', {})
-    owner_id = sender_id_obj.get('open_id', '') or sender_id_obj.get('user_id', '')
 
     if not binding:
         logger.warning("[feishu] No binding found, cannot fetch recent dirs")
@@ -1972,8 +2052,11 @@ def _send_new_session_card(chat_id: str, message_id: str, project_dir: str, prom
 
     card = _build_new_session_card(
         owner_id=owner_id, chat_id=chat_id, message_id=message_id,
-        recent_dirs=recent_dirs, custom_dir=project_dir or '',
-        prompt=prompt, claude_command=claude_command
+        recent_dirs=recent_dirs,
+        custom_dir=project_dir or '',
+        prompt=prompt,
+        claude_commands=binding.get('claude_commands'),
+        claude_command=claude_command
     )
 
     # 打印完整卡片 JSON 用于调试
@@ -2013,15 +2096,18 @@ def _handle_new_command(data: dict, args: str):
         _run_in_background(_send_reject_message, (chat_id, "参数格式错误，正确格式：`/new --dir=/path/to/project [--cmd=0] prompt`", message_id))
         return
 
-    # 解析 --cmd 参数
-    claude_command = ''
-    if cmd_arg:
-        from config import resolve_claude_command
-        ok, result = resolve_claude_command(cmd_arg)
-        if not ok:
-            _run_in_background(_send_reject_message, (chat_id, result, message_id))
-            return
-        claude_command = result
+    # 解析 --cmd 参数（从 binding 获取命令列表）
+    binding = _get_binding_from_event(event)
+    ok, result = _resolve_claude_command_from_binding(binding, cmd_arg)
+    if not ok:
+        _run_in_background(_send_reject_message, (chat_id, result, message_id))
+        return
+    claude_command = result
+
+    # 获取 owner_id（用于传递给下游函数）
+    sender = event.get('sender', {})
+    sender_id_obj = sender.get('sender_id', {})
+    owner_id = sender_id_obj.get('open_id', '') or sender_id_obj.get('user_id', '')
 
     # 如果没有 project_dir，尝试从 parent_id 查询
     if not project_dir and parent_id:
@@ -2036,29 +2122,27 @@ def _handle_new_command(data: dict, args: str):
 
     # 验证参数：如果没有目录或没有提示词，发送卡片让用户完善
     if not project_dir or not prompt:
-        _run_in_background(_send_new_session_card, (chat_id, message_id, project_dir, prompt, event, claude_command))
+        _run_in_background(_send_new_session_card, (binding, owner_id, chat_id, message_id, project_dir, prompt, claude_command))
         return
 
     logger.info(f"[feishu] /new command: dir={project_dir}, cmd={claude_command or '(default)'}, prompt={_sanitize_user_content(prompt)}")
 
-    # 在后台线程中转发到 Callback 后端（绑定查询和错误处理在 _forward_new_request 内部）
-    _run_in_background(_forward_new_request, (project_dir, prompt, chat_id, message_id, event, claude_command))
+    # 在后台线程中转发到 Callback 后端
+    _run_in_background(_forward_new_request, (binding, project_dir, prompt, chat_id, message_id, claude_command))
 
 
-def _forward_new_request(project_dir: str, prompt: str, chat_id: str, message_id: str,
-                         feishu_event: dict, claude_command: str = ''):
+def _forward_new_request(binding: dict, project_dir: str, prompt: str,
+                         chat_id: str, message_id: str, claude_command: str = ''):
     """转发新建会话请求到 Callback 后端
 
     Args:
+        binding: 绑定信息（包含 auth_token, callback_url 等）
         project_dir: 项目工作目录
         prompt: 用户输入的 prompt
         chat_id: 群聊 ID
         message_id: 原始消息 ID（用作 reply_to）
-        feishu_event: 飞书事件数据（用于获取绑定信息）
         claude_command: 指定使用的 Claude 命令（可选）
     """
-    # 查询绑定信息
-    binding = _get_binding_from_event(feishu_event)
     if not binding:
         logger.warning("[feishu] No binding found, cannot create session")
         # 注意：此处不关联会话，因为会话尚未创建（用户未注册）
@@ -2081,15 +2165,16 @@ def _forward_new_request(project_dir: str, prompt: str, chat_id: str, message_id
 
     # 新建会话时传递 reply_to，让第一条通知回复用户的 /new 消息
     # 后续通知会通过 last_message_id 链式回复
-    _forward_claude_request(callback_url, '/cb/claude/new', data,
-                            auth_token, chat_id, 'new', reply_to=message_id,
+    _forward_claude_request(callback_url, '/cb/claude/new', auth_token,
+                            data, chat_id, reply_to=message_id,
                             reply_in_thread=reply_in_thread)
 
 
-def handle_send_message(data: dict, binding: Dict[str, Any]) -> Tuple[bool, dict]:
+def handle_send_message(binding: Dict[str, Any], data: dict) -> Tuple[bool, dict]:
     """处理 /gw/feishu/send 请求，通过 OpenAPI 发送消息
 
     Args:
+        binding: 绑定信息（由调用方鉴权后传入）
         data: 请求 JSON 数据
             - owner_id: 飞书用户 ID（必需，作为接收者或备用）
             - msg_type: 消息类型 interactive/text/image（必需，暂仅支持 interactive）
@@ -2102,7 +2187,6 @@ def handle_send_message(data: dict, binding: Dict[str, Any]) -> Tuple[bool, dict
             - session_id: Claude 会话 ID（可选，用于继续会话）
             - project_dir: 项目工作目录（可选，用于继续会话）
             - reply_to_message_id: 要回复的消息 ID（可选，使用 reply API）
-        binding: 绑定信息（由调用方鉴权后传入）
 
     Returns:
         (handled, response): handled 始终为 True，response 包含结果
@@ -2247,11 +2331,11 @@ def _handle_reply_command(data: dict, args: str):
         _run_in_background(_send_reject_message, (chat_id, "请提供问题内容，格式：`/reply [--cmd=0] prompt`", message_id))
         return
 
-    # 解析 --cmd 参数
+    # 解析 --cmd 参数（从 binding 获取命令列表）
+    binding = _get_binding_from_event(event)
     claude_command = ''
     if cmd_arg:
-        from config import resolve_claude_command
-        ok, result = resolve_claude_command(cmd_arg)
+        ok, result = _resolve_claude_command_from_binding(binding, cmd_arg)
         if not ok:
             _run_in_background(_send_reject_message, (chat_id, result, message_id))
             return
@@ -2270,8 +2354,8 @@ def _handle_reply_command(data: dict, args: str):
 
     logger.info(f"[feishu] /reply command: session={mapping.get('session_id', '')}, cmd={claude_command or '(default)'}, prompt={_sanitize_user_content(prompt)}")
 
-    # 转发到 Callback 后端（绑定查询和错误处理在 _forward_continue_request 内部）
-    _run_in_background(_forward_continue_request, (mapping, prompt, chat_id, message_id, event, claude_command))
+    # 转发到 Callback 后端
+    _run_in_background(_forward_continue_request, (binding, mapping['session_id'], mapping['project_dir'], prompt, chat_id, message_id, claude_command))
 
 
 # =============================================================================

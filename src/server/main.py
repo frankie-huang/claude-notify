@@ -18,12 +18,17 @@ Claude Code Permission Callback Server
 import base64
 import http.server
 import json
+import logging
 import os
 import socket
 import socketserver
+import sys
 import threading
 import time
-import logging
+
+# 将 shared 目录加入模块搜索路径（供本进程所有模块使用）
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'shared'))
+from logging_config import setup_logging
 
 from config import (
     PERMISSION_REQUEST_TIMEOUT, DEFAULT_PERMISSION_REQUEST_TIMEOUT,
@@ -50,24 +55,12 @@ HTTP_PORT = get_config_int('CALLBACK_SERVER_PORT', int(DEFAULT_HTTP_PORT))
 FEISHU_WEBHOOK_URL = get_config('FEISHU_WEBHOOK_URL', '')
 CLEANUP_INTERVAL = 5  # 清理断开连接的检查间隔（秒）
 
-# 日志配置 (src/server -> src -> project_root)
-src_dir = os.path.dirname(os.path.dirname(__file__))
-project_root = os.path.dirname(src_dir)
-log_dir = os.path.join(project_root, 'log')
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"callback_{time.strftime('%Y%m%d')}.log")
+# 项目根目录 (src/server -> src -> project_root)
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-logger.info(f"Logging to: {log_file}")
+# 日志配置
+logger = setup_logging('server', configure_root=True)
+logger.info("Logging to: %s (daily rotating)", logger.handlers[0].baseFilename)
 
 
 # =============================================================================

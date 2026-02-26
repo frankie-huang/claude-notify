@@ -53,6 +53,22 @@ if n > 0:
 x: Optional[int] = None  # 或 Union[int, None]
 ```
 
+### 跨平台兼容性（macOS + Linux）
+
+所有 Shell 脚本必须同时兼容 macOS 和 Linux。常见兼容性问题：
+
+| 问题 | Linux | macOS | 兼容写法 |
+|------|-------|-------|----------|
+| 超时命令 | `timeout 1 cmd` | 无 `timeout` | 使用工具内置超时，如 `socat -T 1` |
+| `readlink -f` | 支持 | 12.3 前不支持 | `readlink -f ... 2>/dev/null \|\| realpath ... \|\| echo "$HOME"` |
+| `stat` 获取大小 | `stat -c%s` | `stat -f%z` | `stat -c%s ... 2>/dev/null \|\| stat -f%z ...` |
+| `sed -i` | `sed -i 's/...//'` | `sed -i '' 's/...//'` | 避免使用，或创建临时文件 |
+| `grep -P` | 支持 | 不支持 | 使用 `grep -E` 或 awk/sed |
+| `/proc/` 路径 | 可用 | 不存在 | 使用 `uuidgen` 替代 `/proc/sys/kernel/random/uuid` |
+| 包管理器 | apt/yum | brew | install.sh 中同时支持 |
+
+**原则**：修改 Shell 脚本时，始终考虑两种系统的兼容性。
+
 ### 配置文件同步
 
 修改 `.env.example` 时，需要同步更新 `install.sh` 中的 `generate_env_template()` 函数，确保两处配置保持一致。
@@ -92,3 +108,13 @@ from config import get_config, get_config_int
 WEBHOOK_URL = get_config('FEISHU_WEBHOOK_URL', '')
 PORT = get_config_int('CALLBACK_SERVER_PORT', 8080)
 ```
+
+## 常用命令
+
+### 重启后端服务
+
+```bash
+./src/start-server.sh restart
+```
+
+用于重启 Python 后端服务（callback server），修改代码后需要执行此命令使更改生效。

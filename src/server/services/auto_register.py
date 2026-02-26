@@ -97,7 +97,7 @@ class AutoRegister:
 
     def _register(self):
         """执行注册"""
-        from config import FEISHU_REPLY_IN_THREAD
+        from config import FEISHU_REPLY_IN_THREAD, get_claude_commands
 
         logger.info(
             f"[auto-register] Starting registration in background: "
@@ -109,7 +109,8 @@ class AutoRegister:
             self._callback_url,
             self._owner_id,
             register_url,
-            reply_in_thread=FEISHU_REPLY_IN_THREAD
+            reply_in_thread=FEISHU_REPLY_IN_THREAD,
+            claude_commands=get_claude_commands()
         )
 
         if success:
@@ -122,7 +123,8 @@ class AutoRegister:
         callback_url: str,
         owner_id: str,
         register_url: str,
-        reply_in_thread: bool = False
+        reply_in_thread: bool = False,
+        claude_commands: list = None
     ) -> Tuple[bool, str]:
         """向飞书网关注册
 
@@ -131,6 +133,7 @@ class AutoRegister:
             owner_id: 飞书用户 ID
             register_url: 飞书网关注册接口完整 URL（已包含 /gw/register）
             reply_in_thread: 是否使用回复话题模式
+            claude_commands: 可用的 Claude 命令列表
 
         Returns:
             (success, message): success 表示是否成功，message 是响应消息或错误信息
@@ -142,6 +145,9 @@ class AutoRegister:
             'owner_id': owner_id,
             'reply_in_thread': reply_in_thread
         }
+        # 添加 claude_commands（如果提供）
+        if claude_commands:
+            request_data['claude_commands'] = claude_commands
 
         logger.info(f"[auto-register] Registering to gateway: {api_url}")
 

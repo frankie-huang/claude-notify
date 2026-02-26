@@ -7,14 +7,17 @@
   "file_patterns": {
     "hook": "hook_{date}.log",
     "server": "callback_{date}.log",
-    "socket_client": "socket_client_{date}.log"
+    "socket_client": "socket_client_{date}.log",
+    "feishu_message": "feishu_message_{date}.log"
   },
   "formats": {
     "shell": "[{pid}] {datetime} [{level}] {message}",
     "python": "[%(process)d] %(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
-    "python_datefmt": "%Y-%m-%d %H:%M:%S"
+    "python_datefmt": "%Y-%m-%d %H:%M:%S",
+    "feishu_message": "%(asctime)s.%(msecs)03d %(message)s"
   },
   "levels": {
-    "default": "DEBUG"
+    "default": "DEBUG",
+    "feishu_message": "INFO"
   }
 }

@@ -27,6 +27,7 @@ class BindingStore:
             "callback_url": "https://callback.example.com",
             "auth_token": "abc123.def456",
             "reply_in_thread": true,
+            "claude_commands": ["claude", "claude --model opus"],
             "updated_at": 1706745600,
             "registered_ip": "1.2.3.4"
         }
@@ -95,7 +96,8 @@ class BindingStore:
         callback_url: str,
         auth_token: str,
         registered_ip: str = '',
-        reply_in_thread: bool = False
+        reply_in_thread: bool = False,
+        claude_commands: list = None
     ) -> bool:
         """创建或更新绑定
 
@@ -105,6 +107,7 @@ class BindingStore:
             auth_token: 认证令牌
             registered_ip: 注册来源 IP
             reply_in_thread: 是否使用回复话题模式
+            claude_commands: 可用的 Claude 命令列表（从 Callback 后端传递）
 
         Returns:
             是否保存成功
@@ -123,10 +126,13 @@ class BindingStore:
                     logger.info(
                         f"[binding-store] Removed stale binding: {oid} -> {callback_url}"
                     )
+                # 处理 claude_commands：过滤空字符串，为空时默认 ["claude"]
+                valid_commands = [c for c in (claude_commands or []) if c and c.strip()]
                 data[owner_id] = {
                     'callback_url': callback_url,
                     'auth_token': auth_token,
                     'reply_in_thread': reply_in_thread,
+                    'claude_commands': valid_commands or ['claude'],
                     'updated_at': int(time.time()),
                     'registered_ip': registered_ip
                 }

@@ -217,6 +217,11 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
 
     logger.info(f"{log_prefix} Executing: cd {project_dir} && {claude_cmd} -p '<prompt>' {session_arg}")
 
+    # 清除 CLAUDECODE 环境变量，避免嵌套会话检测阻止子会话启动
+    # 参考：https://code.claude.com/docs/en/headless
+    env = os.environ.copy()
+    env.pop('CLAUDECODE', None)
+
     # 启动进程
     try:
         proc = subprocess.Popen(
@@ -224,7 +229,8 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
             cwd=project_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            universal_newlines=True,
+            env=env
         )
     except Exception as e:
         # 启动失败（命令不存在等）

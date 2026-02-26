@@ -18,35 +18,23 @@ Socket 客户端 - 替代 socat 实现可靠的双向通信
     - 客户端超时 = 服务端超时 + 30 秒缓冲，确保服务端先触发超时
 """
 
-import sys
-import os
-import socket
 import json
 import logging
+import os
+import socket
+import sys
 import time
+
+# 将 shared 目录加入模块搜索路径
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'shared'))
+from logging_config import setup_logging
 
 from config import PERMISSION_REQUEST_TIMEOUT, CLIENT_TIMEOUT, CLIENT_TIMEOUT_BUFFER
 
-# 日志配置（按日期切分）
-# 从 src/server/socket_client.py 向上两级到 src，再向上到项目根目录
-src_dir = os.path.dirname(os.path.dirname(__file__))
-project_root = os.path.dirname(src_dir)
-log_dir = os.path.join(project_root, 'log')
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"socket_client_{time.strftime('%Y%m%d')}.log")
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format=f'[%(process)d] %(asctime)s.%(msecs)03d [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-logger.info(f"Logging to: {log_file}")
-logger.info(f"Client timeout: {CLIENT_TIMEOUT}s (server: {PERMISSION_REQUEST_TIMEOUT}s + buffer: {CLIENT_TIMEOUT_BUFFER}s)")
+# 日志配置
+logger = setup_logging('socket_client')
+logger.info("Logging to: %s (daily rotating)", logger.handlers[0].baseFilename)
+logger.info("Client timeout: %ss (server: %ss + buffer: %ss)", CLIENT_TIMEOUT, PERMISSION_REQUEST_TIMEOUT, CLIENT_TIMEOUT_BUFFER)
 
 
 def main():

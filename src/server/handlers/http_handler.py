@@ -149,7 +149,7 @@ class HttpRequestHandler(BaseHTTPRequestHandler):
             binding = verify_owner_based_auth_token(self, data, '/gw/feishu/send')
             if binding is None:
                 return  # 验证失败，已发送响应
-            handled, response = handle_send_message(data, binding)
+            handled, response = handle_send_message(binding, data)
             send_json(self, 200 if response.get('success') else 400, response)
             return
 

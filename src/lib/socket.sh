@@ -264,7 +264,7 @@ except Exception:
     # 如果没有 Python，尝试使用 socat 或 nc
     if command -v socat &> /dev/null; then
         # 尝试连接，超时 1 秒
-        echo '{"type":"ping"}' | timeout 1 socat - "UNIX-CONNECT:${socket_path}" >/dev/null 2>&1
+        echo '{"type":"ping"}' | socat -T 1 - "UNIX-CONNECT:${socket_path}" >/dev/null 2>&1
         local exit_code=$?
         # socat 连接成功返回 0，连接失败返回非 0
         # 141 是 SIGPIPE（连接后对端关闭），也是成功的表现

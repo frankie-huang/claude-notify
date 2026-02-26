@@ -180,45 +180,6 @@ def get_claude_commands() -> List[str]:
     return [raw]
 
 
-def resolve_claude_command(cmd_arg: str) -> Tuple[bool, str]:
-    """根据索引或名称匹配从配置列表中选择 Claude Command
-
-    Args:
-        cmd_arg: 用户输入的 --cmd 参数值，可以是:
-            - 数字字符串（索引，从 0 开始）
-            - 名称子串（大小写敏感匹配）
-
-    Returns:
-        (success, result):
-            - success=True, result=匹配到的命令字符串
-            - success=False, result=错误提示信息
-    """
-    commands = get_claude_commands()
-
-    if not cmd_arg:
-        return True, commands[0]
-
-    # 尝试索引匹配
-    if cmd_arg.isdigit():
-        idx = int(cmd_arg)
-        if 0 <= idx < len(commands):
-            return True, commands[idx]
-        cmd_list = ', '.join(
-            '`[{}] {}`'.format(i, c) for i, c in enumerate(commands)
-        )
-        return False, '索引 {} 超出范围，可用命令: {}'.format(idx, cmd_list)
-
-    # 名称子串匹配
-    for cmd in commands:
-        if cmd_arg in cmd:
-            return True, cmd
-
-    cmd_list = ', '.join(
-        '`[{}] {}`'.format(i, c) for i, c in enumerate(commands)
-    )
-    return False, '未找到包含 `{}` 的命令，可用命令: {}'.format(cmd_arg, cmd_list)
-
-
 def reload_config():
     """重新加载 .env 文件
 

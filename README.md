@@ -662,13 +662,14 @@ brew install python3 curl jq socat
 
 ## 日志
 
-日志文件位于 `log/` 目录：
+日志文件位于 `log/` 目录，按天自动轮转：
 
 | 文件模式 | 说明 |
 |----------|------|
 | `hook_YYYYMMDD.log` | Hook 脚本日志 |
 | `callback_YYYYMMDD.log` | 回调服务日志 |
 | `socket_client_YYYYMMDD.log` | Socket 客户端日志 |
+| `feishu_message_YYYYMMDD.log` | 飞书消息日志 |
 
 日志配置统一定义在 `shared/logging.json`。
 
