@@ -17,25 +17,14 @@
     "header": {
       "template": "green",
       "title": {
-        "tag": "plain_text",
-        "content": "✅ Claude Code 处理完成 [{{session_id}}]"
+        "tag": "lark_md",
+        "content": "{{at_user}}✅ Claude Code 处理完成 [{{session_id}}]"
       },
       "padding": "12px 8px 12px 8px"
     },
     "body": {
       "direction": "vertical",
       "elements": [
-        {
-          "tag": "markdown",
-          "content": "**{{at_user}}Claude Code 已完成处理，请引用该消息继续话题**",
-          "text_align": "left",
-          "text_size": "normal_v2",
-          "margin": "0px 0px 0px 0px"
-        },
-        {
-          "tag": "hr",
-          "margin": "0px 0px 0px 0px"
-        },
         {
           "tag": "column_set",
           "columns": [

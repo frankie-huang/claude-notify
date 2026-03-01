@@ -87,41 +87,31 @@ check_dependencies() {
     local optional_missing=()
 
     # 必需依赖
-    if command -v python3 &>/dev/null; then
-        print_success "python3: $(python3 --version 2>&1)"
-    else
-        print_error "python3: 未安装"
-        missing+=("python3")
-    fi
+    local required_deps=("python3" "curl" "bash")
+    for dep in "${required_deps[@]}"; do
+        if command -v "$dep" &>/dev/null; then
+            print_success "$dep: $("$dep" --version 2>&1 | head -1)"
+        else
+            print_error "$dep: 未安装"
+            missing+=("$dep")
+        fi
+    done
 
-    if command -v curl &>/dev/null; then
-        print_success "curl: $(curl --version | head -1)"
-    else
-        print_error "curl: 未安装"
-        missing+=("curl")
-    fi
-
-    if command -v bash &>/dev/null; then
-        print_success "bash: $(bash --version | head -1)"
-    else
-        print_error "bash: 未安装"
-        missing+=("bash")
-    fi
-
-    # 可选依赖
-    if command -v jq &>/dev/null; then
-        print_success "jq: $(jq --version) (可选，用于更好的 JSON 处理)"
-    else
-        print_warning "jq: 未安装 (可选，将使用 Python 作为降级方案)"
-        optional_missing+=("jq")
-    fi
-
-    if command -v socat &>/dev/null; then
-        print_success "socat: 已安装 (可选，Socket 通信备选方案)"
-    else
-        print_warning "socat: 未安装 (可选，将使用 Python socket_client)"
-        optional_missing+=("socat")
-    fi
+    # 可选依赖 - 格式: "命令:未安装时的说明"
+    local optional_deps=(
+        "jq:将使用 Python 作为降级方案"
+        "socat:将使用 Python socket_client"
+    )
+    for entry in "${optional_deps[@]}"; do
+        local dep="${entry%%:*}"
+        local desc="${entry#*:}"
+        if command -v "$dep" &>/dev/null; then
+            print_success "$dep: 已安装 (可选)"
+        else
+            print_warning "$dep: 未安装 (可选，$desc)"
+            optional_missing+=("$dep")
+        fi
+    done
 
     echo ""
 
@@ -163,67 +153,40 @@ configure_hook() {
     # 创建 settings 目录
     mkdir -p "$(dirname "$SETTINGS_FILE")"
 
-    # 构建 hook 配置 JSON
-    # PermissionRequest 的 timeout 需大于服务端 PERMISSION_REQUEST_TIMEOUT（默认 600 秒），这里设置为 660 秒
-    local hook_config
-    hook_config=$(cat << EOF
-{
-  "hooks": {
-    "PermissionRequest": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${HOOK_PATH}",
-            "timeout": 660
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${HOOK_PATH}"
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-)
-
-    # 检查是否已有配置文件
-    if [ -f "$SETTINGS_FILE" ]; then
-        print_warning "已存在配置文件: $SETTINGS_FILE"
-        echo ""
-        echo "将合并 hooks 配置，保留现有配置。"
-        echo ""
-        read -p "是否继续? [y/N] " -n 1 -r
-        echo ""
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_info "已取消配置"
-            return 0
-        fi
-
-        # 使用 Python 合并配置（保留其他 hooks 和已有的 PermissionRequest）
-        python3 << PYTHON_SCRIPT
+    # 使用 Python 统一处理配置（新建或合并，仅增量写入缺失的 hook 事件）
+    # PermissionRequest timeout 需大于服务端 PERMISSION_REQUEST_TIMEOUT（默认 600 秒）
+    # 冲突时通过 /dev/tty 读取用户输入（因 stdin 被 heredoc 占用）
+    python3 << PYTHON_SCRIPT
 import json
-import sys
 
-# ANSI 颜色代码
 GREEN = '\033[0;32m'
 YELLOW = '\033[1;33m'
-BLUE = '\033[0;34m'
 DIM = '\033[2m'
 NC = '\033[0m'
 
 settings_file = "${SETTINGS_FILE}"
 hook_path = "${HOOK_PATH}"
+
+# 期望写入的 hooks 配置
+# 注意: Stop 事件不要配置 async: true
+#   - stop.sh 内部已用 `&` 后台执行通知，配置 async 可能导致进程提前终止
+#   - 双层 async 会使后台通知进程在父进程退出时被 kill，导致通知不稳定
+desired_hooks = {
+    "PermissionRequest": [{
+        "matcher": "",
+        "hooks": [{
+            "type": "command",
+            "command": hook_path,
+            "timeout": 660
+        }]
+    }],
+    "Stop": [{
+        "hooks": [{
+            "type": "command",
+            "command": hook_path
+        }]
+    }]
+}
 
 try:
     with open(settings_file, 'r') as f:
@@ -231,68 +194,48 @@ try:
 except:
     config = {}
 
-# 确保 hooks 字段存在
 if 'hooks' not in config:
     config['hooks'] = {}
 
-# 定义需要配置的事件类型及其特殊配置
-# PermissionRequest 需要设置 timeout，需大于服务端 PERMISSION_REQUEST_TIMEOUT（默认 600 秒）
-event_configs = {
-    'PermissionRequest': {'timeout': 660},  # 660 秒
-    'Stop': {}
-}
-
-for event, extra_config in event_configs.items():
-    if event in config['hooks']:
-        # 已存在此事件 hook，检查是否已配置我们的脚本
-        existing_hooks = config['hooks'][event]
-        already_configured = False
-
-        for hook_config in existing_hooks:
-            if 'hooks' in hook_config:
-                for hook in hook_config['hooks']:
-                    if hook.get('type') == 'command' and hook.get('command') == hook_path:
-                        already_configured = True
-                        break
-                if already_configured:
-                    break
-
-        if already_configured:
-            print(f"{GREEN}✓{NC} {event} hook 已配置，跳过更新")
-        else:
-            print(f"{YELLOW}⚠{NC} {event} hook 已存在其他配置，保留原配置：")
-            print(f"{DIM}{json.dumps(existing_hooks, indent=2, ensure_ascii=False)}{NC}")
-    else:
-        # 事件 hook 不存在，添加我们的配置
-        hook_entry = {
-            'type': 'command',
-            'command': hook_path
-        }
-        hook_entry.update(extra_config)
-
-        config['hooks'][event] = [
-            {
-                'matcher': '',
-                'hooks': [hook_entry]
-            }
-        ]
+for event, desired in desired_hooks.items():
+    if event not in config['hooks']:
+        # 事件未配置，直接写入
+        config['hooks'][event] = desired
         print(f"{GREEN}✓{NC} {event} 配置已添加")
+    else:
+        # 事件已存在，检查是否指向我们的目标脚本
+        has_our_hook = any(
+            hook.get('command') == hook_path
+            for entry in config['hooks'][event]
+            for hook in entry.get('hooks', [])
+        )
+        if has_our_hook:
+            print(f"{GREEN}✓{NC} {event} 已配置，跳过")
+        else:
+            print(f"{YELLOW}⚠{NC} {event} 已配置了其他 hook")
+            print(f"  当前配置：")
+            print(f"{DIM}{json.dumps(config['hooks'][event], indent=2, ensure_ascii=False)}{NC}")
+            print(f"  新配置：")
+            print(f"{DIM}{json.dumps(desired, indent=2, ensure_ascii=False)}{NC}")
+            try:
+                with open('/dev/tty', 'r') as tty:
+                    print(f"  是否覆盖? [y/N] ", end='', flush=True)
+                    answer = tty.readline().strip()
+                if answer.lower() == 'y':
+                    config['hooks'][event] = desired
+                    print(f"{GREEN}✓{NC} {event} 配置已覆盖")
+                else:
+                    print(f"  跳过 {event}")
+            except:
+                print(f"  跳过 {event}")
 
 with open(settings_file, 'w') as f:
     json.dump(config, f, indent=2)
 PYTHON_SCRIPT
 
-    else
-        # 直接写入新配置
-        echo "$hook_config" > "$SETTINGS_FILE"
-    fi
-
     echo ""
-    print_success "Hook 配置完成"
-    echo ""
-    echo "  配置文件: $(print_highlight "$SETTINGS_FILE")"
-    echo "  Hook 脚本: $(print_highlight "$HOOK_PATH")"
-    echo "  触发事件: PermissionRequest, Stop"
+    print_info "配置文件: $(print_highlight "$SETTINGS_FILE")"
+    print_info "Hook 脚本: $(print_highlight "$HOOK_PATH")"
 }
 
 # =============================================================================
@@ -300,275 +243,35 @@ PYTHON_SCRIPT
 # =============================================================================
 
 generate_env_template() {
-    local env_file="${SCRIPT_DIR}/.env.example"
+    local env_example="${SCRIPT_DIR}/.env.example"
+    local env_file="${SCRIPT_DIR}/.env"
 
-    print_section "生成环境变量模板"
+    print_section "生成环境变量配置"
 
-    # 检查文件是否已存在
+    # 检查模板文件是否存在
+    if [ ! -f "$env_example" ]; then
+        print_error ".env.example 模板文件不存在: $env_example"
+        return 1
+    fi
+
+    # 检查 .env 是否已存在
     if [ -f "$env_file" ]; then
-        print_info "环境变量模板已存在: $env_file"
+        print_info ".env 配置文件已存在: $env_file"
         echo ""
         echo "如需重新生成，请先删除现有文件："
         echo "  rm $env_file"
         return 0
     fi
 
-    cat > "$env_file" << 'EOF'
-# =============================================================================
-# Claude Code 权限通知 - 环境变量配置
-# =============================================================================
-# 复制此文件为 .env 并填入实际值
-# 脚本会自动从 .env 文件读取配置，无需手动 source
-#
-# 配置优先级: .env 文件 > 环境变量 > 默认值
-# =============================================================================
-#
-# 配置速查表
-# ┌──────────────────────────────┬──────────┬──────────┬──────────┬────────────┐
-# │ 配置项                       │ Webhook  │ OpenAPI  │ OpenAPI  │ 默认值     │
-# │                              │          │ 单机     │ 分离     │            │
-# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
-# │ FEISHU_SEND_MODE             │ 必填     │ 必填     │ 必填     │ webhook    │
-# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
-# │ FEISHU_WEBHOOK_URL           │ 必填     │ -        │ -        │ -          │
-# │ FEISHU_APP_ID                │ -        │ 必填     │ 网关必填 │ -          │
-# │ FEISHU_APP_SECRET            │ -        │ 必填     │ 网关必填 │ -          │
-# │ FEISHU_VERIFICATION_TOKEN    │ -        │ 必填     │ 网关必填 │ -          │
-# │ FEISHU_GATEWAY_URL           │ -        │ -        │ CB必填   │ -          │
-# │ FEISHU_OWNER_ID              │ 可选     │ 必填     │ 必填     │ -          │
-# │ FEISHU_CHAT_ID               │ -        │ 可选     │ 可选     │ -          │
-# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
-# │ CALLBACK_SERVER_URL          │ 建议     │ 建议     │ 建议     │ localhost  │
-# │ CALLBACK_SERVER_PORT         │ 可选     │ 可选     │ 可选     │ 8080       │
-# │ PERMISSION_SOCKET_PATH       │ 可选     │ 可选     │ 可选     │ /tmp/...   │
-# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
-# │ FEISHU_AT_USER               │ 可选     │ 可选     │ 可选     │ 空         │
-# │ FEISHU_REPLY_IN_THREAD       │ 可选     │ 可选     │ 可选     │ false      │
-# │ PERMISSION_REQUEST_TIMEOUT   │ 可选     │ 可选     │ 可选     │ 600        │
-# │ PERMISSION_NOTIFY_DELAY      │ 可选     │ 可选     │ 可选     │ 60         │
-# │ CALLBACK_PAGE_CLOSE_DELAY    │ 可选     │ 可选     │ 可选     │ 3          │
-# │ STOP_THINKING_MAX_LENGTH     │ 可选     │ 可选     │ 可选     │ 10000      │
-# │ STOP_MESSAGE_MAX_LENGTH      │ 可选     │ 可选     │ 可选     │ 10000      │
-# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
-# │ CLAUDE_COMMAND               │ 可选     │ 可选     │ 可选     │ claude     │
-# ├──────────────────────────────┼──────────┼──────────┼──────────┼────────────┤
-# │ VSCODE_URI_PREFIX            │ 可选     │ 可选     │ 可选     │ -          │
-# │ ACTIVATE_VSCODE_ON_CALLBACK  │ 可选     │ 可选     │ 可选     │ false      │
-# │ VSCODE_SSH_PROXY_PORT        │ 可选     │ 可选     │ 可选     │ -          │
-# └──────────────────────────────┴──────────┴──────────┴──────────┴────────────┘
-# CB必填 = Callback 服务必填
+    cp "$env_example" "$env_file"
 
-# =============================================================================
-# 一、发送模式（必选）
-# =============================================================================
-
-# 发送模式
-# - webhook: 使用飞书 Webhook 发送（简单，按钮跳转浏览器）
-# - openapi: 使用飞书 OpenAPI 发送（按钮在飞书内响应，需配置事件订阅）
-FEISHU_SEND_MODE=webhook
-
-# =============================================================================
-# 二、飞书凭证与身份
-# =============================================================================
-#
-# 【重要】OpenAPI 模式需要在飞书开放平台配置事件订阅：
-#   1. 进入应用管理 -> 事件订阅 -> 添加事件
-#   2. 搜索并订阅「卡片回传交互」(card.action.trigger)
-#   3. 配置请求地址为 CALLBACK_SERVER_URL（单机）或飞书网关地址（分离）
-#   4. 完成 URL 验证（服务需已启动）
-#
-# --- 部署方式 ---
-# OpenAPI 模式支持两种部署方式：
-#
-# 【单机部署】所有配置在同一台机器
-#   - 配置 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_VERIFICATION_TOKEN、FEISHU_OWNER_ID
-#   - 不配置 FEISHU_GATEWAY_URL
-#
-# 【分离部署】飞书网关与 Callback 服务分离（多实例场景）
-#   - 网关服务: 配置 FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_VERIFICATION_TOKEN
-#   - Callback 服务: 配置 FEISHU_GATEWAY_URL、FEISHU_OWNER_ID
-#   - 每个 Callback 服务可以发给不同用户（通过各自的 FEISHU_OWNER_ID）
-
-# --- Webhook 模式 ---
-# 飞书 Webhook URL [Webhook 必填]
-# 从飞书机器人设置中获取
-FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
-
-# --- OpenAPI 模式 — 应用凭证 [单机/网关 必填] ---
-# 从飞书开放平台 -> 应用管理 -> 凭证与基础信息 获取
-# 分离部署时仅网关服务需要配置
-FEISHU_APP_ID=
-FEISHU_APP_SECRET=
-
-# Verification Token [单机/网关 必填]
-# 从飞书开放平台 -> 应用管理 -> 事件订阅 -> 加密与签名 获取
-# 用于验证飞书事件来源 + 生成注册 auth_token
-FEISHU_VERIFICATION_TOKEN=
-
-# --- OpenAPI 模式 — 网关（分离部署）---
-# 飞书网关地址 [分离部署 Callback 必填]
-# 配置后，消息通过飞书网关发送，本机无需配置飞书应用凭证
-# 同时用于网关注册功能（注册接口为 {FEISHU_GATEWAY_URL}/gw/register）
-FEISHU_GATEWAY_URL=
-
-# --- 消息接收者 ---
-# 飞书用户 ID [OpenAPI 必填]
-# 必须使用 user_id 格式（纯数字或字母数字组合），服务启动时会校验格式
-# 获取方式：https://open.feishu.cn/document/faq/trouble-shooting/how-to-obtain-user-id
-# Webhook 模式下可选，仅用于通知 @ 用户
-FEISHU_OWNER_ID=
-
-# 飞书群聊 ID [可选]
-# 由客户端读取，用于发送消息到指定群聊
-# 客户端调用 /feishu/send 时可将 chat_id 作为参数传入
-FEISHU_CHAT_ID=
-
-# =============================================================================
-# 三、回调服务
-# =============================================================================
-# 分离部署时，仅 Callback 服务需要配置此部分，网关服务不需要
-
-# 回调服务器外部访问地址 [所有模式建议配置]
-# 用于飞书卡片按钮的回调 URL
-# 如果使用内网穿透，填写穿透后的公网地址
-# 启用网关注册功能时必填
-CALLBACK_SERVER_URL=http://localhost:8080
-
-# 回调服务器端口 [可选, 默认 8080]
-CALLBACK_SERVER_PORT=8080
-
-# Unix Socket 路径 [可选, 默认 /tmp/claude-permission.sock]
-# 用于 hook 脚本与回调服务器之间的通信
-PERMISSION_SOCKET_PATH=/tmp/claude-permission.sock
-
-# =============================================================================
-# 四、通知与交互行为
-# =============================================================================
-
-# 飞书通知 @ 用户配置 [可选]
-# 适用于所有飞书通知（权限请求、任务完成等），与发送模式无关
-# 支持以下格式:
-#   - 空: 默认 @ FEISHU_OWNER_ID 用户
-#   - all: @ 所有人
-#   - off: 不 @ 任何人
-FEISHU_AT_USER=
-
-# 话题内回复模式 [可选, 默认 false]
-# 控制回复消息是否收进话题详情（不刷群聊主界面）
-#   - false: 回复消息正常显示在群聊主界面（默认）
-#   - true: 回复消息仅出现在话题详情中，不会冒泡到群聊主界面
-# 注意：仅在 FEISHU_SEND_MODE=openapi 时生效
-FEISHU_REPLY_IN_THREAD=false
-
-# 请求超时时间，秒 [可选, 默认 600]
-# 用户在此时间内未响应，将回退到终端交互
-PERMISSION_REQUEST_TIMEOUT=600
-
-# 权限通知延迟时间，秒 [可选, 默认 60]
-# 收到权限请求后延迟指定秒数再发送飞书消息
-# 用于避免快速连续请求时的消息轰炸
-# 设为 0 表示立即发送
-PERMISSION_NOTIFY_DELAY=60
-
-# 回调页面自动关闭时间，秒 [可选, 默认 3]
-# 用户点击按钮后，回调页面显示的倒计时秒数
-# 建议范围: 1-10 秒
-CALLBACK_PAGE_CLOSE_DELAY=3
-
-# Stop 事件思考过程最大长度，字符数 [可选, 默认 10000]
-# 设为 0 则不显示思考过程
-# 注意：飞书卡片 JSON 限制 30KB，message + thinking 总字符数建议不超过 20000
-STOP_THINKING_MAX_LENGTH=10000
-
-# Stop 事件消息最大长度，字符数 [可选, 默认 10000]
-# 主 Agent 完成时，发送飞书通知中显示的响应内容最大长度
-# 超过此长度会被截断并添加 "..."
-STOP_MESSAGE_MAX_LENGTH=10000
-
-# =============================================================================
-# 五、Claude 命令
-# =============================================================================
-
-# Claude 命令 [可选, 默认 claude]
-# 用于继续会话和新建会话功能
-#
-# 单命令配置（向后兼容）:
-#   CLAUDE_COMMAND=claude
-#   CLAUDE_COMMAND=claude --setting opus
-#
-# 多命令配置（列表格式，无需引号）:
-#   CLAUDE_COMMAND=[claude, claude --setting opus]
-#
-# 也兼容 JSON 数组格式:
-#   CLAUDE_COMMAND=["claude", "claude --setting opus"]
-#
-# 配置多个命令后:
-#   - 默认使用列表第一个
-#   - /new 卡片支持选择
-#   - /new --cmd=1 或 /new --cmd=opus 指定使用哪个
-#   - /reply --cmd=opus 在回复时指定
-#   - 空值或缺失时默认使用 claude
-CLAUDE_COMMAND=claude
-
-# =============================================================================
-# 六、VSCode 集成（可选，以下两种模式二选一）
-# =============================================================================
-#
-# 【模式一】浏览器跳转模式 - VSCODE_URI_PREFIX
-# -----------------------------------------------------------------------------
-# 原理：点击飞书按钮后，浏览器回调页面通过 vscode:// 协议链接跳转到 VSCode
-# 优点：配置简单，无需额外服务
-# 缺点：受浏览器安全策略限制，可能触发跳转确认弹窗
-#
-# 格式: vscode://vscode-remote/{remote-type}+{host} 或 vscode://file
-# 示例:
-#   - SSH Remote: vscode://vscode-remote/ssh-remote+myserver
-#   - WSL: vscode://vscode-remote/wsl+Ubuntu
-#   - 本地: vscode://file (用于本地开发)
-#
-# 【推荐】VSCode 设置，允许外部应用直接打开（无需确认）：
-#   - 本地: settings.json 添加 "security.promptForLocalFileProtocolHandling": false
-#   - 远程: settings.json 添加 "security.promptForRemoteFileProtocolHandling": false
-#
-VSCODE_URI_PREFIX=
-
-# 【模式二】自动激活模式 - ACTIVATE_VSCODE_ON_CALLBACK (推荐)
-# -----------------------------------------------------------------------------
-# 原理：服务端直接调用命令激活 VSCode 窗口，不依赖浏览器跳转
-# 优点：不受浏览器策略限制，体验更流畅
-# 缺点：SSH Remote 场景需要配合反向隧道代理
-#
-# --- 本地开发场景 ---
-# 仅配置此项为 true 即可，服务端会执行 'code .' 激活本地 VSCode 窗口
-ACTIVATE_VSCODE_ON_CALLBACK=false
-#
-# --- SSH Remote 远程开发场景 ---
-# 结合上述配置，再配置 VSCODE_SSH_PROXY_PORT 即可
-# 通过反向 SSH 隧道唤起本地 VSCode 窗口
-#
-# 使用方法:
-#   1. 在本地电脑运行代理服务:
-#      python3 src/proxy/vscode_ssh_proxy.py --vps <host> [options]
-#        --vps HOST        VPS 的 SSH 地址 (别名如 myserver，或 root@1.2.3.4)
-#        --ssh-port PORT   SSH 端口 (默认: 22，使用别名时从 ~/.ssh/config 读取)
-#        -p, --port        本地 HTTP 服务端口 (默认: 9527)
-#        -r, --remote-port VPS 端远程端口 (默认: 同本地端口)
-#   2. 点击飞书按钮会自动唤起本地 VSCode
-#
-# 注意: VSCODE_SSH_PROXY_PORT 需与代理服务的 --remote-port 参数保持一致 (如 9527)
-VSCODE_SSH_PROXY_PORT=
-EOF
-
-    print_success "环境变量模板已生成"
+    print_success ".env 配置文件已生成（从 .env.example 复制）"
     echo ""
-    echo "  模板文件: $(print_highlight "$env_file")"
+    echo "  配置文件: $(print_highlight "$env_file")"
     echo ""
     print_dim "提示：脚本会自动从 .env 文件读取配置，无需手动 source"
     echo ""
     echo "$(print_highlight "快速配置指南：")"
-    echo ""
-    echo "  复制模板为实际配置文件："
-    echo "    cp .env.example .env"
     echo ""
     echo "  编辑 .env 文件，至少配置以下 2 项："
     echo "    1. FEISHU_WEBHOOK_URL     - 飞书 Webhook URL"
@@ -589,9 +292,15 @@ uninstall() {
         return 0
     fi
 
-    # 使用 Python 移除 PermissionRequest 和 Stop hook（保留其他 hooks）
-    python3 << PYTHON_SCRIPT
+    # 使用 Python 精确移除指向本项目脚本的 hook（保留用户的其他 hook）
+    # 退出码: 0=有变更已写入, 1=错误, 2=无需操作
+    local py_exit=0
+    python3 << PYTHON_SCRIPT || py_exit=$?
 import json
+
+GREEN = '\033[0;32m'
+YELLOW = '\033[1;33m'
+NC = '\033[0m'
 
 settings_file = "${SETTINGS_FILE}"
 hook_path = "${HOOK_PATH}"
@@ -600,37 +309,60 @@ try:
     with open(settings_file, 'r') as f:
         config = json.load(f)
 except:
-    print("无法读取配置文件")
+    print(f"{YELLOW}⚠{NC} 无法读取配置文件")
     exit(1)
 
 if 'hooks' not in config:
-    print("未找到 hooks 配置")
-    exit(0)
+    print(f"{GREEN}✓{NC} 未找到 hooks 配置，无需卸载")
+    exit(2)
 
-# 删除 PermissionRequest 和 Stop hook，保留其他 hooks
-events_to_remove = ['PermissionRequest', 'Stop']
+events_to_check = ['PermissionRequest', 'Stop']
 removed = []
 
-for event in events_to_remove:
-    if event in config['hooks']:
-        del config['hooks'][event]
+for event in events_to_check:
+    if event not in config['hooks']:
+        continue
+
+    entries = config['hooks'][event]
+    # 过滤掉包含本项目脚本的条目，保留其他 hook
+    remaining = []
+    for entry in entries:
+        hooks = entry.get('hooks', [])
+        filtered_hooks = [h for h in hooks if h.get('command') != hook_path]
+        if filtered_hooks:
+            entry['hooks'] = filtered_hooks
+            remaining.append(entry)
+        elif not hooks:
+            # 没有 hooks 字段的条目，保留
+            remaining.append(entry)
+
+    if len(remaining) < len(entries):
         removed.append(event)
+        if remaining:
+            config['hooks'][event] = remaining
+            print(f"{GREEN}✓{NC} {event} 已移除本项目 hook（保留了其他 hook）")
+        else:
+            del config['hooks'][event]
+            print(f"{GREEN}✓{NC} {event} 已移除")
+    else:
+        print(f"{YELLOW}⚠{NC} {event} 未找到本项目的 hook 配置")
 
-if removed:
-    print(f"已移除 hook: {', '.join(removed)}")
+if not removed:
+    print(f"{GREEN}✓{NC} 未找到需要移除的配置")
+    exit(2)
 
-    # 如果 hooks 字段为空，删除整个 hooks 字段
-    if len(config['hooks']) == 0:
-        del config['hooks']
-        print("hooks 配置已清空，移除 hooks 字段")
-else:
-    print("未找到需要移除的 hook 配置")
-
+# 有变更时才写入文件
+if 'hooks' in config and len(config['hooks']) == 0:
+    del config['hooks']
 with open(settings_file, 'w') as f:
     json.dump(config, f, indent=2)
 PYTHON_SCRIPT
 
-    print_success "卸载完成"
+    if [ $py_exit -eq 1 ]; then
+        return 1
+    elif [ $py_exit -eq 0 ]; then
+        print_success "卸载完成"
+    fi
 }
 
 # =============================================================================
@@ -641,14 +373,17 @@ show_help() {
     echo "用法: $0 [选项]"
     echo ""
     echo "选项:"
-    echo "  --check      仅检测环境依赖"
-    echo "  --uninstall  卸载 hook 配置"
-    echo "  --help       显示此帮助信息"
+    echo "  (无参数)     交互式安装，依次执行以下操作："
+    echo "                 1. 检测环境依赖 (不会自动安装，缺失时提示命令)"
+    echo "                 2. 配置 hook → 写入 ~/.claude/settings.json"
+    echo "                 3. 生成配置 → 复制 .env.example 为 .env"
     echo ""
-    echo "无参数运行时执行完整安装流程:"
-    echo "  1. 检测环境依赖"
-    echo "  2. 配置 Claude Code hook"
-    echo "  3. 生成环境变量模板"
+    echo "  --check      仅检测环境依赖，不做任何写入"
+    echo ""
+    echo "  --uninstall  从 ~/.claude/settings.json 移除本项目的 hook 配置"
+    echo "               仅移除本项目的 hook，保留用户的其他配置"
+    echo ""
+    echo "  --help       显示此帮助信息"
 }
 
 # =============================================================================
@@ -659,10 +394,12 @@ main() {
     case "${1:-}" in
         --check)
             print_header
+            print_dim "仅检测环境依赖，不做任何写入操作"
             check_dependencies
             ;;
         --uninstall)
             print_header
+            print_dim "将从 ${SETTINGS_FILE} 移除本项目的 hook 配置（保留其他配置）"
             uninstall
             ;;
         --help|-h)
@@ -680,8 +417,8 @@ main() {
                 echo ""
                 echo -e "${BOLD}下一步操作：${NC}"
                 echo ""
-                echo "  1. 复制并编辑配置文件："
-                echo -e "     ${YELLOW}cp .env.example .env && vim .env${NC}"
+                echo "  1. 编辑配置文件："
+                echo -e "     ${YELLOW}vim .env${NC}"
                 echo ""
                 echo "  2. 启动回调服务："
                 echo -e "     ${YELLOW}./src/start-server.sh${NC}"

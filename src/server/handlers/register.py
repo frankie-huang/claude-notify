@@ -18,7 +18,7 @@ import json
 import logging
 import socket
 import urllib.error
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, List, Optional
 
 from services.auth_token_store import AuthTokenStore
 from handlers.utils import run_in_background as _run_in_background, post_json as _post_json
@@ -51,6 +51,7 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
     owner_id = data.get('owner_id', '')
     reply_in_thread = data.get('reply_in_thread', False)
     claude_commands = data.get('claude_commands', None)
+    default_chat_dir = data.get('default_chat_dir', '')
 
     # 验证参数
     if not callback_url or not owner_id:
@@ -60,10 +61,10 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
             'error': 'missing required fields: callback_url, owner_id'
         }
 
-    logger.info(f"[register] Registration request: owner_id={owner_id}, callback_url={callback_url}, ip={client_ip}, reply_in_thread={reply_in_thread}, claude_commands={claude_commands}")
+    logger.info(f"[register] Registration request: owner_id={owner_id}, callback_url={callback_url}, ip={client_ip}, reply_in_thread={reply_in_thread}, claude_commands={claude_commands}, default_chat_dir={default_chat_dir}")
 
     # 在后台线程中处理注册逻辑（异步）
-    _run_in_background(_process_registration, (callback_url, owner_id, client_ip, reply_in_thread, claude_commands))
+    _run_in_background(_process_registration, (callback_url, owner_id, client_ip, reply_in_thread, claude_commands, default_chat_dir))
 
     # 立即返回成功
     return True, {
@@ -175,7 +176,14 @@ def handle_check_owner_id(data: dict) -> Tuple[bool, dict]:
     }
 
 
-def _process_registration(callback_url: str, owner_id: str, client_ip: str, reply_in_thread: bool = False, claude_commands: list = None):
+def _process_registration(
+    callback_url: str,
+    owner_id: str,
+    client_ip: str,
+    reply_in_thread: bool = False,
+    claude_commands: Optional[List[str]] = None,
+    default_chat_dir: str = ''
+):
     """处理注册逻辑（后台线程）
 
     1. 查询绑定关系
@@ -191,6 +199,7 @@ def _process_registration(callback_url: str, owner_id: str, client_ip: str, repl
         client_ip: 客户端 IP
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
+        default_chat_dir: 默认聊天目录
     """
     from services.binding_store import BindingStore
     from services.auth_token import generate_auth_token
@@ -217,7 +226,7 @@ def _process_registration(callback_url: str, owner_id: str, client_ip: str, repl
             logger.info(f"[register] Existing binding with same callback_url, updating token")
             auth_token = generate_auth_token(FEISHU_VERIFICATION_TOKEN, owner_id)
             _notify_callback(callback_url, owner_id, auth_token, client_ip)
-            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands)
+            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands, default_chat_dir)
         else:
             # callback_url 不同：发送授权卡片让用户确认是否更换设备
             # 不提前生成 auth_token，等用户批准后再生成
@@ -225,7 +234,7 @@ def _process_registration(callback_url: str, owner_id: str, client_ip: str, repl
                 f"[register] Existing binding with different callback_url: "
                 f"old={bound_callback_url}, new={callback_url}"
             )
-            _send_authorization_card(callback_url, owner_id, client_ip, old_callback_url=bound_callback_url, reply_in_thread=reply_in_thread, claude_commands=claude_commands)
+            _send_authorization_card(callback_url, owner_id, client_ip, old_callback_url=bound_callback_url, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir)
     else:
         # 未绑定：先验证 callback_url 是否属于该 owner_id
         logger.info(f"[register] No existing binding, verifying callback_url ownership")
@@ -237,7 +246,7 @@ def _process_registration(callback_url: str, owner_id: str, client_ip: str, repl
             return
         # 验证通过，发送飞书授权卡片
         # 不提前生成 auth_token，等用户批准后再生成
-        _send_authorization_card(callback_url, owner_id, client_ip, reply_in_thread=reply_in_thread, claude_commands=claude_commands)
+        _send_authorization_card(callback_url, owner_id, client_ip, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir)
 
 
 def _check_owner_id(callback_url: str, owner_id: str) -> bool:
@@ -319,7 +328,8 @@ def _send_authorization_card(
     client_ip: str,
     old_callback_url: str = '',
     reply_in_thread: bool = False,
-    claude_commands: list = None
+    claude_commands: Optional[List[str]] = None,
+    default_chat_dir: str = ''
 ):
     """发送飞书授权卡片
 
@@ -333,6 +343,7 @@ def _send_authorization_card(
         old_callback_url: 旧的 callback_url（如果有，表示更换设备场景）
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
+        default_chat_dir: 默认聊天目录
     """
     from services.feishu_api import FeishuAPIService
 
@@ -428,7 +439,8 @@ def _send_authorization_card(
                                                 "request_ip": client_ip,
                                                 "old_callback_url": old_callback_url,
                                                 "reply_in_thread": reply_in_thread,
-                                                "claude_commands": claude_commands
+                                                "claude_commands": claude_commands,
+                                                "default_chat_dir": default_chat_dir
                                             }
                                         }
                                     ]
@@ -559,7 +571,8 @@ def handle_authorization_decision(
     client_ip: str,
     approved: bool,
     reply_in_thread: bool = False,
-    claude_commands: list = None
+    claude_commands: Optional[List[str]] = None,
+    default_chat_dir: str = ''
 ) -> Dict[str, Any]:
     """处理用户授权决策
 
@@ -570,6 +583,7 @@ def handle_authorization_decision(
         approved: 用户是否批准
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
+        default_chat_dir: 默认聊天目录
 
     Returns:
         飞书响应（包含 toast 和更新的卡片）
@@ -596,7 +610,7 @@ def handle_authorization_decision(
         # 用户允许：通知 Callback 后端并创建绑定
         store = BindingStore.get_instance()
         if store:
-            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands)
+            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands, default_chat_dir)
 
         # 通知 Callback 后端
         _notify_callback(callback_url, owner_id, auth_token, client_ip)

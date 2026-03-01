@@ -424,7 +424,6 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
     ],
     "Stop": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
@@ -553,11 +552,26 @@ FEISHU_OWNER_ID=ou_admin_user
 | `STOP_THINKING_MAX_LENGTH` | Stop 事件思考过程最大长度（字符数，0 禁用） | 10000 |
 | `STOP_MESSAGE_MAX_LENGTH` | Stop 事件消息最大长度（字符数） | 10000 |
 
-#### 五、Claude 命令
+#### 五、Claude 会话配置
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
+| `DEFAULT_CHAT_DIR` | 默认聊天目录，配置后直接发消息即可自动创建/继续会话，详见下文 | 空（不启用） |
 | `CLAUDE_COMMAND` | Claude 命令，支持多命令列表如 `[claude, claude --setting opus]`，详见下文 | `claude` |
+
+**默认聊天目录**
+
+配置 `DEFAULT_CHAT_DIR` 后，无需使用 `/new` 指令，直接发消息即可与 Claude 对话：
+
+```bash
+DEFAULT_CHAT_DIR=/home/user/my-project
+```
+
+行为：
+- 直接发送消息 → 自动在默认目录继续活跃会话（无活跃会话时自动创建）
+- `/new prompt` → 在默认目录创建新会话（替换当前活跃会话）
+- `/new --dir=/other prompt` → 在指定目录创建（不影响默认会话）
+- 服务启动时自动创建不存在的目录
 
 **多命令配置**
 

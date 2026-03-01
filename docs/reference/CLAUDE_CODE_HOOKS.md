@@ -845,7 +845,7 @@ if assistant_messages:
 
 ## 本项目使用情况
 
-当前本项目使用了以下 3 个 hooks：
+当前本项目使用了以下 2 个 hooks：
 
 ### PermissionRequest
 
@@ -855,12 +855,12 @@ if assistant_messages:
 {
   "PermissionRequest": [
     {
-      "matcher": "*",
+      "matcher": "",
       "hooks": [
         {
           "type": "command",
-          "command": "bash /path/to/claude-notify/src/hook-router.sh",
-          "timeout": 600
+          "command": "/path/to/claude-notify/src/hook-router.sh",
+          "timeout": 660
         }
       ]
     }
@@ -869,26 +869,6 @@ if assistant_messages:
 ```
 
 功能: 发送飞书交互卡片，支持远程批准/拒绝权限请求
-
-### Notification
-
-```json
-{
-  "Notification": [
-    {
-      "hooks": [
-        {
-          "type": "command",
-          "command": "bash /path/to/claude-notify/src/hook-router.sh",
-          "timeout": 5
-        }
-      ]
-    }
-  ]
-}
-```
-
-功能: 发送通用通知（空闲等待等）
 
 ### Stop
 
@@ -899,8 +879,7 @@ if assistant_messages:
       "hooks": [
         {
           "type": "command",
-          "command": "bash /path/to/claude-notify/src/hook-router.sh",
-          "timeout": 5
+          "command": "/path/to/claude-notify/src/hook-router.sh"
         }
       ]
     }

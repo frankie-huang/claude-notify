@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,8 @@ class BindingStore:
             "auth_token": "abc123.def456",
             "reply_in_thread": true,
             "claude_commands": ["claude", "claude --model opus"],
+            "default_chat_dir": "/home/user/project",
+            "default_chat_session_id": "uuid-xxx",
             "updated_at": 1706745600,
             "registered_ip": "1.2.3.4"
         }
@@ -97,7 +99,8 @@ class BindingStore:
         auth_token: str,
         registered_ip: str = '',
         reply_in_thread: bool = False,
-        claude_commands: list = None
+        claude_commands: Optional[List[str]] = None,
+        default_chat_dir: str = ''
     ) -> bool:
         """创建或更新绑定
 
@@ -108,6 +111,7 @@ class BindingStore:
             registered_ip: 注册来源 IP
             reply_in_thread: 是否使用回复话题模式
             claude_commands: 可用的 Claude 命令列表（从 Callback 后端传递）
+            default_chat_dir: 默认聊天目录（从 Callback 后端传递）
 
         Returns:
             是否保存成功
@@ -128,7 +132,7 @@ class BindingStore:
                     )
                 # 处理 claude_commands：过滤空字符串，为空时默认 ["claude"]
                 valid_commands = [c for c in (claude_commands or []) if c and c.strip()]
-                data[owner_id] = {
+                binding_data = {
                     'callback_url': callback_url,
                     'auth_token': auth_token,
                     'reply_in_thread': reply_in_thread,
@@ -136,6 +140,16 @@ class BindingStore:
                     'updated_at': int(time.time()),
                     'registered_ip': registered_ip
                 }
+                # 处理 default_chat_dir 及关联的 default_chat_session_id：
+                # - 传入非空值且与旧值相同：保留两者
+                # - 传入非空值且与旧值不同：更新目录，清除旧 session_id（已失效）
+                # - 传入空值：清除两者
+                if default_chat_dir:
+                    binding_data['default_chat_dir'] = default_chat_dir
+                    old_dir = existing.get('default_chat_dir', '') if existing else ''
+                    if default_chat_dir == old_dir and existing and 'default_chat_session_id' in existing:
+                        binding_data['default_chat_session_id'] = existing['default_chat_session_id']
+                data[owner_id] = binding_data
                 result = self._save(data)
                 if result:
                     if existing:
@@ -149,6 +163,31 @@ class BindingStore:
                 return result
             except Exception as e:
                 logger.error(f"[binding-store] Failed to upsert binding: {e}")
+                return False
+
+    def update_field(self, owner_id: str, field: str, value: Any) -> bool:
+        """更新绑定中的单个字段
+
+        仅在绑定已存在时更新，不会创建新绑定。
+
+        Args:
+            owner_id: 飞书用户 ID
+            field: 字段名
+            value: 字段值
+
+        Returns:
+            是否更新成功
+        """
+        with self._file_lock:
+            try:
+                data = self._load()
+                if owner_id not in data:
+                    logger.warning(f"[binding-store] Cannot update field '{field}': binding not found for {owner_id}")
+                    return False
+                data[owner_id][field] = value
+                return self._save(data)
+            except Exception as e:
+                logger.error(f"[binding-store] Failed to update field '{field}': {e}")
                 return False
 
     def delete(self, owner_id: str) -> bool:

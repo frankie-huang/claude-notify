@@ -17,25 +17,14 @@
     "header": {
       "template": "{{template_color}}",
       "title": {
-        "tag": "plain_text",
-        "content": "🙋 Claude Code 权限请求"
+        "tag": "lark_md",
+        "content": "{{at_user}}🙋 请求使用 **{{tool_name}}** 工具"
       },
       "padding": "12px 8px 12px 8px"
     },
     "body": {
       "direction": "vertical",
       "elements": [
-        {
-          "tag": "markdown",
-          "content": "**{{at_user}}Claude Code 请求使用 {{tool_name}} 工具**",
-          "text_align": "left",
-          "text_size": "normal_v2",
-          "margin": "0px 0px 0px 0px"
-        },
-        {
-          "tag": "hr",
-          "margin": "0px 0px 0px 0px"
-        },
         {
           "tag": "column_set",
           "columns": [
@@ -82,6 +71,10 @@
               "weight": 1
             }
           ]
+        },
+        {
+          "tag": "hr",
+          "margin": "0px 0px 0px 0px"
         },
         {{detail_elements}}
         {

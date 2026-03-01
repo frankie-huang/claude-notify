@@ -20,7 +20,7 @@ TBD - created by archiving change update-feishu-card-template. Update Purpose af
 
 - **GIVEN** 权限请求事件发生
 - **WHEN** 发送飞书通知
-- **THEN** 卡片标题显示 "Claude Code 权限请求"
+- **THEN** 卡片标题显示 "@用户 🙋 请求使用 **{工具名}** 工具"
 - **AND** 卡片包含项目名称（从 `CLAUDE_PROJECT_DIR` 或 `cwd` 获取）
 - **AND** 卡片包含请求时间戳
 - **AND** 卡片包含工具类型（Bash/Edit/Write 等）

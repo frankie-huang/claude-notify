@@ -17,7 +17,7 @@ import shlex
 import socket
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # setup_logging 由 main.py 启动时将 shared/ 加入 sys.path
 from logging_config import setup_logging
@@ -256,8 +256,18 @@ def _handle_message_event(data: dict):
         _handle_reply_message(data, parent_id)
         return
 
-    # 非回复、非命令的普通消息：发送使用提示
+    # 非回复、非命令的普通消息
     if text.strip():
+        # 从 binding 获取用户的默认聊天目录
+        binding = _get_binding_from_event(event)
+        default_chat_dir = binding.get('default_chat_dir', '') if binding else ''
+
+        # 配置了默认聊天目录时，自动创建/继续会话
+        if default_chat_dir:
+            _handle_default_chat_message(data, text.strip(), binding)
+            return
+
+        # 未配置默认目录：发送使用提示
         supported = _get_supported_commands()
         hint = "💡 我还不能直接对话哦，请通过以下方式使用：\n\n" \
                "**发起新会话：**\n" \
@@ -332,6 +342,67 @@ def _handle_command(data: dict, command: str, args: str):
             _run_in_background(_send_reject_message, (chat_id, f"未知指令：`/{command}`\n\n支持的指令：\n{supported}", message_id))
 
 
+def _handle_default_chat_message(data: dict, prompt: str, binding: dict) -> None:
+    """处理默认聊天目录下的普通消息
+
+    当用户的 binding 中配置了 default_chat_dir 时，普通消息（非指令、非回复）会：
+    - 有活跃默认会话 → 继续该会话
+    - 无活跃默认会话 → 在默认目录创建新会话
+
+    Args:
+        data: 飞书事件数据
+        prompt: 用户消息内容（已清理）
+        binding: 用户绑定信息（包含 default_chat_dir）
+    """
+    event = data.get('event', {})
+    message = event.get('message', {})
+    chat_id = message.get('chat_id', '')
+    message_id = message.get('message_id', '')
+
+    default_chat_dir = binding.get('default_chat_dir', '')
+    session_id = binding.get('default_chat_session_id', '')
+    owner_id = binding.get('_owner_id', '')
+
+    if session_id:
+        # 继续活跃的默认会话
+        logger.info(f"[default-chat] Continuing session {session_id} for {owner_id}, prompt={_sanitize_user_content(prompt)}")
+        _run_in_background(_forward_continue_request, (
+            binding, session_id, default_chat_dir,
+            prompt, chat_id, message_id
+        ))
+    else:
+        # 创建新的默认会话
+        logger.info(f"[default-chat] Creating new session in {default_chat_dir} for {owner_id}, prompt={_sanitize_user_content(prompt)}")
+        _run_in_background(_forward_new_request_for_default_dir, (
+            binding, default_chat_dir, prompt, chat_id, message_id
+        ))
+
+
+def _forward_new_request_for_default_dir(binding: Dict[str, Any], project_dir: str, prompt: str,
+                                         chat_id: str, message_id: str,
+                                         claude_command: str = '') -> str:
+    """转发默认聊天新建会话请求，完成后将 session_id 持久化到 BindingStore
+
+    此函数在后台线程运行，是 _forward_new_request 的包装：
+    转发请求后将返回的 session_id 写入 BindingStore。
+
+    Returns:
+        session_id
+    """
+    from services.binding_store import BindingStore
+
+    session_id = _forward_new_request(binding, project_dir, prompt, chat_id, message_id, claude_command)
+
+    owner_id = binding.get('_owner_id', '') if binding else ''
+    if session_id and owner_id:
+        binding_store = BindingStore.get_instance()
+        if binding_store:
+            binding_store.update_field(owner_id, 'default_chat_session_id', session_id)
+            logger.info(f"[default-chat] Persisted session {session_id} for {owner_id}")
+
+    return session_id
+
+
 def _handle_reply_message(data: dict, parent_id: str):
     """处理用户回复消息，继续 Claude 会话
 
@@ -377,9 +448,9 @@ def _handle_reply_message(data: dict, parent_id: str):
 
 
 def _forward_claude_request(callback_url: str, endpoint: str, auth_token: str,
-                            payload: dict, chat_id: str,
+                            payload: Dict[str, Any], chat_id: str,
                             reply_to: Optional[str] = None,
-                            reply_in_thread: bool = False):
+                            reply_in_thread: bool = False) -> str:
     """转发 Claude 会话请求到 Callback 后端
 
     Args:
@@ -390,6 +461,9 @@ def _forward_claude_request(callback_url: str, endpoint: str, auth_token: str,
         chat_id: 群聊 ID（用于错误通知）
         reply_to: 要回复的消息 ID（可选）
         reply_in_thread: 是否收进话题详情
+
+    Returns:
+        session_id（新建时从响应获取，继续时从 payload 获取），失败时仍返回 payload 中的 session_id
     """
     import urllib.error
 
@@ -402,15 +476,19 @@ def _forward_claude_request(callback_url: str, endpoint: str, auth_token: str,
     is_new = (action == 'new')
     api_url = f"{callback_url.rstrip('/')}{endpoint}"
 
+    # 预设 session_id：continue 时 payload 中已有，new 时成功后从响应覆盖
+    session_id = payload.get('session_id', '')
+
     logger.info(f"[feishu] Forwarding {action} request to {api_url}")
 
     try:
         response_data = _post_json(api_url, payload, auth_token=auth_token, timeout=30)
         logger.info(f"[feishu] {action.capitalize()} request response: {response_data}")
 
+        session_id = response_data.get('session_id', '') or session_id
+
         # 先保存用户消息到 MessageSessionStore（不更新 last_message_id）
         if reply_to:
-            session_id = response_data.get('session_id', '') or payload.get('session_id', '')
             project_dir = payload.get('project_dir', '')
             if session_id and project_dir:
                 from services.message_session_store import MessageSessionStore
@@ -435,16 +513,18 @@ def _forward_claude_request(callback_url: str, endpoint: str, auth_token: str,
         # 注意：新建会话时 payload 中没有 session_id，对应的错误通知不会关联会话
         # 这符合预期，因为会话根本没创建成功
         _send_error_notification(chat_id, error_msg, reply_to=reply_to,
-                                 session_id=payload.get('session_id', ''),
+                                 session_id=session_id,
                                  project_dir=payload.get('project_dir', ''),
                                  reply_in_thread=reply_in_thread)
 
     except urllib.error.URLError as e:
         logger.error(f"[feishu] {action.capitalize()} request URL error: {e.reason}")
         _send_error_notification(chat_id, f"Callback 服务不可达: {e.reason}", reply_to=reply_to,
-                                 session_id=payload.get('session_id', ''),
+                                 session_id=session_id,
                                  project_dir=payload.get('project_dir', ''),
                                  reply_in_thread=reply_in_thread)
+
+    return session_id
 
 
 def _extract_http_error_detail(http_error):
@@ -466,7 +546,7 @@ def _extract_http_error_detail(http_error):
 
 def _forward_continue_request(binding: dict, session_id: str, project_dir: str,
                               prompt: str, chat_id: str, message_id: str,
-                              claude_command: str = ''):
+                              claude_command: str = '') -> str:
     """转发继续会话请求到 Callback 后端
 
     Args:
@@ -477,12 +557,15 @@ def _forward_continue_request(binding: dict, session_id: str, project_dir: str,
         chat_id: 群聊 ID
         message_id: 用户消息 ID（用于回复）
         claude_command: 指定使用的 Claude 命令（可选）
+
+    Returns:
+        session_id
     """
     if not binding:
         logger.warning("[feishu] No binding found, cannot continue session")
         _send_error_notification(chat_id, "您尚未注册，无法使用此功能", reply_to=message_id,
                                  session_id=session_id, project_dir=project_dir)
-        return
+        return session_id
 
     auth_token = binding.get('auth_token', '')
     callback_url = binding.get('callback_url', '')
@@ -498,9 +581,9 @@ def _forward_continue_request(binding: dict, session_id: str, project_dir: str,
     if claude_command:
         data['claude_command'] = claude_command
 
-    _forward_claude_request(callback_url, '/cb/claude/continue', auth_token,
-                            data, chat_id, reply_to=message_id,
-                            reply_in_thread=reply_in_thread)
+    return _forward_claude_request(callback_url, '/cb/claude/continue', auth_token,
+                                   data, chat_id, reply_to=message_id,
+                                   reply_in_thread=reply_in_thread)
 
 
 def _send_session_result_notification(chat_id: str, response: dict, project_dir: str,
@@ -725,7 +808,9 @@ def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, 
         feishu_event: 飞书事件数据（包含 sender 或 operator 信息）
 
     Returns:
-        绑定信息字典（包含 auth_token, callback_url 等），未找到返回 None
+        绑定信息字典的浅拷贝（包含 auth_token, callback_url 等），
+        额外注入 _owner_id 字段（BindingStore 中匹配的 key）。
+        未找到返回 None。
     """
     from services.binding_store import BindingStore
 
@@ -742,7 +827,9 @@ def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, 
                 binding = binding_store.get(field_value)
                 if binding:
                     logger.info(f"[feishu] Found binding for sender_id={field_value}")
-                    return binding
+                    result = dict(binding)
+                    result['_owner_id'] = field_value
+                    return result
         logger.warning(f"[feishu] No binding found for sender={sender_id_obj}")
 
     # 场景 2: 从 operator 获取（用户点击按钮时）
@@ -754,7 +841,9 @@ def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, 
                 binding = binding_store.get(field_value)
                 if binding:
                     logger.info(f"[feishu] Found binding for operator={field_value}")
-                    return binding
+                    result = dict(binding)
+                    result['_owner_id'] = field_value
+                    return result
         logger.warning(f"[feishu] No binding found for operator={operator}")
 
     return None
@@ -1087,14 +1176,14 @@ def _build_new_session_card(
     owner_id: str,
     chat_id: str,
     message_id: str,
-    recent_dirs: list,
+    recent_dirs: List[str],
     selected_recent_dir: str = '',
     custom_dir: str = '',
-    browse_data: Optional[dict] = None,
+    browse_data: Optional[Dict[str, Any]] = None,
     prompt: str = '',
-    claude_commands: list = None,
+    claude_commands: Optional[List[str]] = None,
     claude_command: str = ''
-) -> dict:
+) -> Dict[str, Any]:
     """构建新建会话卡片（统一构建逻辑）
 
     Args:
@@ -1848,11 +1937,12 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
     request_ip = value.get('request_ip', '')
     reply_in_thread = value.get('reply_in_thread', False)
     claude_commands = value.get('claude_commands', None)
+    default_chat_dir = value.get('default_chat_dir', '')
 
     if action == 'approve_register':
         logger.info(f"[feishu] Registration approved: owner_id={owner_id}, callback_url={callback_url}, reply_in_thread={reply_in_thread}")
         return True, handle_authorization_decision(
-            callback_url, owner_id, request_ip, approved=True, reply_in_thread=reply_in_thread, claude_commands=claude_commands
+            callback_url, owner_id, request_ip, approved=True, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir
         )
     elif action == 'deny_register':
         logger.info(f"[feishu] Registration denied: owner_id={owner_id}")
@@ -2144,6 +2234,12 @@ def _handle_new_command(data: dict, args: str):
             _run_in_background(_send_reject_message, (chat_id, "服务未就绪，请稍后重试", message_id))
             return
 
+    # 没有 --dir 但有 prompt：尝试使用用户的默认聊天目录
+    default_chat_dir = binding.get('default_chat_dir', '') if binding else ''
+    if not project_dir and prompt and default_chat_dir:
+        project_dir = default_chat_dir
+        logger.info(f"[default-chat] /new using default dir: {default_chat_dir}")
+
     # 验证参数：如果没有目录或没有提示词，发送卡片让用户完善
     if not project_dir or not prompt:
         _run_in_background(_send_new_session_card, (binding, owner_id, chat_id, message_id, project_dir, prompt, claude_command))
@@ -2152,11 +2248,15 @@ def _handle_new_command(data: dict, args: str):
     logger.info(f"[feishu] /new command: dir={project_dir}, cmd={claude_command or '(default)'}, prompt={_sanitize_user_content(prompt)}")
 
     # 在后台线程中转发到 Callback 后端
-    _run_in_background(_forward_new_request, (binding, project_dir, prompt, chat_id, message_id, claude_command))
+    # 如果使用的是默认聊天目录，同时更新活跃默认会话
+    if default_chat_dir and project_dir == default_chat_dir:
+        _run_in_background(_forward_new_request_for_default_dir, (binding, project_dir, prompt, chat_id, message_id, claude_command))
+    else:
+        _run_in_background(_forward_new_request, (binding, project_dir, prompt, chat_id, message_id, claude_command))
 
 
 def _forward_new_request(binding: dict, project_dir: str, prompt: str,
-                         chat_id: str, message_id: str, claude_command: str = ''):
+                         chat_id: str, message_id: str, claude_command: str = '') -> str:
     """转发新建会话请求到 Callback 后端
 
     Args:
@@ -2166,13 +2266,16 @@ def _forward_new_request(binding: dict, project_dir: str, prompt: str,
         chat_id: 群聊 ID
         message_id: 原始消息 ID（用作 reply_to）
         claude_command: 指定使用的 Claude 命令（可选）
+
+    Returns:
+        session_id，失败时返回空字符串
     """
     if not binding:
         logger.warning("[feishu] No binding found, cannot create session")
         # 注意：此处不关联会话，因为会话尚未创建（用户未注册）
         # 用户回复此错误通知没有意义，应先完成注册
         _send_error_notification(chat_id, "您尚未注册，无法使用此功能", reply_to=message_id)
-        return
+        return ''
 
     auth_token = binding.get('auth_token', '')
     callback_url = binding.get('callback_url', '')
@@ -2189,9 +2292,9 @@ def _forward_new_request(binding: dict, project_dir: str, prompt: str,
 
     # 新建会话时传递 reply_to，让第一条通知回复用户的 /new 消息
     # 后续通知会通过 last_message_id 链式回复
-    _forward_claude_request(callback_url, '/cb/claude/new', auth_token,
-                            data, chat_id, reply_to=message_id,
-                            reply_in_thread=reply_in_thread)
+    return _forward_claude_request(callback_url, '/cb/claude/new', auth_token,
+                                   data, chat_id, reply_to=message_id,
+                                   reply_in_thread=reply_in_thread)
 
 
 def handle_send_message(binding: Dict[str, Any], data: dict) -> Tuple[bool, dict]:

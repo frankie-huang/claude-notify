@@ -253,6 +253,10 @@ FEISHU_GATEWAY_URL = _FEISHU_GATEWAY_URL if _FEISHU_GATEWAY_URL else (
     CALLBACK_SERVER_URL if FEISHU_SEND_MODE == 'openapi' else ''
 )
 
+# 默认聊天目录（配置后普通消息自动创建/继续会话）
+# 支持 ~ 开头的路径，自动展开为用户主目录
+DEFAULT_CHAT_DIR = os.path.expanduser(get_config('DEFAULT_CHAT_DIR', ''))
+
 # 话题内回复模式：回复消息时是否收进话题详情（不刷群聊主界面）
 # True: 回复消息仅出现在话题详情中，不会冒泡到群聊主界面
 # False (默认): 回复消息正常显示在群聊主界面

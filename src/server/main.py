@@ -35,7 +35,8 @@ from config import (
     get_config, get_config_int,
     DEFAULT_SOCKET_PATH, DEFAULT_HTTP_PORT,
     FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_SEND_MODE,
-    CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL
+    CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL,
+    DEFAULT_CHAT_DIR
 )
 from services.request_manager import RequestManager
 from services.feishu_api import FeishuAPIService
@@ -313,6 +314,21 @@ def main():
 
     if not FEISHU_WEBHOOK_URL:
         logger.warning("FEISHU_WEBHOOK_URL not set - webhook notifications will be skipped")
+
+    # 检测/创建默认聊天目录
+    if DEFAULT_CHAT_DIR:
+        try:
+            # 使用 exist_ok=True 消除 TOCTOU 竞态条件
+            os.makedirs(DEFAULT_CHAT_DIR, exist_ok=True)
+            # 创建后再次检查是否为可写目录
+            if not os.path.isdir(DEFAULT_CHAT_DIR):
+                logger.error(f"DEFAULT_CHAT_DIR '{DEFAULT_CHAT_DIR}' exists but is not a directory")
+            elif not os.access(DEFAULT_CHAT_DIR, os.W_OK):
+                logger.error(f"DEFAULT_CHAT_DIR '{DEFAULT_CHAT_DIR}' is not writable")
+            else:
+                logger.info(f"Default chat directory: {DEFAULT_CHAT_DIR}")
+        except OSError as e:
+            logger.warning(f"Failed to create default chat directory '{DEFAULT_CHAT_DIR}': {e}")
 
     # 初始化 RequestManager（权限请求管理）
     RequestManager.initialize()

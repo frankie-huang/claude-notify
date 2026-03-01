@@ -30,6 +30,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 | 联合类型 | `Optional[int]`<br>`Union[int, None]`<br>`Union[str, int]` | `int \| None` (3.10+) |
 | subprocess | `stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True` | `capture_output=True, text=True` (3.7+) |
 | 运算符 | 普通赋值 `x = foo()` | `:=` walrus (3.8+) |
+| 类型注解风格 | 内联注解 `def foo(x: str) -> int:` | `# type:` 注释风格 |
 
 **常见错误示例：**
 
@@ -41,6 +42,7 @@ result = subprocess.run(cmd, capture_output=True, text=True)
 if (n := len(data)) > 0:  # walrus
     pass
 x: int | None = None  # 联合类型语法
+def foo(name, count=0):  # type: (str, int) -> bool  # 注释风格
 
 # ✅ 正确 - Python 3.6 兼容
 from typing import Optional, Dict, Any, Union
@@ -51,6 +53,8 @@ n = len(data)
 if n > 0:
     pass
 x: Optional[int] = None  # 或 Union[int, None]
+def foo(name: str, count: int = 0) -> bool:  # 内联注解
+    pass
 ```
 
 ### 跨平台兼容性（macOS + Linux）
@@ -68,14 +72,6 @@ x: Optional[int] = None  # 或 Union[int, None]
 | 包管理器 | apt/yum | brew | install.sh 中同时支持 |
 
 **原则**：修改 Shell 脚本时，始终考虑两种系统的兼容性。
-
-### 配置文件同步
-
-修改 `.env.example` 时，需要同步更新 `install.sh` 中的 `generate_env_template()` 函数，确保两处配置保持一致。
-
-涉及文件：
-- `.env.example` - 环境变量配置模板
-- `install.sh` - 安装脚本中的 heredoc（第 271-352 行附近）
 
 ### 环境变量读取方式
 

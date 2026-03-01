@@ -15,7 +15,7 @@ import logging
 import threading
 import urllib.request
 import urllib.error
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class AutoRegister:
 
     def _register(self):
         """执行注册"""
-        from config import FEISHU_REPLY_IN_THREAD, get_claude_commands
+        from config import FEISHU_REPLY_IN_THREAD, DEFAULT_CHAT_DIR, get_claude_commands
 
         logger.info(
             f"[auto-register] Starting registration in background: "
@@ -110,7 +110,8 @@ class AutoRegister:
             self._owner_id,
             register_url,
             reply_in_thread=FEISHU_REPLY_IN_THREAD,
-            claude_commands=get_claude_commands()
+            claude_commands=get_claude_commands(),
+            default_chat_dir=DEFAULT_CHAT_DIR
         )
 
         if success:
@@ -124,7 +125,8 @@ class AutoRegister:
         owner_id: str,
         register_url: str,
         reply_in_thread: bool = False,
-        claude_commands: list = None
+        claude_commands: Optional[List[str]] = None,
+        default_chat_dir: str = ''
     ) -> Tuple[bool, str]:
         """向飞书网关注册
 
@@ -134,6 +136,7 @@ class AutoRegister:
             register_url: 飞书网关注册接口完整 URL（已包含 /gw/register）
             reply_in_thread: 是否使用回复话题模式
             claude_commands: 可用的 Claude 命令列表
+            default_chat_dir: 默认聊天目录
 
         Returns:
             (success, message): success 表示是否成功，message 是响应消息或错误信息
@@ -148,6 +151,9 @@ class AutoRegister:
         # 添加 claude_commands（如果提供）
         if claude_commands:
             request_data['claude_commands'] = claude_commands
+        # 添加 default_chat_dir（如果配置）
+        if default_chat_dir:
+            request_data['default_chat_dir'] = default_chat_dir
 
         logger.info(f"[auto-register] Registering to gateway: {api_url}")
 

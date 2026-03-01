@@ -43,9 +43,9 @@ cd hooks
 ```
 
 安装脚本会自动完成：
-- 检测环境依赖（python3、curl、jq 等）
+- 检测环境依赖（不会自动安装，缺失时提示命令）
 - 将 Hook 注册到 `~/.claude/settings.json`
-- 生成 `.env.example` 配置模板
+- 生成 `.env` 配置文件（从 .env.example 复制）
 
 > 如果安装时选择跳过 hooks 配置，可手动将以下内容合并到 `~/.claude/settings.json`：
 >
@@ -60,7 +60,6 @@ cd hooks
 >     ],
 >     "Stop": [
 >       {
->         "matcher": "",
 >         "hooks": [{ "type": "command", "command": "/path/to/hooks/src/hook-router.sh" }]
 >       }
 >     ]
@@ -72,11 +71,7 @@ cd hooks
 
 **3. 配置环境变量**
 
-```bash
-cp .env.example .env
-```
-
-编辑 `.env`，只需填写 `FEISHU_WEBHOOK_URL`：
+编辑 `.env`（安装脚本已自动从 .env.example 复制），只需填写 `FEISHU_WEBHOOK_URL`：
 
 ```bash
 FEISHU_SEND_MODE=webhook

@@ -368,6 +368,7 @@ send_stop_notification_async() {
 }
 
 # 启动后台通知发送（不等待，立即返回）
+# 注意: Stop hook 配置不要加 async: true，否则双层 async 可能导致此后台进程被提前终止
 send_stop_notification_async &
 
 # 立即返回，不阻塞 Claude Code
