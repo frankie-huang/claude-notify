@@ -12,6 +12,11 @@ Claude Code Permission Callback Server
     3. 回调服务器接收 HTTP 请求，通过 Unix Socket 返回决策
     4. hooks/permission-notify.sh 接收决策并返回给 Claude Code
 
+WebSocket 隧道模式：
+    当 FEISHU_GATEWAY_URL 配置为 ws:// 或 wss:// 时启用。
+    Callback 后端主动连接网关建立 WS 隧道，无需公网可达。
+    适用于本地开发环境或内网部署场景。
+
 通信协议详见: shared/protocol.md
 """
 
@@ -32,11 +37,12 @@ from logging_config import setup_logging
 
 from config import (
     PERMISSION_REQUEST_TIMEOUT, DEFAULT_PERMISSION_REQUEST_TIMEOUT,
-    get_config, get_config_int,
+    get_config, get_config_positive_int,
     DEFAULT_SOCKET_PATH, DEFAULT_HTTP_PORT,
     FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_SEND_MODE,
     CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL,
-    DEFAULT_CHAT_DIR
+    FEISHU_GATEWAY_MODE, DEFAULT_CHAT_DIR,
+    FEISHU_EVENT_MODE
 )
 from services.request_manager import RequestManager
 from services.feishu_api import FeishuAPIService
@@ -46,13 +52,14 @@ from services.binding_store import BindingStore
 from handlers.http_handler import HttpRequestHandler
 from services.auth_token_store import AuthTokenStore
 from services.session_chat_store import SessionChatStore
+from services.ws_registry import WebSocketRegistry
 
 # =============================================================================
 # 配置 (优先级: .env > 环境变量 > 默认值)
 # =============================================================================
 
 SOCKET_PATH = get_config('PERMISSION_SOCKET_PATH', DEFAULT_SOCKET_PATH)
-HTTP_PORT = get_config_int('CALLBACK_SERVER_PORT', int(DEFAULT_HTTP_PORT))
+HTTP_PORT = get_config_positive_int('CALLBACK_SERVER_PORT', int(DEFAULT_HTTP_PORT))
 FEISHU_WEBHOOK_URL = get_config('FEISHU_WEBHOOK_URL', '')
 CLEANUP_INTERVAL = 5  # 清理断开连接的检查间隔（秒）
 
@@ -219,6 +226,7 @@ def run_cleanup_thread():
 
     清理任务：
         - 清理断开连接（每 5 秒）
+        - 清理 pending 连接（每 30 秒）
         - 清理过期数据（每 1 小时）
     """
     # 高频清理：断开连接（5秒间隔）
@@ -227,14 +235,22 @@ def run_cleanup_thread():
             time.sleep(CLEANUP_INTERVAL)
             RequestManager.get_instance().cleanup_disconnected()
 
+    # 中频清理：pending 连接（30秒间隔）
+    def cleanup_pending_loop():
+        while True:
+            time.sleep(30)
+            ws_registry = WebSocketRegistry.get_instance()
+            if ws_registry:
+                ws_registry.cleanup_expired_pending()
+
     # 低频清理：过期数据（1小时间隔）
     def cleanup_expired_loop():
         while True:
             time.sleep(3600)  # 1 小时
             _cleanup_expired_data()
 
-    # 启动两个独立的清理线程
-    for target in (cleanup_disconnected_loop, cleanup_expired_loop):
+    # 启动三个独立的清理线程
+    for target in (cleanup_disconnected_loop, cleanup_pending_loop, cleanup_expired_loop):
         thread = threading.Thread(target=target, daemon=True)
         thread.start()
 
@@ -251,8 +267,9 @@ def _cleanup_expired_data():
     | BindingStore         | bindings.json           | 无       | ❌   | ❌   | 需先实现自动续期机制       |
     | DirHistoryStore      | dir_history.json        | 30 天    | ✅   | ❌   | 写入时清理，死数据无害     |
     | AuthTokenStore       | auth_token.json         | 无       | ❌   | ❌   | 单条记录，每次注册覆盖     |
+    | WebSocketRegistry    | pending_connections     | 90s/10min| ✅   | ✅   | 中频清理（run_cleanup_thread）|
 
-    本函数清理范围：
+    本函数清理范围（低频，每 1 小时）：
         - message_sessions.json (7天过期)
         - session_chats.json (7天过期)
     """
@@ -281,6 +298,42 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     """
     allow_reuse_address = True
     daemon_threads = True
+
+
+# =============================================================================
+# 辅助函数
+# =============================================================================
+
+def _determine_event_mode() -> str:
+    """确定飞书事件接收模式
+
+    auto 模式下自动检测：
+    - lark-oapi 已安装（需 Python >= 3.8）→ longpoll
+    - lark-oapi 未安装 → http
+
+    Returns:
+        事件接收模式: http / longpoll
+    """
+    from services.feishu_longpoll import is_longpoll_available
+    available = is_longpoll_available()
+
+    if FEISHU_EVENT_MODE == 'longpoll':
+        if not available:
+            logger.warning("FEISHU_EVENT_MODE=longpoll but prerequisites not met "
+                           "(need Python >= 3.8 and lark-oapi SDK), falling back to HTTP")
+            return 'http'
+        return 'longpoll'
+
+    if FEISHU_EVENT_MODE == 'http':
+        return 'http'
+
+    if FEISHU_EVENT_MODE != 'auto':
+        logger.warning("Unknown FEISHU_EVENT_MODE=%s, falling back to auto", FEISHU_EVENT_MODE)
+
+    # auto: 有 SDK 则 longpoll，否则 http
+    mode = 'longpoll' if available else 'http'
+    logger.info("Event mode auto-detected: %s", mode)
+    return mode
 
 
 # =============================================================================
@@ -354,15 +407,37 @@ def main():
     SessionChatStore.initialize(runtime_dir)
     logger.info(f"SessionChatStore initialized with runtime_dir={runtime_dir}")
 
+    # 初始化 WebSocketRegistry（用于 WS 隧道连接管理）
+    WebSocketRegistry.initialize()
+    logger.info("WebSocketRegistry initialized")
+
     # 初始化飞书 OpenAPI 服务
     if FEISHU_SEND_MODE == 'openapi':
         if FEISHU_APP_ID and FEISHU_APP_SECRET:
             FeishuAPIService.initialize()
             logger.info(f"Feishu OpenAPI service initialized (mode: {FEISHU_SEND_MODE})")
+        elif FEISHU_GATEWAY_URL:
+            # 分离部署模式：本端是 callback 后端，凭据在网关服务上
+            logger.info("Feishu OpenAPI mode: using gateway (credentials not required)")
         else:
             logger.warning("FEISHU_SEND_MODE requires FEISHU_APP_ID and FEISHU_APP_SECRET")
     else:
         logger.info(f"Feishu send mode: {FEISHU_SEND_MODE}")
+
+    # 启动飞书长连接（如果需要）
+    if FEISHU_SEND_MODE == 'openapi' and _determine_event_mode() == 'longpoll':
+        if FEISHU_APP_ID and FEISHU_APP_SECRET:
+            from services.feishu_longpoll import start_feishu_longpoll
+            client = start_feishu_longpoll(FEISHU_APP_ID, FEISHU_APP_SECRET)
+            if client:
+                logger.info("Feishu longpoll mode enabled")
+            else:
+                logger.warning("Feishu longpoll mode failed to start (SDK not available?)")
+        elif FEISHU_GATEWAY_URL:
+            # 分离部署模式：本端是 callback 后端，网关负责长连接
+            logger.info("Feishu longpoll: skipped (callback backend, gateway handles connection)")
+        else:
+            logger.warning("longpoll mode requires FEISHU_APP_ID and FEISHU_APP_SECRET")
 
     # 启动 Socket 服务器线程
     socket_thread = threading.Thread(target=run_socket_server)
@@ -377,20 +452,79 @@ def main():
     server = ThreadedHTTPServer(('0.0.0.0', HTTP_PORT), HttpRequestHandler)
     logger.info(f"HTTP server listening on port {HTTP_PORT} (threading enabled)")
 
-    # 自动注册到飞书网关（需在 HTTP 服务启动后执行）
-    from services.auto_register import AutoRegister
-    AutoRegister.initialize(CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL)
-    auto_register = AutoRegister.get_instance()
-    if auto_register and auto_register.enabled:
-        auto_register.register_in_background()
+    # 注册到飞书网关
+    # ws(s):// → WS 隧道模式；http(s):// → HTTP 回调模式
+    if FEISHU_GATEWAY_MODE == 'ws' and FEISHU_GATEWAY_URL and FEISHU_OWNER_ID:
+        # WS 隧道模式：客户端主动连接网关，适用于本地开发（callback 不可公网访问）
+        from services.ws_tunnel_client import start_ws_tunnel_client
+        from config import FEISHU_REPLY_IN_THREAD, get_claude_commands
+        start_ws_tunnel_client(
+            FEISHU_GATEWAY_URL, FEISHU_OWNER_ID,
+            reply_in_thread=FEISHU_REPLY_IN_THREAD,
+            claude_commands=get_claude_commands(),
+            default_chat_dir=DEFAULT_CHAT_DIR
+        )
+        logger.info("WebSocket tunnel client started, gateway: %s", FEISHU_GATEWAY_URL)
+    elif CALLBACK_SERVER_URL and FEISHU_OWNER_ID and FEISHU_GATEWAY_URL:
+        # HTTP 回调模式：需要 Callback 后端公网可达
+        from services.auto_register import AutoRegister
+        AutoRegister.initialize(CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL)
+        auto_register = AutoRegister.get_instance()
+        if auto_register and auto_register.enabled:
+            auto_register.register_in_background()
+        else:
+            logger.info("Auto-registration disabled")
     else:
-        logger.info("Auto-registration disabled (missing CALLBACK_SERVER_URL, FEISHU_OWNER_ID, or FEISHU_GATEWAY_URL)")
+        logger.info("Gateway registration disabled (missing FEISHU_GATEWAY_URL or FEISHU_OWNER_ID)")
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
+
+        # 优雅关闭：通知所有 WS 连接
+        _shutdown_ws_connections()
+
         server.shutdown()
+
+
+def _shutdown_ws_connections():
+    """优雅关闭 WebSocket 连接"""
+    from services.ws_protocol import ws_send_text
+
+    registry = WebSocketRegistry.get_instance()
+    if not registry:
+        return
+
+    connections = registry.get_all_connections()
+    if not connections:
+        return
+
+    logger.info("[shutdown] Notifying %d WebSocket connections...", len(connections))
+
+    for owner_id, conn in connections.items():
+        try:
+            msg = json.dumps({'type': 'shutdown'})
+            ws_send_text(conn, msg)
+        except Exception as e:
+            logger.debug("[shutdown] Failed to notify %s: %s", owner_id, e)
+
+    # 等待 1 秒让消息发送
+    time.sleep(1)
+
+    # 停止 WS 客户端
+    from services.ws_tunnel_client import stop_ws_tunnel_client
+    stop_ws_tunnel_client()
+
+    # 停止飞书长连接客户端
+    try:
+        from services.feishu_longpoll import stop_feishu_longpoll
+        stop_feishu_longpoll()
+        logger.info("[shutdown] Feishu longpoll client stopped")
+    except Exception as e:
+        logger.debug("[shutdown] Feishu longpoll stop error: %s", e)
+
+    logger.info("[shutdown] WebSocket connections closed")
 
 
 if __name__ == '__main__':

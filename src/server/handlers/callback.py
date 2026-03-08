@@ -1,13 +1,14 @@
 """
 Callback 后端侧路由处理函数
 
-所有 Callback 后端的路由处理函数，由 http_handler.py 路由分发调用。
-每个处理函数签名统一为 (handler, ...)，内部自行完成鉴权和响应。
+POST 路由处理函数签名统一为 (data, headers) → Tuple[int, Dict[str, Any]]，
+返回 (HTTP 状态码, 响应 body)，不依赖 HTTP handler 实例。
+HTTP 和 WS 两种模式均可直接调用。
 
 存储器归属: SessionChatStore, AuthTokenStore, DirHistoryStore
 
 GET 路由:
-- /status: 获取服务状态
+- /status: 获取服务状态（含 WebSocket 连接状态）
 - /allow, /always, /deny, /interrupt: 权限决策回调
 
 POST 路由:
@@ -25,8 +26,9 @@ POST 路由:
 
 import logging
 import os
+from typing import Any, Callable, Dict, Tuple
 
-from services.auth_token import verify_global_auth_token
+from services.auth_token import check_global_auth_token
 from services.request_manager import RequestManager
 from services.decision_handler import handle_decision
 from config import VSCODE_URI_PREFIX
@@ -58,17 +60,25 @@ ACTION_HTML_RESPONSES = {
 
 
 # =============================================
-# GET 路由处理函数
+# GET 路由处理函数（保留 handler 参数，不走 WS 隧道）
 # =============================================
 
 def handle_status(handler):
     """获取服务状态统计信息"""
     stats = RequestManager.get_instance().get_stats()
-    send_json(handler, 200, {
+    result = {
         'status': 'ok',
         'mode': 'socket-based (no server-side timeout)',
         **stats
-    })
+    }
+
+    # 添加 WebSocket 连接状态
+    from services.ws_registry import WebSocketRegistry
+    registry = WebSocketRegistry.get_instance()
+    if registry:
+        result['ws'] = registry.get_status()
+
+    send_json(handler, 200, result)
 
 
 def handle_action(handler, request_id, action):
@@ -129,111 +139,108 @@ def _build_vscode_uri(handler, request_id):
 
 
 # =============================================
-# POST 路由处理函数
+# POST 路由处理函数 — 纯函数签名: (data, headers) → (status, body)
 # =============================================
 
 
-def handle_register_callback_route(handler, data):
+def handle_register_callback_route(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """接收飞书网关通知的 auth_token（网关 → Callback）"""
     handled, response = handle_register_callback(data)
     status = 200 if response.get('success') else 400
-    send_json(handler, status, response)
+    return status, response
 
 
-def handle_check_owner_id_route(handler, data):
+def handle_check_owner_id_route(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """验证 owner_id 是否属于该 Callback 后端"""
     handled, response = handle_check_owner_id(data)
-    send_json(handler, 200, response)
+    return 200, response
 
 
-def handle_claude_new(handler, data):
+def handle_claude_new(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """新建 Claude 会话（飞书网关调用）"""
-    if not verify_global_auth_token(handler, '/cb/claude/new'):
-        return
+    if not check_global_auth_token(headers, '/cb/claude/new'):
+        return 401, {'error': 'Unauthorized'}
 
     success, response = handle_new_session(data)
     status = 200 if success else 400
-    send_json(handler, status, response)
+    return status, response
 
 
-def handle_claude_continue(handler, data):
+def handle_claude_continue(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """继续 Claude 会话（飞书网关调用）"""
-    if not verify_global_auth_token(handler, '/cb/claude/continue'):
-        return
+    if not check_global_auth_token(headers, '/cb/claude/continue'):
+        return 401, {'error': 'Unauthorized'}
 
     success, response = handle_continue_session(data)
     status = 200 if success else 400
-    send_json(handler, status, response)
+    return status, response
 
 
-def handle_get_chat_id(handler, data):
+def handle_get_chat_id(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """根据 session_id 获取对应的 chat_id（客户端调用）"""
     from services.session_chat_store import SessionChatStore
 
-    if not verify_global_auth_token(handler, '/cb/session/get-chat-id'):
-        return
+    if not check_global_auth_token(headers, '/cb/session/get-chat-id'):
+        return 401, {'error': 'Unauthorized'}
 
     session_id = data.get('session_id', '')
     if not session_id:
-        send_json(handler, 400, {'chat_id': None})
-        return
+        return 400, {'chat_id': None}
 
     store = SessionChatStore.get_instance()
     chat_id = ''
     if store:
         chat_id = store.get(session_id) or ''
 
-    send_json(handler, 200, {'chat_id': chat_id})
+    return 200, {'chat_id': chat_id}
 
 
-def handle_get_last_message_id(handler, data):
+def handle_get_last_message_id(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """根据 session_id 获取对应的 last_message_id（客户端调用）"""
     from services.session_chat_store import SessionChatStore
 
-    if not verify_global_auth_token(handler, '/cb/session/get-last-message-id'):
-        return
+    if not check_global_auth_token(headers, '/cb/session/get-last-message-id'):
+        return 401, {'error': 'Unauthorized'}
 
     session_id = data.get('session_id', '')
     if not session_id:
-        send_json(handler, 400, {'last_message_id': ''})
-        return
+        return 400, {'last_message_id': ''}
 
     store = SessionChatStore.get_instance()
     last_message_id = ''
     if store:
         last_message_id = store.get_last_message_id(session_id)
 
-    send_json(handler, 200, {'last_message_id': last_message_id})
+    return 200, {'last_message_id': last_message_id}
 
 
-def handle_set_last_message_id(handler, data):
+def handle_set_last_message_id(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """设置 session 的 last_message_id（飞书网关调用）"""
     from services.session_chat_store import SessionChatStore
 
-    if not verify_global_auth_token(handler, '/cb/session/set-last-message-id'):
-        return
+    if not check_global_auth_token(headers, '/cb/session/set-last-message-id'):
+        return 401, {'error': 'Unauthorized'}
 
     session_id = data.get('session_id', '')
     message_id = data.get('message_id', '')
 
     if not session_id or not message_id:
-        send_json(handler, 400, {'success': False, 'error': 'Missing required parameters'})
-        return
+        return 400, {'success': False, 'error': 'Missing required parameters'}
 
     store = SessionChatStore.get_instance()
     if store:
         success = store.set_last_message_id(session_id, message_id)
         if success:
             logger.info("[callback] Set last_message_id: session=%s, message_id=%s", session_id, message_id)
-            send_json(handler, 200, {'success': True})
+            return 200, {'success': True}
         else:
             logger.warning("[callback] Failed to set last_message_id: session=%s, message_id=%s", session_id, message_id)
-            send_json(handler, 500, {'success': False, 'error': 'Failed to set last_message_id'})
+            return 500, {'success': False, 'error': 'Failed to set last_message_id'}
     else:
-        send_json(handler, 500, {'success': False, 'error': 'SessionChatStore not initialized'})
+        return 500, {'success': False, 'error': 'SessionChatStore not initialized'}
 
 
-def handle_callback_decision(handler, data):
+def handle_callback_decision(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """处理纯决策请求（供飞书网关或其他服务调用）
 
     此接口返回纯决策结果，不包含 toast 格式。
@@ -245,19 +252,19 @@ def handle_callback_decision(handler, data):
         - 401: 身份验证失败（auth_token 无效）
 
     Args:
-        handler: HTTP 请求处理器实例
         data: 请求数据
             - action: 动作类型 (allow/always/deny/interrupt)
             - request_id: 请求 ID
             - project_dir: 项目目录（可选，用于 always 写入规则）
+        headers: 请求头字典
     """
     # 验证 auth_token（飞书网关调用）
-    if not verify_global_auth_token(handler, '/cb/decision', error_body={
-        'success': False,
-        'decision': None,
-        'message': 'Unauthorized'
-    }):
-        return
+    if not check_global_auth_token(headers, '/cb/decision'):
+        return 401, {
+            'success': False,
+            'decision': None,
+            'message': 'Unauthorized'
+        }
 
     action = data.get('action', '')
     request_id = data.get('request_id', '')
@@ -268,12 +275,11 @@ def handle_callback_decision(handler, data):
     # 验证参数（请求格式错误返回 400）
     if not action or not request_id:
         logger.warning("[cb/decision] Missing params: action=%s, request_id=%s", action, request_id)
-        send_json(handler, 400, {
+        return 400, {
             'success': False,
             'decision': None,
             'message': '无效的请求参数'
-        })
-        return
+        }
 
     # 调用纯决策接口
     success, decision, message = handle_decision(request_id, action, project_dir)
@@ -284,17 +290,17 @@ def handle_callback_decision(handler, data):
     )
 
     # 返回 JSON 响应（业务成功/失败统一返回 200，通过 success 字段区分）
-    send_json(handler, 200, {
+    return 200, {
         'success': success,
         'decision': decision,
         'message': message
-    })
+    }
 
 
-def handle_recent_dirs(handler, data):
+def handle_recent_dirs(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """获取近期常用工作目录列表"""
-    if not verify_global_auth_token(handler, '/cb/claude/recent-dirs'):
-        return
+    if not check_global_auth_token(headers, '/cb/claude/recent-dirs'):
+        return 401, {'error': 'Unauthorized'}
 
     try:
         limit = int(data.get('limit', 5))
@@ -305,13 +311,13 @@ def handle_recent_dirs(handler, data):
     store = DirHistoryStore.get_instance()
     recent_dirs = store.get_recent_dirs(limit) if store else []
 
-    send_json(handler, 200, {'dirs': recent_dirs})
+    return 200, {'dirs': recent_dirs}
 
 
-def handle_browse_dirs(handler, data):
+def handle_browse_dirs(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """浏览指定路径下的子目录"""
-    if not verify_global_auth_token(handler, '/cb/claude/browse-dirs'):
-        return
+    if not check_global_auth_token(headers, '/cb/claude/browse-dirs'):
+        return 401, {'error': 'Unauthorized'}
 
     # 解析参数
     request_path = data.get('path', '')
@@ -326,14 +332,12 @@ def handle_browse_dirs(handler, data):
     # 验证路径必须是绝对路径
     if not request_path.startswith('/'):
         logger.warning("[browse-dirs] Path must be absolute: %s", request_path)
-        send_json(handler, 400, {'error': 'path must be absolute'})
-        return
+        return 400, {'error': 'path must be absolute'}
 
     # 验证路径存在且可访问
     if not os.path.isdir(request_path):
         logger.warning("[browse-dirs] Path not found or not accessible: %s", request_path)
-        send_json(handler, 400, {'error': 'path not found or not accessible'})
-        return
+        return 400, {'error': 'path not found or not accessible'}
 
     try:
         # 获取父目录路径（去除末尾斜杠，但保留根目录的 /）
@@ -359,11 +363,32 @@ def handle_browse_dirs(handler, data):
         # 按目录名字母排序
         dirs.sort()
 
-        send_json(handler, 200, {
+        return 200, {
             'dirs': dirs,
             'parent': parent_path,
             'current': current_path
-        })
+        }
     except Exception as e:
         logger.error("[browse-dirs] Error listing directory: %s", e)
-        send_json(handler, 500, {'error': 'internal server error'})
+        return 500, {'error': 'internal server error'}
+
+
+# =============================================
+# POST 路由表 — 纯函数签名: (data, headers) → (status, body)
+# =============================================
+
+# 类型别名：POST 路由处理函数类型
+PostRouteHandler = Callable[[Dict[str, Any], Dict[str, str]], Tuple[int, Dict[str, Any]]]
+
+BACKEND_ROUTES: Dict[str, PostRouteHandler] = {
+    '/cb/register': handle_register_callback_route,
+    '/cb/check-owner': handle_check_owner_id_route,
+    '/cb/session/get-chat-id': handle_get_chat_id,
+    '/cb/session/get-last-message-id': handle_get_last_message_id,
+    '/cb/session/set-last-message-id': handle_set_last_message_id,
+    '/cb/decision': handle_callback_decision,
+    '/cb/claude/new': handle_claude_new,
+    '/cb/claude/continue': handle_claude_continue,
+    '/cb/claude/recent-dirs': handle_recent_dirs,
+    '/cb/claude/browse-dirs': handle_browse_dirs,
+}

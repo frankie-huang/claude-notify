@@ -1,10 +1,20 @@
 """Gateway Register Handler - 网关注册接口处理器
 
-网关注册流程的处理器，飞书网关和 Callback 后端都会用到。
+两种注册模式：
+    HTTP 模式：Callback 后端需公网可达（网关通过 HTTP 转发请求）
+    WebSocket 模式：Callback 后端无需公网可达（主动连接网关建立隧道）
 
-飞书网关使用：
+HTTP 注册流程（网关使用）：
     - handle_register_request(): 接收 Callback 后端的注册请求
     - handle_authorization_decision(): 处理用户授权决策（允许/拒绝）
+    - handle_register_unbind(): 处理用户解绑操作
+
+WebSocket 注册流程（网关使用）：
+    - handle_ws_registration(): 处理 WS 隧道的首次注册
+    - handle_ws_rebind_registration(): 处理 WS 隧道的换绑请求
+    - handle_ws_authorization_approved(): 处理 WS 模式授权通过
+    - handle_ws_authorization_denied(): 处理 WS 模式授权拒绝
+    - handle_ws_register_unbind(): 处理 WS 模式用户解绑
 
 Callback 后端使用：
     - handle_register_callback(): 接收网关的 auth_token 通知
@@ -12,6 +22,8 @@ Callback 后端使用：
 
 数据存储服务（从 services 导入）：
     - AuthTokenStore: 存储 auth_token
+    - BindingStore: 存储绑定关系
+    - WebSocketRegistry: WS 连接注册表
 """
 
 import json
@@ -27,6 +39,25 @@ logger = logging.getLogger(__name__)
 
 # HTTP 请求超时（秒）
 HTTP_TIMEOUT = 10
+
+# 授权卡片中的安全提示文案（HTTP 和 WS 注册流程共用）
+_PERMISSION_DESCRIPTION = (
+    "**授权后该后端将获得以下权限：**\n"
+    "• 接收你发送给机器人的所有消息\n"
+    "• 向你发送消息通知（如权限请求、任务状态等）"
+)
+_SECURITY_WARNING = (
+    "**安全风险提示：**\n"
+    "• 后端可读取你的对话内容\n"
+    "• 后端可主动向你推送消息\n"
+    "• 请确认该后端来源可信后再授权"
+)
+_SECURITY_WARNING_REBIND = (
+    "**安全风险提示：**\n"
+    "• 旧终端将被断开连接\n"
+    "• 新终端可读取你的对话内容\n"
+    "• 请确认该请求来源可信后再授权"
+)
 
 
 def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict]:
@@ -203,11 +234,11 @@ def _process_registration(
     """
     from services.binding_store import BindingStore
     from services.auth_token import generate_auth_token
-    from config import FEISHU_VERIFICATION_TOKEN
+    from config import FEISHU_APP_SECRET
 
     # 验证配置
-    if not FEISHU_VERIFICATION_TOKEN:
-        logger.error("[register] FEISHU_VERIFICATION_TOKEN not configured")
+    if not FEISHU_APP_SECRET:
+        logger.error("[register] FEISHU_APP_SECRET not configured")
         return
 
     # 查询现有绑定
@@ -224,7 +255,7 @@ def _process_registration(
         if bound_callback_url == callback_url:
             # callback_url 一致：直接更新 token（无需用户确认）
             logger.info(f"[register] Existing binding with same callback_url, updating token")
-            auth_token = generate_auth_token(FEISHU_VERIFICATION_TOKEN, owner_id)
+            auth_token = generate_auth_token(FEISHU_APP_SECRET, owner_id)
             _notify_callback(callback_url, owner_id, auth_token, client_ip)
             store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands, default_chat_dir)
         else:
@@ -322,6 +353,70 @@ def _notify_callback(callback_url: str, owner_id: str, auth_token: str, client_i
         logger.error(f"[register] Callback error: {e}")
 
 
+def _build_authorization_card(title: str, content: str, approve_value: dict, deny_value: dict) -> dict:
+    """构建授权卡片（允许/拒绝按钮）
+
+    HTTP 和 WS 注册流程共用卡片骨架，仅按钮回调 value 不同。
+
+    Args:
+        title: 卡片标题
+        content: 卡片正文（lark_md 格式）
+        approve_value: 允许按钮的 callback value
+        deny_value: 拒绝按钮的 callback value
+
+    Returns:
+        飞书卡片 JSON 字典
+    """
+    return {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": title},
+            "template": "blue"
+        },
+        "body": {
+            "direction": "vertical",
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": content}
+                },
+                {"tag": "hr"},
+                {
+                    "tag": "column_set",
+                    "flex_mode": "none",
+                    "horizontal_spacing": "8px",
+                    "background_style": "default",
+                    "columns": [
+                        {
+                            "tag": "column",
+                            "width": "weighted",
+                            "vertical_align": "top",
+                            "elements": [{
+                                "tag": "button",
+                                "text": {"tag": "plain_text", "content": "允许"},
+                                "type": "primary",
+                                "behaviors": [{"type": "callback", "value": approve_value}]
+                            }]
+                        },
+                        {
+                            "tag": "column",
+                            "width": "weighted",
+                            "vertical_align": "top",
+                            "elements": [{
+                                "tag": "button",
+                                "text": {"tag": "plain_text", "content": "拒绝"},
+                                "type": "danger",
+                                "behaviors": [{"type": "callback", "value": deny_value}]
+                            }]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+
 def _send_authorization_card(
     callback_url: str,
     owner_id: str,
@@ -331,7 +426,7 @@ def _send_authorization_card(
     claude_commands: Optional[List[str]] = None,
     default_chat_dir: str = ''
 ):
-    """发送飞书授权卡片
+    """发送飞书授权卡片（HTTP 注册模式）
 
     注意：不在卡片中嵌入 auth_token，而是等用户授权后再实时生成。
     用户点击允许时会验证 operator_id == owner_id，确保本人操作。
@@ -360,13 +455,8 @@ def _send_authorization_card(
             f"**旧设备**: `{old_callback_url}`\n"
             f"**新设备**: `{callback_url}`\n"
             f"**来源 IP**: `{client_ip}`\n\n"
-            f"**授权后该后端将获得以下权限：**\n"
-            f"• 接收你发送给机器人的所有消息\n"
-            f"• 向你发送消息通知（如权限请求、任务状态等）\n\n"
-            f"**安全风险提示：**\n"
-            f"• 后端可读取你的对话内容\n"
-            f"• 后端可主动向你推送消息\n"
-            f"• 请确认该后端来源可信后再授权\n\n"
+            f"{_PERMISSION_DESCRIPTION}\n\n"
+            f"{_SECURITY_WARNING}\n\n"
             f"是否允许更换到新设备？"
         )
     else:
@@ -375,108 +465,29 @@ def _send_authorization_card(
         content = (
             f"**Callback URL**: `{callback_url}`\n"
             f"**来源 IP**: `{client_ip}`\n\n"
-            f"**授权后该后端将获得以下权限：**\n"
-            f"• 接收你发送给机器人的所有消息\n"
-            f"• 向你发送消息通知（如权限请求、任务状态等）\n\n"
-            f"**安全风险提示：**\n"
-            f"• 后端可读取你的对话内容\n"
-            f"• 后端可主动向你推送消息\n"
-            f"• 请确认该后端来源可信后再授权\n\n"
+            f"{_PERMISSION_DESCRIPTION}\n\n"
+            f"{_SECURITY_WARNING}\n\n"
             f"是否允许该后端绑定？"
         )
 
-    # 构建授权卡片
-    card = {
-        "schema": "2.0",
-        "config": {
-            "wide_screen_mode": True
+    card = _build_authorization_card(
+        title, content,
+        approve_value={
+            "action": "approve_register",
+            "callback_url": callback_url,
+            "owner_id": owner_id,
+            "request_ip": client_ip,
+            "old_callback_url": old_callback_url,
+            "reply_in_thread": reply_in_thread,
+            "claude_commands": claude_commands,
+            "default_chat_dir": default_chat_dir
         },
-        "header": {
-            "title": {
-                "tag": "plain_text",
-                "content": title
-            },
-            "template": "blue"
-        },
-        "body": {
-            "direction": "vertical",
-            "elements": [
-                {
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": content
-                    }
-                },
-                {
-                    "tag": "hr"
-                },
-                {
-                    "tag": "column_set",
-                    "flex_mode": "none",
-                    "horizontal_spacing": "8px",
-                    "background_style": "default",
-                    "columns": [
-                        {
-                            "tag": "column",
-                            "width": "weighted",
-                            "vertical_align": "top",
-                            "elements": [
-                                {
-                                    "tag": "button",
-                                    "text": {
-                                        "tag": "plain_text",
-                                        "content": "允许"
-                                    },
-                                    "type": "primary",
-                                    "behaviors": [
-                                        {
-                                            "type": "callback",
-                                            "value": {
-                                                "action": "approve_register",
-                                                "callback_url": callback_url,
-                                                "owner_id": owner_id,
-                                                "request_ip": client_ip,
-                                                "old_callback_url": old_callback_url,
-                                                "reply_in_thread": reply_in_thread,
-                                                "claude_commands": claude_commands,
-                                                "default_chat_dir": default_chat_dir
-                                            }
-                                        }
-                                    ]
-                                }
-                            ]
-                        },
-                        {
-                            "tag": "column",
-                            "width": "weighted",
-                            "vertical_align": "top",
-                            "elements": [
-                                {
-                                    "tag": "button",
-                                    "text": {
-                                        "tag": "plain_text",
-                                        "content": "拒绝"
-                                    },
-                                    "type": "danger",
-                                    "behaviors": [
-                                        {
-                                            "type": "callback",
-                                            "value": {
-                                                "action": "deny_register",
-                                                "callback_url": callback_url,
-                                                "owner_id": owner_id
-                                            }
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ]
+        deny_value={
+            "action": "deny_register",
+            "callback_url": callback_url,
+            "owner_id": owner_id
         }
-    }
+    )
 
     success, result = service.send_card(json.dumps(card, ensure_ascii=False), receive_id=owner_id)
 
@@ -490,7 +501,7 @@ def _build_register_status_card(
     title: str,
     content: str,
     template: str,
-    button: dict = None
+    button: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """构建注册授权状态卡片（用于卡片回调响应）
 
@@ -590,12 +601,12 @@ def handle_authorization_decision(
     """
     from services.binding_store import BindingStore
     from services.auth_token import generate_auth_token
-    from config import FEISHU_VERIFICATION_TOKEN
+    from config import FEISHU_APP_SECRET
 
     if approved:
         # 验证配置
-        if not FEISHU_VERIFICATION_TOKEN:
-            logger.error("[register] FEISHU_VERIFICATION_TOKEN not configured")
+        if not FEISHU_APP_SECRET:
+            logger.error("[register] FEISHU_APP_SECRET not configured")
             return {
                 'toast': {
                     'type': 'error',
@@ -604,7 +615,7 @@ def handle_authorization_decision(
             }
 
         # 实时生成 auth_token
-        auth_token = generate_auth_token(FEISHU_VERIFICATION_TOKEN, owner_id)
+        auth_token = generate_auth_token(FEISHU_APP_SECRET, owner_id)
         logger.info(f"[register] Authorization approved, generated auth_token")
 
         # 用户允许：通知 Callback 后端并创建绑定
@@ -647,54 +658,31 @@ def handle_authorization_decision(
         }
     else:
         # 用户拒绝：仅删除 owner_id + callback_url 精确匹配的绑定
+        toast_content = '已拒绝注册请求'
         store = BindingStore.get_instance()
         if store:
             existing = store.get(owner_id)
             if existing and existing.get('callback_url') == callback_url:
                 store.delete(owner_id)
+                toast_content = '已拒绝并解除绑定'
                 logger.info(f"[register] User denied, deleted binding for {callback_url}: owner_id={owner_id}")
-                # 返回已拒绝卡片（无按钮）
-                return {
-                    'toast': {
-                        'type': 'success',
-                        'content': '已拒绝并解除绑定'
-                    },
-                    'card': _build_register_status_card(
-                        title='✗ 已拒绝',
-                        content=f"**Callback URL**: `{callback_url}`\n\n已拒绝该后端的注册请求",
-                        template='red'
-                    )
-                }
-            else:
-                logger.info(f"[register] User denied registration: owner_id={owner_id}")
-                return {
-                    'toast': {
-                        'type': 'info',
-                        'content': '已拒绝注册请求'
-                    },
-                    'card': _build_register_status_card(
-                        title='✗ 已拒绝',
-                        content=f"**Callback URL**: `{callback_url}`\n\n已拒绝该后端的注册请求",
-                        template='red'
-                    )
-                }
-        else:
-            logger.info(f"[register] User denied registration: owner_id={owner_id}")
-            return {
-                'toast': {
-                    'type': 'info',
-                    'content': '已拒绝注册请求'
-                },
-                'card': _build_register_status_card(
-                    title='✗ 已拒绝',
-                    content=f"**Callback URL**: `{callback_url}`\n\n已拒绝该后端的注册请求",
-                    template='red'
-                )
-            }
+
+        logger.info(f"[register] User denied registration: owner_id={owner_id}")
+        return {
+            'toast': {
+                'type': 'success' if '解除' in toast_content else 'info',
+                'content': toast_content
+            },
+            'card': _build_register_status_card(
+                title='✗ 已拒绝',
+                content=f"**Callback URL**: `{callback_url}`\n\n已拒绝该后端的注册请求",
+                template='red'
+            )
+        }
 
 
 def handle_register_unbind(callback_url: str, owner_id: str) -> Dict[str, Any]:
-    """处理用户解绑操作
+    """处理用户解绑操作（HTTP 模式）
 
     Args:
         callback_url: Callback 后端 URL
@@ -705,14 +693,15 @@ def handle_register_unbind(callback_url: str, owner_id: str) -> Dict[str, Any]:
     """
     from services.binding_store import BindingStore
 
+    # 删除绑定记录
     store = BindingStore.get_instance()
     if store:
         existing = store.get(owner_id)
         if existing and existing.get('callback_url') == callback_url:
             store.delete(owner_id)
-            logger.info(f"[register] User unbound: owner_id={owner_id}, callback_url={callback_url}")
+            logger.info("[register] User unbound: owner_id=%s, callback_url=%s", owner_id, callback_url)
         else:
-            logger.info(f"[register] User unbind (no existing binding): owner_id={owner_id}, callback_url={callback_url}")
+            logger.info("[register] User unbind (no existing binding): owner_id=%s, callback_url=%s", owner_id, callback_url)
 
     # 返回已解绑卡片（无按钮）
     return {
@@ -727,6 +716,422 @@ def handle_register_unbind(callback_url: str, owner_id: str) -> Dict[str, Any]:
                 f"已解除绑定，该后端将：\n"
                 f"• 无法再接收你的消息\n"
                 f"• 无法再向你发送通知"
+            ),
+            template='grey'
+        )
+    }
+
+
+# =============================================================================
+# WebSocket 注册流程
+# =============================================================================
+
+def _send_ws_authorization_card(owner_id: str, request_id: str,
+                                client_ip: str, title: str, content: str,
+                                reply_in_thread: bool = False,
+                                claude_commands: Optional[List[str]] = None,
+                                default_chat_dir: str = '') -> bool:
+    """发送 WS 模式授权卡片（注册/换绑共用）
+
+    每个终端独立发送自己的卡片，包含允许/拒绝按钮。
+    当用户允许其中一个终端时，其他 pending 连接会被自动关闭。
+
+    Args:
+        owner_id: 飞书用户 ID
+        request_id: 本次注册请求的唯一标识（UUID），用于卡片-连接匹配验证
+        client_ip: 客户端 IP
+        title: 卡片标题
+        content: 卡片正文（lark_md 格式）
+        reply_in_thread: 是否使用回复话题模式
+        claude_commands: 可用的 Claude 命令列表
+        default_chat_dir: 默认聊天目录
+
+    Returns:
+        True 表示卡片发送成功
+    """
+    from services.feishu_api import FeishuAPIService
+
+    service = FeishuAPIService.get_instance()
+    if not service or not service.enabled:
+        logger.warning("[ws_register] FeishuAPIService not enabled, cannot send authorization card")
+        return False
+
+    card = _build_authorization_card(
+        title, content,
+        approve_value={
+            "action": "approve_register",
+            "mode": "ws",
+            "owner_id": owner_id,
+            "request_id": request_id,
+            "request_ip": client_ip,
+            "reply_in_thread": reply_in_thread,
+            "claude_commands": claude_commands,
+            "default_chat_dir": default_chat_dir
+        },
+        deny_value={
+            "action": "deny_register",
+            "mode": "ws",
+            "owner_id": owner_id,
+            "request_id": request_id
+        }
+    )
+
+    success, result = service.send_card(json.dumps(card, ensure_ascii=False), receive_id=owner_id)
+
+    if success:
+        logger.info("[ws_register] Authorization card sent to %s: %s", owner_id, title)
+    else:
+        logger.error("[ws_register] Failed to send authorization card: %s", result)
+
+    return success
+
+
+def handle_ws_registration(owner_id: str, request_id: str,
+                           client_ip: str,
+                           reply_in_thread: bool = False,
+                           claude_commands: Optional[List[str]] = None,
+                           default_chat_dir: str = '') -> bool:
+    """处理 WebSocket 隧道的注册请求
+
+    发送飞书授权卡片，用户授权后通过 WS 通道下发 auth_token。
+    每个终端独立发送自己的卡片，允许其中一个时自动关闭其他 pending 连接。
+
+    Args:
+        owner_id: 飞书用户 ID
+        request_id: 本次注册请求的唯一标识（UUID），用于卡片-连接匹配验证
+        client_ip: 客户端 IP
+        reply_in_thread: 是否使用回复话题模式
+        claude_commands: 可用的 Claude 命令列表
+        default_chat_dir: 默认聊天目录
+
+    Returns:
+        True 表示卡片发送成功
+    """
+    title = "WebSocket 隧道连接请求"
+    content = (
+        f"**来源 IP**: `{client_ip}`\n\n"
+        f"有本地 Callback 后端尝试通过 WebSocket 隧道连接。\n\n"
+        f"{_PERMISSION_DESCRIPTION}\n\n"
+        f"{_SECURITY_WARNING}\n\n"
+        f"是否允许该连接？"
+    )
+    return _send_ws_authorization_card(owner_id, request_id, client_ip, title, content,
+                                       reply_in_thread=reply_in_thread,
+                                       claude_commands=claude_commands,
+                                       default_chat_dir=default_chat_dir)
+
+
+def handle_ws_rebind_registration(owner_id: str, request_id: str,
+                                   client_ip: str, old_ip: str,
+                                   reply_in_thread: bool = False,
+                                   claude_commands: Optional[List[str]] = None,
+                                   default_chat_dir: str = '') -> bool:
+    """处理 WS 模式的换绑注册请求（新终端替换旧终端）
+
+    发送飞书授权卡片，展示旧终端 IP 和新终端 IP，用户授权后走现有
+    handle_ws_authorization_approved() 逻辑。
+    每个终端独立发送自己的卡片，允许其中一个时自动关闭其他 pending 连接。
+
+    Args:
+        owner_id: 飞书用户 ID
+        request_id: 本次注册请求的唯一标识（UUID），用于卡片-连接匹配验证
+        client_ip: 新终端 IP
+        old_ip: 旧终端 IP
+        reply_in_thread: 是否使用回复话题模式
+        claude_commands: 可用的 Claude 命令列表
+        default_chat_dir: 默认聊天目录
+
+    Returns:
+        True 表示卡片发送成功
+    """
+    title = "WebSocket 隧道换绑请求"
+    content = (
+        f"**旧终端 IP**: `{old_ip or '未知'}`\n"
+        f"**新终端 IP**: `{client_ip}`\n\n"
+        f"有新终端尝试通过 WebSocket 隧道连接，将替换当前已绑定的终端。\n\n"
+        f"{_PERMISSION_DESCRIPTION}\n\n"
+        f"{_SECURITY_WARNING_REBIND}\n\n"
+        f"是否允许换绑到新终端？"
+    )
+    return _send_ws_authorization_card(owner_id, request_id, client_ip, title, content,
+                                       reply_in_thread=reply_in_thread,
+                                       claude_commands=claude_commands,
+                                       default_chat_dir=default_chat_dir)
+
+
+def handle_ws_authorization_approved(owner_id: str, request_id: str,
+                                     client_ip: str,
+                                     reply_in_thread: bool = False,
+                                     claude_commands: Optional[List[str]] = None,
+                                     default_chat_dir: str = '') -> Dict[str, Any]:
+    """处理 WS 模式授权通过
+
+    生成 auth_token，存入 BindingStore，通过 WS 下发给客户端。
+
+    Args:
+        owner_id: 飞书用户 ID
+        request_id: 本次注册请求的唯一标识（UUID），用于卡片-连接匹配验证
+        client_ip: 客户端 IP
+        reply_in_thread: 是否使用回复话题模式
+        claude_commands: 可用的 Claude 命令列表
+        default_chat_dir: 默认聊天目录
+
+    Returns:
+        飞书响应（包含 toast 和更新的卡片）
+    """
+    if not request_id:
+        logger.warning("[ws_register] Authorization approved but request_id is empty for %s", owner_id)
+        return {
+            'toast': {'type': 'error', 'content': '请求参数异常'},
+        }
+
+    from services.binding_store import BindingStore
+    from services.auth_token import generate_auth_token
+    from services.ws_registry import WebSocketRegistry
+    from config import FEISHU_APP_SECRET
+
+    if not FEISHU_APP_SECRET:
+        logger.error("[ws_register] FEISHU_APP_SECRET not configured")
+        return {
+            'toast': {
+                'type': 'error',
+                'content': '服务配置错误'
+            }
+        }
+
+    # 生成 auth_token
+    auth_token = generate_auth_token(FEISHU_APP_SECRET, owner_id)
+    logger.info("[ws_register] Authorization approved, generated auth_token for %s", owner_id)
+
+    # 通过 WS 下发 auth_token
+    # BindingStore 更新延迟到消息循环收到 auth_ok_ack 后执行，
+    # 确保客户端已确认收到新 token 后再持久化（与续期路径一致）
+    registry = WebSocketRegistry.get_instance()
+    if not registry:
+        logger.error("[ws_register] WebSocketRegistry not initialized")
+        return {
+            'toast': {'type': 'error', 'content': '服务内部错误'},
+            'card': _build_register_status_card(
+                title='⚠️ 授权失败',
+                content='服务内部错误，请稍后重试。',
+                template='red'
+            )
+        }
+
+    pending_conn = registry.get_pending(owner_id, request_id)
+    if not pending_conn:
+        logger.warning("[ws_register] No pending connection for %s, request_id=%s", owner_id, request_id)
+        return {
+            'toast': {'type': 'error', 'content': '连接已断开或不存在'},
+            'card': _build_register_status_card(
+                title='⚠️ 授权失败',
+                content=(
+                    f"**来源 IP**: `{client_ip}`\n\n"
+                    f"该终端的连接已断开或不存在。\n\n"
+                    f"可能已被其他操作处理，请刷新后重试。"
+                ),
+                template='yellow'
+            )
+        }
+
+    try:
+        from services.ws_protocol import ws_send_text
+        # 原子地设置 auth_token、绑定参数，并关闭其他 pending 连接
+        # 防止客户端极快回复 auth_ok_ack 时消息循环找不到 token
+        # 同时验证 pending 连接仍然存在（防止 get_pending 与此处之间的竞态）
+        if not registry.prepare_authorization(owner_id, request_id, auth_token, {
+            'client_ip': client_ip,
+            'reply_in_thread': reply_in_thread,
+            'claude_commands': claude_commands,
+            'default_chat_dir': default_chat_dir
+        }):
+            logger.warning("[ws_register] prepare_authorization failed: connection gone for %s, request_id=%s", owner_id, request_id)
+            return {
+                'toast': {'type': 'error', 'content': '连接已断开或不存在'},
+                'card': _build_register_status_card(
+                    title='⚠️ 授权失败',
+                    content=(
+                        f"**来源 IP**: `{client_ip}`\n\n"
+                        f"该终端的连接已断开或不存在。\n\n"
+                        f"可能已被其他操作处理，请刷新后重试。"
+                    ),
+                    template='yellow'
+                )
+            }
+
+        msg = json.dumps({
+            'type': 'auth_ok',
+            'auth_token': auth_token
+        })
+        ws_send_text(pending_conn, msg)
+        logger.info("[ws_register] Sent auth_ok to %s via WS, request_id=%s, waiting for auth_ok_ack", owner_id, request_id)
+    except Exception as e:
+        logger.error("[ws_register] Failed to send auth_ok: %s", e)
+        return {
+            'toast': {'type': 'error', 'content': '发送授权信息失败'},
+            'card': _build_register_status_card(
+                title='⚠️ 授权失败',
+                content=(
+                    f"**来源 IP**: `{client_ip}`\n\n"
+                    f"向客户端发送授权信息失败。\n\n"
+                    f"请重新启动后端服务后重试。"
+                ),
+                template='yellow'
+            )
+        }
+
+    # 返回已授权卡片（带解绑按钮）
+    content = (
+        f"**来源 IP**: `{client_ip}`\n\n"
+        f"**已授权权限：**\n"
+        f"• 接收你发送给机器人的所有消息\n"
+        f"• 向你发送消息通知\n\n"
+        f"已成功授权 WebSocket 隧道连接"
+    )
+    return {
+        'toast': {
+            'type': 'success',
+            'content': '已授权绑定'
+        },
+        'card': _build_register_status_card(
+            title='✓ 已授权',
+            content=content,
+            template='green',
+            button={
+                'tag': 'button',
+                'text': {'tag': 'plain_text', 'content': '解绑'},
+                'type': 'danger',
+                'value': {
+                    'action': 'unbind_register',
+                    'mode': 'ws',
+                    'callback_url': 'ws://tunnel',
+                    'owner_id': owner_id
+                }
+            }
+        )
+    }
+
+
+def handle_ws_authorization_denied(owner_id: str, request_id: str) -> Dict[str, Any]:
+    """处理 WS 模式授权拒绝（单个终端）
+
+    通过 WS 发送 auth_error 消息，关闭指定的 pending 连接。
+
+    注意：即使 pending 连接已断开（如超时），仍返回"已拒绝"而非"连接已断开"。
+    原因：用户点击拒绝表示不想绑定该终端，无论连接状态如何，"不绑定"这个
+    结果都达成了，无需区分内部状态。这与授权通过场景不同——授权通过时
+    如果连接断开，用户的期望（绑定成功）无法达成，需要告知失败。
+
+    Args:
+        owner_id: 飞书用户 ID
+        request_id: 请求 ID（用于指定拒绝哪个终端）
+
+    Returns:
+        飞书响应（包含 toast 和更新的卡片）
+    """
+    if not request_id:
+        logger.warning("[ws_register] Authorization denied but request_id is empty for %s", owner_id)
+        return {
+            'toast': {'type': 'error', 'content': '请求参数异常'},
+        }
+
+    from services.ws_registry import WebSocketRegistry
+
+    # 通过 WS 发送 auth_error，然后直接关闭 socket
+    # 注意：不能调用 ws_close()，因为消息循环线程正在同一个 socket 上 recv()，
+    # 跨线程操作 socket 不安全。直接 close() 会让消息循环收到异常后退出。
+    registry = WebSocketRegistry.get_instance()
+    if registry:
+        pending_conn = registry.get_pending(owner_id, request_id)
+        if pending_conn:
+            try:
+                from services.ws_protocol import ws_send_text
+                msg = json.dumps({
+                    'type': 'auth_error',
+                    'action': 'stop',
+                    'message': 'authorization denied'
+                })
+                ws_send_text(pending_conn, msg)
+            except Exception as e:
+                logger.debug("[ws_register] Error sending auth_error: %s", e)
+            # 直接关闭 socket，消息循环会因 ConnectionError 退出并清理
+            try:
+                pending_conn.close()
+            except Exception:
+                pass
+
+        registry.remove_pending(owner_id, request_id)
+
+    logger.info("[ws_register] Authorization denied for %s, request_id=%s", owner_id, request_id)
+
+    return {
+        'toast': {
+            'type': 'info',
+            'content': '已拒绝该终端的连接请求'
+        },
+        'card': _build_register_status_card(
+            title='✗ 已拒绝',
+            content="已拒绝该终端的 WebSocket 隧道连接请求",
+            template='red'
+        )
+    }
+
+
+def handle_ws_register_unbind(owner_id: str) -> Dict[str, Any]:
+    """处理 WS 模式用户解绑操作
+
+    关闭 WebSocket 连接并删除绑定记录。
+
+    Args:
+        owner_id: 飞书用户 ID
+
+    Returns:
+        飞书响应（包含 toast 和更新的卡片）
+    """
+    from services.binding_store import BindingStore
+    from services.ws_registry import WebSocketRegistry
+
+    # 关闭 WebSocket 连接
+    # 注意：不能调用 ws_close()，因为消息循环线程正在同一个 socket 上 recv()，
+    # ws_close() 会发送 close frame 后阻塞等待响应（最多 2 秒），跨线程不安全。
+    # 直接 close() 会让消息循环收到异常后退出并清理。
+    registry = WebSocketRegistry.get_instance()
+    if registry:
+        ws_conn = registry.get(owner_id)
+        if ws_conn:
+            try:
+                from services.ws_protocol import ws_send_text
+                msg = json.dumps({'type': 'unbind', 'action': 'stop', 'message': 'user unbind'})
+                ws_send_text(ws_conn, msg)
+            except Exception as e:
+                logger.debug("[ws_register] Error sending unbind: %s", e)
+            try:
+                ws_conn.close()
+            except Exception:
+                pass
+        registry.unregister(owner_id)
+
+    # 删除绑定记录
+    store = BindingStore.get_instance()
+    if store:
+        existing = store.get(owner_id)
+        if existing and existing.get('callback_url', '').startswith('ws'):
+            store.delete(owner_id)
+            logger.info("[ws_register] WS user unbound: owner_id=%s", owner_id)
+        else:
+            logger.info("[ws_register] WS user unbind (no existing binding): owner_id=%s", owner_id)
+
+    return {
+        'toast': {
+            'type': 'info',
+            'content': '已解绑'
+        },
+        'card': _build_register_status_card(
+            title='✗ 已解绑',
+            content=(
+                "已解除 WebSocket 隧道绑定，该后端将：\n"
+                "• 无法再接收你的消息\n"
+                "• 无法再向你发送通知"
             ),
             template='grey'
         )

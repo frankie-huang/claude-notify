@@ -66,7 +66,8 @@ claude-notify/
 │   │   │   ├── auto_register.py     # 网关注册服务
 │   │   │   ├── auth_token.py        # 认证令牌管理
 │   │   │   ├── auth_token_store.py  # 认证令牌存储
-│   │   │   └── feishu_api.py        # 飞书 API 封装
+│   │   │   ├── feishu_api.py        # 飞书 API 封装
+│   │   │   └── feishu_longpoll.py   # 飞书 WebSocket 长连接服务
 │   │   └── handlers/           # HTTP 处理器
 │   │       ├── http_handler.py # HTTP 请求处理器（GET/POST 路由分发）
 │   │       ├── callback.py     # 权限回调处理器
@@ -194,6 +195,41 @@ vim .env
 
 ### 分离部署架构（OpenAPI 模式）
 
+分离部署支持两种通信方式：
+
+| 方式 | 协议 | 适用场景 | Callback 要求 |
+|------|------|----------|--------------|
+| **WS 隧道模式** | `ws://` / `wss://` | 本地开发、多实例部署（推荐） | 无需公网可达 |
+| HTTP 回调模式 | `http://` / `https://` | 云服务器部署 | 需公网可达 |
+
+#### WS 隧道模式（推荐）
+
+Callback 通过 WebSocket 长连接主动接入网关，无需公网 IP，适合本地开发场景。
+
+```
+                                                    ┌─────────────────────┐
+                                                    │   Feishu Gateway    │
+                                                    │  (飞书应用凭证)      │
+                                                    │  ws://gateway:8080  │
+                                                    └──────────┬──────────┘
+                                                               │
+                              ┌─────────────────┬──────────────┼──────────────┐
+                              │  WS 长连接      │   WS 长连接  │   WS 长连接   │
+                              ▼                 ▼              ▼              ▼
+┌──────────────┐      ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│ Claude Code  │─────▶│ Callback A  │   │ Callback B  │   │ Callback C  │
+│  本地 MacBook│      │ (本地电脑)   │   │ (本地电脑)   │   │ (云服务器)   │
+└──────────────┘      └─────────────┘   └─────────────┘   └─────────────┘
+                              │                 │              │
+                              └─────────────────┴──────────────┘
+                                 Callback 主动连接网关，无需公网可达
+                                 网关通过 WS 隧道转发请求到对应 Callback
+```
+
+#### HTTP 回调模式
+
+传统模式，网关通过 HTTP 回调 Callback，需要 Callback 公网可达。
+
 ```
                                                     ┌─────────────────────┐
                                                     │   Feishu Gateway    │
@@ -226,6 +262,8 @@ vim .env
 7. **优雅降级**: 回调服务不可用时自动降级为仅通知模式
 8. **消息回复关联**: OpenAPI 模式下通过 `message_id` → `session` 映射实现回复继续会话（详见 `docs/design/FEISHU_SESSION_CONTINUE.md`）
 9. **自动注册与双向认证**: OpenAPI 模式下 Callback 服务启动时自动向网关注册，通过 `auth_token` 实现双向认证（详见 `docs/design/GATEWAY_AUTH.md`）
+10. **WS 隧道模式**: 分离部署时推荐使用 WebSocket 长连接，Callback 主动接入网关，无需公网可达，支持自动重连
+11. **飞书长连接事件接收**: 支持 `longpoll` 模式通过 lark-oapi SDK 的 WebSocket 长连接接收飞书事件推送，网关无需公网端点
 
 ## 功能特性
 
@@ -247,6 +285,8 @@ vim .env
 - **连接状态驱动**: 请求有效性由 Socket 连接状态决定，支持长时间等待
 - **自动注册与双向认证**: Callback 服务启动时自动向网关注册（OpenAPI 分离部署）
 - **用户授权控制**: 新设备注册需用户在飞书中确认，防止未授权访问
+- **WS 隧道模式**: 分离部署支持 WebSocket 长连接，本地开发无需公网可达
+- **飞书长连接事件接收**: 支持 longpoll 模式接收飞书事件，无需公网端点（需 lark-oapi SDK）
 
 ### 通知功能
 - **任务完成通知**: Claude 处理完成后自动发送飞书通知，包含响应摘要
@@ -271,6 +311,8 @@ vim .env
 - ✅ **自动注册与双向认证**: Callback 服务启动时自动向网关注册，获取 `auth_token` 用于双向认证
 - ✅ **用户授权控制**: 分离部署模式下，新设备注册需用户在飞书中确认
 - ✅ **群聊支持**: 支持将消息发送到飞书群聊，Session 自动映射到对应群聊
+- ✅ **WS 隧道模式**: 分离部署支持 WebSocket 长连接，本地开发无需公网 IP
+- ✅ **飞书长连接事件接收**: 支持通过 lark-oapi SDK 的 WebSocket 长连接接收飞书事件，无需公网端点
 
 ### VSCode 集成
 - ✅ **VSCode 自动跳转**: 点击飞书按钮后从浏览器页面自动跳转到 VSCode（`VSCODE_URI_PREFIX`）
@@ -335,6 +377,7 @@ vim .env
 | `auth_token.py` | 认证令牌管理（生成、验证、刷新） |
 | `auth_token_store.py` | 认证令牌存储（网关注册返回的 token） |
 | `feishu_api.py` | 飞书 API 封装（发送消息、上传图片等） |
+| `feishu_longpoll.py` | 飞书 WebSocket 长连接服务（lark-oapi SDK） |
 
 ### HTTP 处理器 (`src/server/handlers/`)
 
@@ -475,14 +518,27 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 |------|------|--------|
 | `FEISHU_APP_ID` | 飞书应用 App ID（单机/网关必填） | - |
 | `FEISHU_APP_SECRET` | 飞书应用 App Secret（单机/网关必填） | - |
-| `FEISHU_VERIFICATION_TOKEN` | 飞书验证 Token（单机/网关必填，用于事件验证 + auth_token 生成） | - |
+| `FEISHU_VERIFICATION_TOKEN` | 飞书验证 Token（HTTP 回调模式建议配置，长连接模式不需要） | - |
+| `FEISHU_EVENT_MODE` | 飞书事件接收模式：`auto`（默认）/ `http` / `longpoll` | `auto` |
+
+**OpenAPI 模式 — 事件接收**
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `FEISHU_EVENT_MODE` | 事件接收模式：`auto` / `http` / `longpoll` | `auto` |
+
+- **auto**（默认）：自动检测 — 有 `lark-oapi` SDK 且 Python >= 3.8 则使用 longpoll，否则 http
+- **http**：传统 HTTP 回调模式，需要公网端点接收飞书事件
+- **longpoll**：WebSocket 长连接模式，网关主动连接飞书，无需公网端点
+
+> **longpoll 模式优势**：无需公网 IP 和 HTTPS 证书，适用于本地开发和内网部署。需安装 `lark-oapi` SDK：`python3 -m pip install lark-oapi`
 
 **OpenAPI 模式 — 网关（分离部署）**
 
 配置 `FEISHU_GATEWAY_URL` 后启用分离部署：
 
-- 网关服务配置：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_VERIFICATION_TOKEN`
-- Callback 服务配置：`FEISHU_GATEWAY_URL`（不配置则默认使用 `CALLBACK_SERVER_URL`）
+- 网关服务配置：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`
+- Callback 服务配置：`FEISHU_GATEWAY_URL`（不配置则默认使用 `CALLBACK_SERVER_URL`，协议头决定连接模式）
 - Callback 服务启动时自动向网关注册获取 `auth_token`（用于后续通信验证）
 
 | 变量 | 网关服务 | Callback 服务 |
@@ -490,9 +546,17 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `FEISHU_GATEWAY_URL` | - | ✓（分离部署必需） |
 | `FEISHU_APP_ID` | ✓ | - |
 | `FEISHU_APP_SECRET` | ✓ | - |
-| `FEISHU_VERIFICATION_TOKEN` | ✓ | - |
+| `FEISHU_VERIFICATION_TOKEN` | ✓（HTTP 回调模式） | - |
+| `FEISHU_EVENT_MODE` | ✓（可选） | - |
 | `FEISHU_OWNER_ID` | ✓ | ✓ |
 | `FEISHU_CHAT_ID` | ✓ | ✓（客户端读取） |
+
+**连接模式选择**：
+
+| 协议头 | 模式 | 说明 |
+|--------|------|------|
+| `ws://` / `wss://` | **WS 隧道**（推荐） | Callback 主动连接网关，无需公网可达，本地开发首选 |
+| `http://` / `https://` | HTTP 回调 | 网关回调 Callback，需 Callback 公网可达 |
 
 **分离部署配置示例**：
 
@@ -501,17 +565,29 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 FEISHU_SEND_MODE=openapi
 FEISHU_APP_ID=cli_xxxxxxxxx
 FEISHU_APP_SECRET=xxxxxxxxxxxx
-FEISHU_VERIFICATION_TOKEN=your_verification_token
+FEISHU_EVENT_MODE=auto                        # auto/http/longpoll（默认 auto）
+# FEISHU_VERIFICATION_TOKEN=your_token        # HTTP 回调模式建议配置，longpoll 模式不需要
 CALLBACK_SERVER_PORT=8080
 FEISHU_OWNER_ID=ou_admin_user
 
-# === Callback 服务 ===
+# === Callback 服务（WS 隧道模式，推荐）===
 FEISHU_SEND_MODE=openapi
-FEISHU_GATEWAY_URL=http://gateway-server:8080  # 网关地址
-CALLBACK_SERVER_URL=http://callback-server-a:8081
+FEISHU_GATEWAY_URL=ws://gateway-server:8080  # 使用 ws:// 协议头启用 WS 隧道
+CALLBACK_SERVER_URL=http://localhost:8081    # 本地开发无需公网可达
+CALLBACK_SERVER_PORT=8081
+FEISHU_OWNER_ID=ou_admin_user
+
+# === Callback 服务（HTTP 回调模式）===
+FEISHU_SEND_MODE=openapi
+FEISHU_GATEWAY_URL=http://gateway-server:8080  # 使用 http:// 协议头
+CALLBACK_SERVER_URL=http://callback-server-a:8081  # 需要公网可达
 CALLBACK_SERVER_PORT=8081
 FEISHU_OWNER_ID=ou_admin_user
 ```
+
+> **协议头说明**：`FEISHU_GATEWAY_URL` 的协议头决定连接模式
+> - `ws://` 或 `wss://` → WS 隧道模式（Callback 无需公网可达，本地开发推荐）
+> - `http://` 或 `https://` → HTTP 回调模式（Callback 需公网可达）
 
 **消息接收者**
 
@@ -610,6 +686,7 @@ CLAUDE_COMMAND=[claude, claude --setting opus]
 ### 可选依赖
 - `jq` - 更好的 JSON 处理（脚本会自动降级使用 Python3 或 grep/sed）
 - `socat` - Socket 通信备选方案（有 Python socket_client 作为替代）
+- `lark-oapi` - 飞书长连接模式所需（`pip install lark-oapi`，需 Python >= 3.8）
 
 ### 安装
 
@@ -684,6 +761,7 @@ brew install python3 curl jq socat
 | `callback_YYYYMMDD.log` | 回调服务日志 |
 | `socket_client_YYYYMMDD.log` | Socket 客户端日志 |
 | `feishu_message_YYYYMMDD.log` | 飞书消息日志 |
+| `feishu_longpoll_YYYYMMDD.log` | 飞书长连接日志 |
 
 日志配置统一定义在 `shared/logging.json`。
 

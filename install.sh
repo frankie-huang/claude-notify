@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# install.sh - Claude Code 权限通知安装脚本
+# install.sh - Claude Code 飞书通知安装脚本
 #
 # 功能：
 #   1. 检测环境依赖（python3, curl 等）
@@ -38,7 +38,7 @@ SETTINGS_FILE="${HOME}/.claude/settings.json"
 print_header() {
     echo -e "${BLUE}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║       Claude Code 权限通知 - 安装脚本                         ║"
+    echo "║       Claude Code 飞书通知 - 安装脚本                         ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -108,7 +108,7 @@ check_dependencies() {
         if command -v "$dep" &>/dev/null; then
             print_success "$dep: 已安装 (可选)"
         else
-            print_warning "$dep: 未安装 (可选，$desc)"
+            print_info "$dep: 未安装 (可选，$desc)"
             optional_missing+=("$dep")
         fi
     done
@@ -156,16 +156,17 @@ configure_hook() {
     # 使用 Python 统一处理配置（新建或合并，仅增量写入缺失的 hook 事件）
     # PermissionRequest timeout 需大于服务端 PERMISSION_REQUEST_TIMEOUT（默认 600 秒）
     # 冲突时通过 /dev/tty 读取用户输入（因 stdin 被 heredoc 占用）
-    python3 << PYTHON_SCRIPT
+    SETTINGS_FILE="$SETTINGS_FILE" HOOK_PATH="$HOOK_PATH" python3 << 'PYTHON_SCRIPT'
 import json
+import os
 
 GREEN = '\033[0;32m'
 YELLOW = '\033[1;33m'
 DIM = '\033[2m'
 NC = '\033[0m'
 
-settings_file = "${SETTINGS_FILE}"
-hook_path = "${HOOK_PATH}"
+settings_file = os.environ.get('SETTINGS_FILE', '')
+hook_path = os.environ.get('HOOK_PATH', '')
 
 # 期望写入的 hooks 配置
 # 注意: Stop 事件不要配置 async: true
@@ -295,15 +296,16 @@ uninstall() {
     # 使用 Python 精确移除指向本项目脚本的 hook（保留用户的其他 hook）
     # 退出码: 0=有变更已写入, 1=错误, 2=无需操作
     local py_exit=0
-    python3 << PYTHON_SCRIPT || py_exit=$?
+    SETTINGS_FILE="$SETTINGS_FILE" HOOK_PATH="$HOOK_PATH" python3 << 'PYTHON_SCRIPT' || py_exit=$?
 import json
+import os
 
 GREEN = '\033[0;32m'
 YELLOW = '\033[1;33m'
 NC = '\033[0m'
 
-settings_file = "${SETTINGS_FILE}"
-hook_path = "${HOOK_PATH}"
+settings_file = os.environ.get('SETTINGS_FILE', '')
+hook_path = os.environ.get('HOOK_PATH', '')
 
 try:
     with open(settings_file, 'r') as f:
@@ -436,4 +438,6 @@ main() {
     esac
 }
 
-main "$@"
+if [ "${_SOURCED_BY_SETUP:-}" != "true" ]; then
+    main "$@"
+fi

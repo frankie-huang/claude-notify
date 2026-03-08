@@ -34,6 +34,8 @@ class BindingStore:
             "registered_ip": "1.2.3.4"
         }
     }
+
+    注意: get() 方法返回的绑定信息会自动注入 _owner_id 字段。
     """
 
     _instance = None  # type: Optional[BindingStore]
@@ -82,12 +84,17 @@ class BindingStore:
             owner_id: 飞书用户 ID
 
         Returns:
-            绑定信息字典，不存在返回 None
+            绑定信息字典（自动注入 _owner_id 字段），不存在返回 None
         """
         with self._file_lock:
             try:
                 data = self._load()
-                return data.get(owner_id)
+                binding = data.get(owner_id)
+                if binding:
+                    result = dict(binding)
+                    result['_owner_id'] = owner_id
+                    return result
+                return None
             except Exception as e:
                 logger.error(f"[binding-store] Failed to get binding: {e}")
                 return None

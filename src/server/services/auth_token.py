@@ -4,7 +4,7 @@
 
 Token 格式: base64url(timestamp) + "." + base64url(signature)
 - timestamp: Unix 时间戳（秒）
-- signature: HMAC-SHA256(FEISHU_VERIFICATION_TOKEN, owner_id + timestamp)
+- signature: HMAC-SHA256(FEISHU_APP_SECRET, owner_id + timestamp)
 """
 
 import base64
@@ -47,11 +47,11 @@ def _base64url_decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data)
 
 
-def generate_auth_token(verification_token: str, owner_id: str) -> str:
+def generate_auth_token(app_secret: str, owner_id: str) -> str:
     """生成 auth_token
 
     Args:
-        verification_token: 验证密钥（FEISHU_VERIFICATION_TOKEN）
+        app_secret: 飞书应用密钥（FEISHU_APP_SECRET）
         owner_id: 飞书用户 ID
 
     Returns:
@@ -62,7 +62,7 @@ def generate_auth_token(verification_token: str, owner_id: str) -> str:
 
     # 计算 HMAC-SHA256 签名
     signature = hmac.new(
-        verification_token.encode('utf-8'),
+        app_secret.encode('utf-8'),
         message.encode('utf-8'),
         hashlib.sha256
     ).digest()
@@ -80,14 +80,14 @@ def generate_auth_token(verification_token: str, owner_id: str) -> str:
 def verify_auth_token(
     auth_token: str,
     owner_id: str,
-    verification_token: str
+    app_secret: str
 ) -> Tuple[bool, Optional[int]]:
     """验证 auth_token
 
     Args:
         auth_token: 待验证的 token
         owner_id: 飞书用户 ID
-        verification_token: 验证密钥（FEISHU_VERIFICATION_TOKEN）
+        app_secret: 飞书应用密钥（FEISHU_APP_SECRET）
 
     Returns:
         (is_valid, timestamp): 验证结果和 token 中的时间戳
@@ -116,7 +116,7 @@ def verify_auth_token(
         # 重新计算签名
         message = owner_id + str(timestamp)
         expected_signature = hmac.new(
-            verification_token.encode('utf-8'),
+            app_secret.encode('utf-8'),
             message.encode('utf-8'),
             hashlib.sha256
         ).digest()
@@ -140,39 +140,28 @@ def verify_auth_token(
 # HTTP 请求鉴权辅助函数（供 callback.py 等模块复用）
 # ============================================================================
 
-def verify_global_auth_token(
-    handler,
-    endpoint_name: str,
-    error_body: dict = None
-) -> bool:
-    """验证全局 AuthToken（用于 X-Auth-Token header 验证）
+def check_global_auth_token(headers: Dict[str, str], endpoint_name: str) -> bool:
+    """纯鉴权检查，返回是否通过
 
-    从 AuthTokenStore 获取存储的 token，与请求头中的 X-Auth-Token 进行比对。
+    从 AuthTokenStore 获取存储的 token，与 headers 中的 X-Auth-Token 进行比对。
 
     Args:
-        handler: BaseHTTPRequestHandler 实例（用于访问 headers 和发送响应）
+        headers: 请求头字典
         endpoint_name: 端点名称（用于日志记录）
-        error_body: 自定义错误响应 body（默认为 {'error': 'Unauthorized'}）
 
     Returns:
-        True 表示验证通过，False 表示验证失败（已发送 401 响应）
+        True 表示验证通过，False 表示验证失败
     """
     from services.auth_token_store import AuthTokenStore
 
-    client_token = handler.headers.get('X-Auth-Token', '')
+    client_token = headers.get('X-Auth-Token', '') if headers else ''
     stored_token = ''
     token_store = AuthTokenStore.get_instance()
     if token_store:
         stored_token = token_store.get()
 
     if not client_token or not hmac.compare_digest(client_token, stored_token):
-        logger.warning(f"[{endpoint_name}] Missing or invalid X-Auth-Token")
-        if error_body is None:
-            error_body = {'error': 'Unauthorized'}
-        handler.send_response(401)
-        handler.send_header('Content-Type', 'application/json')
-        handler.end_headers()
-        handler.wfile.write(json.dumps(error_body).encode())
+        logger.warning("[%s] Missing or invalid X-Auth-Token", endpoint_name)
         return False
 
     return True

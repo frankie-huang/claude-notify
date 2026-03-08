@@ -89,28 +89,55 @@ start_service() {
     # 保存 PID
     echo $pid > "$PID_FILE"
 
-    # 等待启动
-    sleep 1
+    # 等待启动完成（每秒检查一次）
+    # 服务初始化约需 5 秒，成功后继续运行，失败则进程退出
+    local count=0
+    local min_stable_time=5  # 进程至少稳定运行 5 秒才算成功
+    local startup_timeout=$((min_stable_time + 2))  # 超时保护
 
-    # 验证服务是否启动成功
-    if is_running; then
-        echo "Service started successfully (PID: $pid)"
-        echo "Logs: $log_file"
-        # 启动成功后清理错误文件
-        rm -f "$error_file"
-        return 0
-    else
-        echo "Failed to start service."
-        # 显示启动错误（如果有）
-        if [ -s "$error_file" ]; then
-            echo "Error:"
-            cat "$error_file"
-        else
-            echo "Check logs: $log_file"
+    echo -n "Waiting for service to start"
+    while [ $count -lt $startup_timeout ]; do
+        echo -n "."
+        sleep 1
+        count=$((count + 1))
+
+        # 如果进程已退出，立即失败
+        if ! is_running; then
+            echo " failed."
+            echo "Failed to start service."
+            if [ -s "$error_file" ]; then
+                echo "Error:"
+                cat "$error_file"
+            else
+                echo "Check logs: $log_file"
+            fi
+            rm -f "$PID_FILE"
+            return 1
         fi
-        rm -f "$PID_FILE"
-        return 1
-    fi
+
+        # 进程稳定运行超过 min_stable_time 秒且无致命错误，认为启动成功
+        if [ $count -ge $min_stable_time ]; then
+            if [ -s "$error_file" ] && grep -qE "^Traceback|^OSError:|^Exception:" "$error_file" 2>/dev/null; then
+                echo " failed."
+                echo "Failed to start service."
+                echo "Error:"
+                cat "$error_file"
+                rm -f "$PID_FILE"
+                return 1
+            fi
+            # 进程稳定运行且无致命错误
+            echo " done."
+            echo "Service started successfully (PID: $pid)"
+            echo "Logs: $log_file"
+            rm -f "$error_file"
+            return 0
+        fi
+    done
+
+    # 超时
+    echo " timeout."
+    echo "Check logs: $log_file"
+    return 1
 }
 
 # 停止服务

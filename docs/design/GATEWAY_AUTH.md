@@ -89,7 +89,9 @@ Content-Type: application/json
 {
   "callback_url": "https://callback.example.com",
   "owner_id": "ou_xxx",
-  "reply_in_thread": false
+  "reply_in_thread": false,
+  "claude_commands": ["claude", "claude --model opus"],
+  "default_chat_dir": "/home/user/project"
 }
 ```
 
@@ -416,9 +418,9 @@ def verify_auth_token(auth_token: str, owner_id: str) -> bool:
 ## 映射表结构
 
 ```
-owner_id   | callback_url              | auth_token        | reply_in_thread | updated_at        | registered_ip
------------|---------------------------|-------------------|-----------------|-------------------|---------------
-ou_xxx     | https://callback.example  | abc123.def456     | false           | 2025-02-05 10:30:00| 1.2.3.4
+owner_id   | callback_url              | auth_token        | reply_in_thread | claude_commands       | default_chat_dir      | default_chat_session_id | updated_at        | registered_ip
+-----------|---------------------------|-------------------|-----------------|-----------------------|-----------------------|-------------------------|-------------------|---------------
+ou_xxx     | https://callback.example  | abc123.def456     | false           | ["claude", "opus"]    | /home/user/project    | session-uuid-123       | 2025-02-05 10:30:00| 1.2.3.4
 ```
 
 - 一个用户（owner_id）同时只能有一个活跃的 callback_url 绑定
@@ -426,6 +428,18 @@ ou_xxx     | https://callback.example  | abc123.def456     | false           | 2
 - 已绑定 + 相同 callback_url：直接更新 token，无需用户确认
 - 已绑定 + 不同 callback_url：发送卡片让用户选择是否更换设备
 - 用户拒绝且存在精确匹配的绑定：删除绑定（可用于解绑）
+
+### 话题回复模式 (reply_in_thread)
+
+- `reply_in_thread`：控制飞书通知是否回复到话题详情
+- **特殊规则**：当工作目录 `project_dir` 等于用户的 `default_chat_dir` 时，强制 `reply_in_thread=False`（直接回复到群聊主界面）
+- 其他情况使用 `reply_in_thread` 配置值
+
+### 默认聊天目录 (default_chat_dir)
+
+- 用户配置的默认工作目录，配置后可直接发消息创建/继续会话
+- 由 Callback 后端注册时传递（从 `DEFAULT_CHAT_DIR` 环境变量读取）
+- 分离部署场景下不同用户可有不同的默认目录
 
 ## 安全保证
 
