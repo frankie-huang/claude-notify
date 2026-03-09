@@ -2,6 +2,17 @@
 HTTP Handler - HTTP 请求处理器
 
 处理权限回调请求（GET）和 POST 路由分发
+
+GET 路由：
+    - /ws/tunnel: WebSocket 隧道入口点
+    - /status: 服务状态
+    - /allow, /always, /deny, /interrupt: 权限决策回调
+
+POST 路由：
+    - /gw/*: 飞书网关侧路由
+        - /gw/register: Callback 后端注册
+        - /gw/feishu/send: 发送飞书消息
+    - /cb/*: Callback 后端侧路由（通过路由表分发）
 """
 
 import json
@@ -13,19 +24,11 @@ from services.auth_token import verify_owner_based_auth_token
 from handlers.feishu import handle_feishu_request, handle_send_message
 from handlers.register import handle_register_request
 from handlers.utils import send_json, send_html_response
+from handlers.ws_handler import handle_ws_tunnel
 from handlers.callback import (
     handle_status,
     handle_action,
-    handle_register_callback_route,
-    handle_check_owner_id_route,
-    handle_get_chat_id,
-    handle_get_last_message_id,
-    handle_set_last_message_id,
-    handle_callback_decision,
-    handle_claude_new,
-    handle_claude_continue,
-    handle_recent_dirs,
-    handle_browse_dirs,
+    BACKEND_ROUTES,
 )
 
 # 单次请求最大大小限制
@@ -44,7 +47,7 @@ class HttpRequestHandler(BaseHTTPRequestHandler):
     """
 
     def log_message(self, format, *args):
-        logger.info(f"{self.address_string()} - {format % args}")
+        logger.info("%s - %s", self.address_string(), format % args)
 
     def get_client_ip(self) -> str:
         """获取真实客户端 IP
@@ -74,6 +77,11 @@ class HttpRequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         params = parse_qs(parsed.query)
 
+        # ===== WebSocket 隧道路由 =====
+        if path == '/ws/tunnel':
+            handle_ws_tunnel(self, params)
+            return
+
         # ===== Callback 后端侧路由 =====
         if path == '/status':
             handle_status(self)
@@ -87,29 +95,6 @@ class HttpRequestHandler(BaseHTTPRequestHandler):
             return
 
         send_html_response(self, 404, '未找到', '请求的页面不存在。', False)
-
-    # =============================================
-    # POST 路由表
-    # =============================================
-
-    # 飞书网关侧路由（存储器: MessageSessionStore, BindingStore）
-    # /gw/register 和 /gw/feishu/send 需要特殊处理，不在路由表中
-    # 未匹配路径兜底到飞书事件回调（handle_feishu_request）
-
-    # Callback 后端侧路由（存储器: SessionChatStore, AuthTokenStore, DirHistoryStore）
-    # 函数签名统一为 (handler, data)
-    BACKEND_ROUTES = {
-        '/cb/register': handle_register_callback_route,
-        '/cb/check-owner': handle_check_owner_id_route,
-        '/cb/session/get-chat-id': handle_get_chat_id,
-        '/cb/session/get-last-message-id': handle_get_last_message_id,
-        '/cb/session/set-last-message-id': handle_set_last_message_id,
-        '/cb/decision': handle_callback_decision,
-        '/cb/claude/new': handle_claude_new,
-        '/cb/claude/continue': handle_claude_continue,
-        '/cb/claude/recent-dirs': handle_recent_dirs,
-        '/cb/claude/browse-dirs': handle_browse_dirs,
-    }
 
     def do_POST(self):
         """处理 POST 请求
@@ -154,9 +139,12 @@ class HttpRequestHandler(BaseHTTPRequestHandler):
             return
 
         # ===== Callback 后端侧路由 =====
-        route_handler = self.BACKEND_ROUTES.get(path)
+        route_handler = BACKEND_ROUTES.get(path)
         if route_handler:
-            route_handler(self, data)
+            # 将 HTTPMessage 转为纯字符串字典，确保类型安全
+            headers = {k: str(v) for k, v in self.headers.items()}
+            status, response = route_handler(data, headers)
+            send_json(self, status, response)
             return
 
         # ===== 飞书事件回调（兜底：URL验证、消息事件、卡片回传交互）=====

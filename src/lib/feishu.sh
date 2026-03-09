@@ -1034,6 +1034,11 @@ _send_via_http_endpoint() {
         target_url="${CALLBACK_SERVER_URL:-http://localhost:${CALLBACK_SERVER_PORT:-8080}}"
     fi
     target_url=$(echo "$target_url" | sed 's:/*$::')
+    # ws(s):// → http(s)://（FEISHU_GATEWAY_URL 可能是 ws 协议）
+    case "$target_url" in
+        wss://*) target_url="https://${target_url#wss://}" ;;
+        ws://*)  target_url="http://${target_url#ws://}" ;;
+    esac
     local api_url="${target_url}/gw/feishu/send"
 
     log "Sending via ${log_prefix}: $api_url"

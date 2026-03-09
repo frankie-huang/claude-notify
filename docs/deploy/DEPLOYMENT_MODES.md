@@ -22,6 +22,8 @@
 | **回复继续会话** | ❌ 不支持 | ✅ 支持 |
 | **群聊绑定** | ❌ 不支持 | ✅ 支持 |
 | **自动注册与认证** | ❌ 不支持 | ✅ 支持 |
+| **本地开发支持** | ❌ 需内网穿透 | ✅ WS 隧道免穿透 |
+| **无需公网端点** | ❌ | ✅ longpoll 模式 |
 | **VSCode 激活** | ✅ 支持 | ✅ 支持 |
 
 ---
@@ -110,7 +112,22 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxx
 | 方式 | 说明 | 适用场景 |
 |------|------|----------|
 | **单机部署** | 所有服务在一台机器 | 团队协作、单实例 |
-| **分离部署** | 网关与 Callback 分离 | 多实例、分布式 |
+| **分离部署** | 网关与 Callback 分离 | 多实例、本地开发 |
+
+### 事件接收模式
+
+| 模式 | 说明 | 适用场景 |
+|------|------|----------|
+| **longpoll** | WebSocket 长连接接收飞书事件（推荐） | 无需公网端点，本地开发 |
+| http | 传统 HTTP 回调接收飞书事件 | 已有公网端点 |
+| auto | 自动检测（默认） | 有 lark-oapi 则 longpoll，否则 http |
+
+### 分离部署连接模式
+
+| 模式 | 协议 | 说明 | 适用场景 |
+|------|------|------|----------|
+| **WS 隧道** | `ws://` / `wss://` | Callback 主动连接网关（推荐） | 本地开发、无需公网 IP |
+| HTTP 回调 | `http://` / `https://` | 网关回调 Callback | 云服务器、公网可达 |
 
 ### 优点
 
@@ -118,11 +135,14 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxx
 - 支持分离部署，多实例共享应用
 - 支持消息回复继续会话
 - 用户体验更好
+- WS 隧道模式支持本地开发（无需公网 IP）
+- longpoll 模式无需公网端点接收飞书事件
 
 ### 缺点
 
 - 配置复杂，需要飞书应用
 - 需要配置事件订阅和权限
+- longpoll 模式需要安装 `lark-oapi` SDK（Python >= 3.8）
 
 ### 最小配置（单机）
 
@@ -130,8 +150,26 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxx
 FEISHU_SEND_MODE=openapi
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
-FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_OWNER_ID=ou_xxx  # 必需
+# FEISHU_EVENT_MODE=auto  # 默认 auto，longpoll 模式无需公网端点
+# FEISHU_VERIFICATION_TOKEN=xxx  # HTTP 回调模式建议配置
+```
+
+### 最小配置（分离部署 - WS 隧道）
+
+**网关服务**：
+```bash
+FEISHU_SEND_MODE=openapi
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=xxx
+FEISHU_OWNER_ID=ou_admin
+```
+
+**Callback 服务（本地电脑）**：
+```bash
+FEISHU_SEND_MODE=openapi
+FEISHU_GATEWAY_URL=ws://gateway-server:8080  # ws:// 启用 WS 隧道
+FEISHU_OWNER_ID=ou_user_a
 ```
 
 ### 详细文档
@@ -149,6 +187,8 @@ FEISHU_OWNER_ID=ou_xxx  # 必需
 | 需要飞书内点按钮？ | | ✅ |
 | 有多台机器要部署？ | | ✅ |
 | 想在飞书里回复继续对话？ | | ✅ |
+| 本地开发（无公网 IP）？ | | ✅ (WS 隧道) |
+| 无需公网端点接收事件？ | | ✅ (longpoll) |
 
 ---
 

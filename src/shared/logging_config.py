@@ -20,7 +20,8 @@ DEFAULT_CONFIG = {
         "hook": "hook_{date}.log",
         "server": "callback_{date}.log",
         "socket_client": "socket_client_{date}.log",
-        "feishu_message": "feishu_message_{date}.log"
+        "feishu_message": "feishu_message_{date}.log",
+        "feishu_longpoll": "feishu_longpoll_{date}.log"
     },
     "formats": {
         "python": "[%(process)d] %(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",

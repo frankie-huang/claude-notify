@@ -6,6 +6,10 @@ Feishu Handler - 飞书事件处理器
     - 消息事件（im.message.receive_v1）
     - 卡片回传交互（card.action.trigger）
     - 发送消息（/gw/feishu/send）
+
+WebSocket 隧道支持：
+    - _forward_via_ws_or_http(): 优先通过 WS 隧道转发请求，失败时 fallback 到 HTTP
+    - 适用于 Callback 后端不可公网访问的场景（本地开发、内网部署）
 """
 
 import hmac
@@ -38,6 +42,78 @@ _feishu_message_logger_lock = threading.Lock()
 
 # 消息内容清理正则：移除 @_user_1 提及（带或不带尾随空格）
 _AT_USER_PATTERN = re.compile(r'@_user_1\s?')
+
+
+# =============================================================================
+# WebSocket 隧道路由分发
+# =============================================================================
+
+def _forward_via_ws_or_http(binding: Dict[str, Any], endpoint: str, payload: Dict[str, Any],
+                            timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """通过 WS 或 HTTP 转发请求到 Callback
+
+    优先使用 WS 隧道，如果不可用则 fallback 到 HTTP。
+    从 binding 字典中提取路由信息（owner_id、callback_url、auth_token）。
+
+    Args:
+        binding: 绑定信息字典（包含 _owner_id、callback_url、auth_token）
+        endpoint: API 端点（如 /cb/decision, /cb/claude/new）
+        payload: 请求数据
+        timeout: 请求超时（秒），默认使用各通道的默认超时
+
+    Returns:
+        响应数据，失败返回 None
+    """
+    from services.ws_registry import WebSocketRegistry
+
+    owner_id = binding.get('_owner_id', '')
+    callback_url = binding.get('callback_url', '')
+    auth_token = binding.get('auth_token', '')
+
+    # 尝试通过 WS 转发
+    registry = WebSocketRegistry.get_instance()
+    if owner_id and registry and registry.is_authenticated(owner_id):
+        # 获取该连接的 auth_token 用于本地 handler 验证
+        ws_auth_token = registry.get_auth_token(owner_id)
+        headers = {'X-Auth-Token': ws_auth_token} if ws_auth_token else {}
+        response = registry.send_request(owner_id, endpoint, payload, headers, timeout=timeout)
+        if response is not None:
+            # WS 隧道返回格式: {status: HTTP码, body: 业务响应}
+            # 提取 body 作为真正的业务响应
+            return response.get('body', response)
+        logger.warning("[feishu] WS tunnel failed for %s, falling back to HTTP", owner_id)
+
+    # Fallback 到 HTTP（ws:// 和 wss:// 是 WS 隧道地址，不能用于 HTTP 请求）
+    if callback_url and not callback_url.startswith(('ws://', 'wss://')):
+        api_url = f"{callback_url.rstrip('/')}{endpoint}"
+        http_timeout = int(timeout) if timeout else 10
+        logger.debug("[feishu] Using HTTP for %s: %s", owner_id, api_url)
+        try:
+            return _post_json(api_url, payload, auth_token=auth_token, timeout=http_timeout)
+        except Exception as e:
+            logger.error("[feishu] HTTP fallback failed: %s", e)
+            return None
+
+    logger.warning("[feishu] No available route for %s", owner_id)
+    return None
+
+
+def _should_reply_in_thread(binding: Dict[str, Any], project_dir: str) -> bool:
+    """判断是否应该回复到话题
+
+    当工作目录为该用户的默认聊天目录时，不回复到话题。
+
+    Args:
+        binding: 绑定信息
+        project_dir: 项目工作目录
+
+    Returns:
+        是否回复到话题
+    """
+    default_chat_dir = binding.get('default_chat_dir', '')
+    if project_dir and default_chat_dir and project_dir == default_chat_dir:
+        return False
+    return binding.get('reply_in_thread', False)
 
 
 def _sanitize_user_content(content: str, max_len: int = 20) -> str:
@@ -89,7 +165,7 @@ def _get_message_logger():
     return _feishu_message_logger
 
 
-def handle_feishu_request(data: dict) -> Tuple[bool, dict]:
+def handle_feishu_request(data: dict, skip_token_validation: bool = False) -> Tuple[bool, dict]:
     """处理飞书请求
 
     支持的请求类型：
@@ -99,6 +175,7 @@ def handle_feishu_request(data: dict) -> Tuple[bool, dict]:
 
     Args:
         data: 请求 JSON 数据
+        skip_token_validation: 跳过 token 验证（长连接模式使用）
 
     Returns:
         (handled, response): handled 表示是否处理了请求，response 是响应数据
@@ -107,8 +184,8 @@ def handle_feishu_request(data: dict) -> Tuple[bool, dict]:
     if data.get('type') == 'url_verification':
         return _handle_url_verification(data)
 
-    # 验证 Verification Token（配置了 token 时强制验证）
-    if not _verify_token(data):
+    # 验证 Verification Token（HTTP 回调模式需要，长连接模式跳过）
+    if not skip_token_validation and not _verify_token(data):
         logger.warning("[feishu] Invalid verification token")
         return False, {'success': False, 'error': 'Invalid verification token'}
 
@@ -447,16 +524,17 @@ def _handle_reply_message(data: dict, parent_id: str):
     _run_in_background(_forward_continue_request, (binding, mapping['session_id'], mapping['project_dir'], prompt, chat_id, message_id))
 
 
-def _forward_claude_request(callback_url: str, endpoint: str, auth_token: str,
+def _forward_claude_request(binding: Dict[str, Any], endpoint: str,
                             payload: Dict[str, Any], chat_id: str,
                             reply_to: Optional[str] = None,
                             reply_in_thread: bool = False) -> str:
     """转发 Claude 会话请求到 Callback 后端
 
+    优先使用 WS 隧道，fallback 到 HTTP。
+
     Args:
-        callback_url: Callback 后端 URL
+        binding: 绑定信息字典（包含 _owner_id、callback_url、auth_token）
         endpoint: API 端点（如 /cb/claude/new, /cb/claude/continue）
-        auth_token: 认证令牌
         payload: 请求数据
         chat_id: 群聊 ID（用于错误通知）
         reply_to: 要回复的消息 ID（可选）
@@ -467,22 +545,28 @@ def _forward_claude_request(callback_url: str, endpoint: str, auth_token: str,
     """
     import urllib.error
 
+    owner_id = binding.get('_owner_id', '')
+
     # 从 endpoint 提取 action（如 /cb/claude/new -> new）
     action = endpoint.rstrip('/').split('/')[-1]
     known_actions = ('new', 'continue')
     if action not in known_actions:
-        logger.warning(f"[feishu] Unknown endpoint action: {action}, expected one of {known_actions}")
+        logger.warning("[feishu] Unknown endpoint action: %s, expected one of %s", action, known_actions)
         action = 'continue'  # 默认使用 continue
     is_new = (action == 'new')
-    api_url = f"{callback_url.rstrip('/')}{endpoint}"
 
     # 预设 session_id：continue 时 payload 中已有，new 时成功后从响应覆盖
     session_id = payload.get('session_id', '')
 
-    logger.info(f"[feishu] Forwarding {action} request to {api_url}")
+    logger.info("[feishu] Forwarding %s request, owner_id=%s", action, owner_id)
 
     try:
-        response_data = _post_json(api_url, payload, auth_token=auth_token, timeout=30)
+        # 使用 WS/HTTP 路由分发（保留原 HTTP 模式的 30s 超时）
+        response_data = _forward_via_ws_or_http(binding, endpoint, payload, timeout=30)
+
+        if response_data is None:
+            raise urllib.error.URLError("No available route (WS or HTTP)")
+
         logger.info(f"[feishu] {action.capitalize()} request response: {response_data}")
 
         session_id = response_data.get('session_id', '') or session_id
@@ -503,7 +587,7 @@ def _forward_claude_request(callback_url: str, endpoint: str, auth_token: str,
                                            claude_command=payload.get('claude_command', ''),
                                            reply_to=reply_to,
                                            reply_in_thread=reply_in_thread,
-                                           callback_url=callback_url, auth_token=auth_token)
+                                           binding=binding)
 
     except urllib.error.HTTPError as e:
         error_detail = _extract_http_error_detail(e)
@@ -567,9 +651,7 @@ def _forward_continue_request(binding: dict, session_id: str, project_dir: str,
                                  session_id=session_id, project_dir=project_dir)
         return session_id
 
-    auth_token = binding.get('auth_token', '')
-    callback_url = binding.get('callback_url', '')
-    reply_in_thread = binding.get('reply_in_thread', False)
+    reply_in_thread = _should_reply_in_thread(binding, project_dir)
 
     data = {
         'session_id': session_id,
@@ -581,7 +663,7 @@ def _forward_continue_request(binding: dict, session_id: str, project_dir: str,
     if claude_command:
         data['claude_command'] = claude_command
 
-    return _forward_claude_request(callback_url, '/cb/claude/continue', auth_token,
+    return _forward_claude_request(binding, '/cb/claude/continue',
                                    data, chat_id, reply_to=message_id,
                                    reply_in_thread=reply_in_thread)
 
@@ -590,7 +672,7 @@ def _send_session_result_notification(chat_id: str, response: dict, project_dir:
                                       is_new: bool = False, claude_command: str = '',
                                       reply_to: Optional[str] = None,
                                       reply_in_thread: bool = False,
-                                      callback_url: str = '', auth_token: str = ''):
+                                      binding: Optional[Dict[str, Any]] = None):
     """根据会话结果发送飞书通知
 
     Args:
@@ -601,8 +683,7 @@ def _send_session_result_notification(chat_id: str, response: dict, project_dir:
         claude_command: 使用的 Claude 命令（可选，如 'opus', 'sonnet'）
         reply_to: 要回复的消息 ID（可选，用于链式回复）
         reply_in_thread: 是否收进话题详情
-        callback_url: Callback 后端 URL（用于跨网络设置 last_message_id）
-        auth_token: 认证令牌（用于跨网络调用）
+        binding: 绑定信息字典（包含 callback_url、auth_token、_owner_id，用于跨网络调用）
     """
     from services.feishu_api import FeishuAPIService
     from services.message_session_store import MessageSessionStore
@@ -685,8 +766,8 @@ def _send_session_result_notification(chat_id: str, response: dict, project_dir:
             msg_store.save(sent_message_id, session_id, project_dir)
             logger.info(f"[feishu] Saved notification mapping: {sent_message_id} -> {session_id}")
 
-        if callback_url and auth_token:
-            _set_last_message_id_to_callback(callback_url, auth_token, session_id, sent_message_id)
+        if binding and binding.get('callback_url') and binding.get('auth_token'):
+            _set_last_message_id_to_callback(binding, session_id, sent_message_id)
 
 
 def _send_error_notification(chat_id: str, error_msg: str, reply_to: Optional[str] = None,
@@ -799,6 +880,7 @@ def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, 
     """从飞书事件中获取绑定信息
 
     通过 sender_id 或 operator_id 查询 BindingStore 获取完整绑定信息。
+    BindingStore.get() 会自动注入 _owner_id 字段。
 
     两种场景：
     1. 用户发送消息触发：feishu_event 包含 sender.sender_id
@@ -808,9 +890,7 @@ def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, 
         feishu_event: 飞书事件数据（包含 sender 或 operator 信息）
 
     Returns:
-        绑定信息字典的浅拷贝（包含 auth_token, callback_url 等），
-        额外注入 _owner_id 字段（BindingStore 中匹配的 key）。
-        未找到返回 None。
+        绑定信息字典（包含 auth_token, callback_url, _owner_id 等），未找到返回 None。
     """
     from services.binding_store import BindingStore
 
@@ -827,9 +907,7 @@ def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, 
                 binding = binding_store.get(field_value)
                 if binding:
                     logger.info(f"[feishu] Found binding for sender_id={field_value}")
-                    result = dict(binding)
-                    result['_owner_id'] = field_value
-                    return result
+                    return binding
         logger.warning(f"[feishu] No binding found for sender={sender_id_obj}")
 
     # 场景 2: 从 operator 获取（用户点击按钮时）
@@ -841,9 +919,7 @@ def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, 
                 binding = binding_store.get(field_value)
                 if binding:
                     logger.info(f"[feishu] Found binding for operator={field_value}")
-                    result = dict(binding)
-                    result['_owner_id'] = field_value
-                    return result
+                    return binding
         logger.warning(f"[feishu] No binding found for operator={operator}")
 
     return None
@@ -1099,9 +1175,6 @@ def _handle_browse_directory(trigger_name: str, recent_dir: str, custom_dir: str
             }
         }
 
-    auth_token = binding.get('auth_token', '')
-    callback_url = binding.get('callback_url', '')
-
     # 从表单数据中获取 browse_result（用户可能从浏览结果下拉菜单中选择了子目录）
     browse_result = form_values.get('browse_result', '')
 
@@ -1140,7 +1213,7 @@ def _handle_browse_directory(trigger_name: str, recent_dir: str, custom_dir: str
         logger.info(f"[feishu] Browse default path: {browse_path}")
 
     # 调用 browse-dirs 接口
-    browse_data = _fetch_browse_dirs_from_callback(callback_url, auth_token, browse_path)
+    browse_data = _fetch_browse_dirs_from_callback(binding, browse_path)
     if not browse_data:
         logger.error(f"[feishu] Failed to browse dirs: {browse_path}")
         return True, {
@@ -1655,18 +1728,12 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
     Returns:
         飞书卡片字典
     """
-    # 获取 owner_id
-    sender = feishu_event.get('sender', {})
-    sender_id_obj = sender.get('sender_id', {})
-    owner_id = sender_id_obj.get('open_id', '') or sender_id_obj.get('user_id', '')
-
     # 获取绑定信息
     binding = _get_binding_from_event(feishu_event)
-    auth_token = binding.get('auth_token', '') if binding else ''
-    callback_url = binding.get('callback_url', '') if binding else ''
+    owner_id = binding.get('_owner_id', '') if binding else ''
 
     # 获取常用目录列表
-    recent_dirs = _fetch_recent_dirs_from_callback(callback_url, auth_token, limit=5) if auth_token else []
+    recent_dirs = _fetch_recent_dirs_from_callback(binding, limit=5) if binding and binding.get('auth_token') else []
 
     card = _build_new_session_card(
         owner_id=owner_id, chat_id=chat_id, message_id=message_id,
@@ -1783,6 +1850,7 @@ def _forward_permission_request(request_id: str, original_data: dict, action_typ
     """转发权限请求到 Callback 服务
 
     调用 callback 服务的纯决策接口，根据返回的决策结果生成 toast。
+    优先使用 WS 隧道，fallback 到 HTTP。
     callback_url 从 BindingStore 获取。
 
     注意：飞书要求在 3 秒内返回响应，timeout 设置为 2 秒预留时间。
@@ -1813,17 +1881,7 @@ def _forward_permission_request(request_id: str, original_data: dict, action_typ
             }
         }
 
-    auth_token = binding.get('auth_token', '')
-    callback_url = binding.get('callback_url', '')
-
-    if not callback_url:
-        logger.warning("[feishu] No callback_url in binding for permission request")
-        return True, {
-            'toast': {
-                'type': TOAST_ERROR,
-                'content': '回调地址未配置'
-            }
-        }
+    owner_id = binding.get('_owner_id', '')
 
     # 构建请求数据
     request_data = {
@@ -1835,17 +1893,24 @@ def _forward_permission_request(request_id: str, original_data: dict, action_typ
     if 'project_dir' in value:
         request_data['project_dir'] = value['project_dir']
 
-    # 规范化 URL
-    callback_url = callback_url.rstrip('/')
-    api_url = f"{callback_url}/cb/decision"
-
-    logger.info(f"[feishu] Forwarding to {api_url}: {request_data}")
+    logger.info("[feishu] Forwarding permission request: owner_id=%s, action=%s", owner_id, action_type)
 
     start_time = time.time()
 
     try:
+        # 使用 WS/HTTP 路由分发
         # 飞书要求 3 秒内返回，设置 2 秒超时预留处理时间
-        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=2)
+        response_data = _forward_via_ws_or_http(binding, '/cb/decision', request_data, timeout=2)
+
+        if response_data is None:
+            logger.warning("[feishu] Forward failed: no available route")
+            return True, {
+                'toast': {
+                    'type': TOAST_ERROR,
+                    'content': '回调服务不可达，请检查服务状态'
+                }
+            }
+
         elapsed = (time.time() - start_time) * 1000
 
         success = response_data.get('success', False)
@@ -1920,7 +1985,8 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
     Args:
         value: 按钮的 value 数据
             - action: approve_register/deny_register/unbind_register
-            - callback_url: Callback 后端 URL
+            - mode: "ws" 表示 WebSocket 模式，否则为 HTTP 模式
+            - callback_url: Callback 后端 URL（HTTP 模式）
             - owner_id: 飞书用户 ID
             - request_ip: 注册来源 IP（仅 approve_register 需要）
             - reply_in_thread: 是否使用回复话题模式（仅 approve_register 需要）
@@ -1930,30 +1996,59 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
         (handled, response) - response 包含 toast 和可选的 card 更新
     """
     from handlers.register import handle_authorization_decision, handle_register_unbind
+    from handlers.register import handle_ws_authorization_approved, handle_ws_authorization_denied, handle_ws_register_unbind
 
     action = value.get('action', '')
+    mode = value.get('mode', 'http')  # 默认 HTTP 模式
     callback_url = value.get('callback_url', '')
     owner_id = value.get('owner_id', '')
     request_ip = value.get('request_ip', '')
+    request_id = value.get('request_id', '')
     reply_in_thread = value.get('reply_in_thread', False)
     claude_commands = value.get('claude_commands', None)
     default_chat_dir = value.get('default_chat_dir', '')
 
+    # WebSocket 模式
+    if mode == 'ws':
+        if action == 'approve_register':
+            logger.info("[feishu] WS registration approved: owner_id=%s", owner_id)
+            return True, handle_ws_authorization_approved(
+                owner_id, request_id, request_ip,
+                reply_in_thread=reply_in_thread,
+                claude_commands=claude_commands,
+                default_chat_dir=default_chat_dir
+            )
+        elif action == 'deny_register':
+            logger.info("[feishu] WS registration denied: owner_id=%s, request_id=%s", owner_id, request_id)
+            return True, handle_ws_authorization_denied(owner_id, request_id)
+        elif action == 'unbind_register':
+            logger.info("[feishu] WS registration unbound: owner_id=%s", owner_id)
+            return True, handle_ws_register_unbind(owner_id)
+        else:
+            logger.warning("[feishu] Unknown WS register action: %s", action)
+            return True, {
+                'toast': {
+                    'type': TOAST_ERROR,
+                    'content': '未知的操作'
+                }
+            }
+
+    # HTTP 模式
     if action == 'approve_register':
-        logger.info(f"[feishu] Registration approved: owner_id={owner_id}, callback_url={callback_url}, reply_in_thread={reply_in_thread}")
+        logger.info("[feishu] Registration approved: owner_id=%s, callback_url=%s, reply_in_thread=%s", owner_id, callback_url, reply_in_thread)
         return True, handle_authorization_decision(
             callback_url, owner_id, request_ip, approved=True, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir
         )
     elif action == 'deny_register':
-        logger.info(f"[feishu] Registration denied: owner_id={owner_id}")
+        logger.info("[feishu] Registration denied: owner_id=%s", owner_id)
         return True, handle_authorization_decision(
             callback_url, owner_id, request_ip, approved=False
         )
     elif action == 'unbind_register':
-        logger.info(f"[feishu] Registration unbound: owner_id={owner_id}, callback_url={callback_url}")
+        logger.info("[feishu] Registration unbound: owner_id=%s, callback_url=%s", owner_id, callback_url)
         return True, handle_register_unbind(callback_url, owner_id)
     else:
-        logger.warning(f"[feishu] Unknown register action: {action}")
+        logger.warning("[feishu] Unknown register action: %s", action)
         return True, {
             'toast': {
                 'type': TOAST_ERROR,
@@ -2009,110 +2104,92 @@ def _parse_command_args(args: str) -> Tuple[bool, str, str, str]:
     return True, project_dir, cmd_arg, prompt
 
 
-def _fetch_recent_dirs_from_callback(callback_url: str, auth_token: str, limit: int = 5) -> list:
+def _fetch_recent_dirs_from_callback(binding: Dict[str, Any], limit: int = 5) -> list:
     """从 Callback 后端获取近期常用目录列表
 
+    优先使用 WS 隧道，fallback 到 HTTP。
+
     Args:
-        callback_url: Callback 后端 URL
-        auth_token: 认证令牌
+        binding: 绑定信息字典（包含 _owner_id、callback_url、auth_token）
         limit: 最多返回的目录数量
 
     Returns:
         目录路径列表
     """
-    import urllib.error
-
-    if not callback_url:
-        logger.warning("[feishu] No callback_url available for fetching recent dirs")
-        return []
-
-    api_url = f"{callback_url.rstrip('/')}/cb/claude/recent-dirs"
     request_data = {
         'limit': limit
     }
 
     try:
-        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=5)
+        response_data = _forward_via_ws_or_http(binding, '/cb/claude/recent-dirs', request_data)
+
+        if response_data is None:
+            return []
+
         recent_dirs = response_data.get('dirs', [])
         logger.info(f"[feishu] Fetched {len(recent_dirs)} recent dirs from callback")
         return recent_dirs
 
-    except urllib.error.HTTPError as e:
-        logger.error(f"[feishu] Fetch recent dirs HTTP error: {e.code} {e.reason}")
-        return []
-    except urllib.error.URLError as e:
-        logger.error(f"[feishu] Fetch recent dirs URL error: {e.reason}")
-        return []
     except Exception as e:
         logger.error(f"[feishu] Fetch recent dirs error: {e}")
         return []
 
 
-def _fetch_browse_dirs_from_callback(callback_url: str, auth_token: str, path: str) -> dict:
+def _fetch_browse_dirs_from_callback(binding: Dict[str, Any], path: str) -> dict:
     """从 Callback 后端获取指定路径下的子目录列表
 
+    优先使用 WS 隧道，fallback 到 HTTP。
+
     Args:
-        callback_url: Callback 后端 URL
-        auth_token: 认证令牌
+        binding: 绑定信息字典（包含 _owner_id、callback_url、auth_token）
         path: 要浏览的路径
 
     Returns:
         包含 dirs, parent, current 的字典，失败时返回空字典
     """
-    import urllib.error
-
-    if not callback_url:
-        logger.warning("[feishu] No callback_url available for browsing dirs")
-        return {}
-
-    api_url = f"{callback_url.rstrip('/')}/cb/claude/browse-dirs"
     request_data = {
         'path': path
     }
 
     try:
-        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=5)
+        response_data = _forward_via_ws_or_http(binding, '/cb/claude/browse-dirs', request_data)
+
+        if response_data is None:
+            return {}
+
         logger.info(f"[feishu] Fetched browse result: {len(response_data.get('dirs', []))} dirs from {path}")
         return response_data
 
-    except urllib.error.HTTPError as e:
-        logger.error(f"[feishu] Browse dirs HTTP error: {e.code} {e.reason}")
-        return {}
-    except urllib.error.URLError as e:
-        logger.error(f"[feishu] Browse dirs URL error: {e.reason}")
-        return {}
     except Exception as e:
         logger.error(f"[feishu] Browse dirs error: {e}")
         return {}
 
 
-def _set_last_message_id_to_callback(callback_url: str, auth_token: str,
+def _set_last_message_id_to_callback(binding: Dict[str, Any],
                                      session_id: str, message_id: str) -> bool:
     """通过 Callback 后端设置 session 的 last_message_id
 
+    优先使用 WS 隧道，fallback 到 HTTP。
+
     Args:
-        callback_url: Callback 后端 URL
-        auth_token: 认证令牌
+        binding: 绑定信息字典（包含 _owner_id、callback_url、auth_token）
         session_id: Claude 会话 ID
         message_id: 飞书消息 ID
 
     Returns:
         是否设置成功
     """
-    import urllib.error
-
-    if not callback_url:
-        logger.warning("[feishu] No callback_url available for setting last_message_id")
-        return False
-
-    api_url = f"{callback_url.rstrip('/')}/cb/session/set-last-message-id"
     request_data = {
         'session_id': session_id,
         'message_id': message_id
     }
 
     try:
-        response_data = _post_json(api_url, request_data, auth_token=auth_token, timeout=5)
+        response_data = _forward_via_ws_or_http(binding, '/cb/session/set-last-message-id', request_data)
+
+        if response_data is None:
+            return False
+
         success = response_data.get('success', False)
         if success:
             logger.info(f"[feishu] Set last_message_id via callback: session={session_id}, message_id={message_id}")
@@ -2120,12 +2197,6 @@ def _set_last_message_id_to_callback(callback_url: str, auth_token: str,
             logger.warning(f"[feishu] Failed to set last_message_id: {response_data.get('error', 'unknown')}")
         return success
 
-    except urllib.error.HTTPError as e:
-        logger.error(f"[feishu] Set last_message_id HTTP error: {e.code} {e.reason}")
-        return False
-    except urllib.error.URLError as e:
-        logger.error(f"[feishu] Set last_message_id URL error: {e.reason}")
-        return False
     except Exception as e:
         logger.error(f"[feishu] Set last_message_id error: {e}")
         return False
@@ -2157,12 +2228,10 @@ def _send_new_session_card(binding: dict, owner_id: str, chat_id: str,
         _run_in_background(_send_reject_message, (chat_id, "您尚未注册，无法使用此功能", message_id))
         return
 
-    auth_token = binding.get('auth_token', '')
-    callback_url = binding.get('callback_url', '')
-    reply_in_thread = binding.get('reply_in_thread', False)
+    reply_in_thread = _should_reply_in_thread(binding, project_dir)
 
     # 从 Callback 后端获取常用目录列表
-    recent_dirs = _fetch_recent_dirs_from_callback(callback_url, auth_token, limit=5)
+    recent_dirs = _fetch_recent_dirs_from_callback(binding, limit=5)
 
     card = _build_new_session_card(
         owner_id=owner_id, chat_id=chat_id, message_id=message_id,
@@ -2217,11 +2286,7 @@ def _handle_new_command(data: dict, args: str):
         _run_in_background(_send_reject_message, (chat_id, result, message_id))
         return
     claude_command = result
-
-    # 获取 owner_id（用于传递给下游函数）
-    sender = event.get('sender', {})
-    sender_id_obj = sender.get('sender_id', {})
-    owner_id = sender_id_obj.get('open_id', '') or sender_id_obj.get('user_id', '')
+    owner_id = binding.get('_owner_id', '') if binding else ''
 
     # 如果没有 project_dir，尝试从 parent_id 查询
     if not project_dir and parent_id:
@@ -2277,9 +2342,7 @@ def _forward_new_request(binding: dict, project_dir: str, prompt: str,
         _send_error_notification(chat_id, "您尚未注册，无法使用此功能", reply_to=message_id)
         return ''
 
-    auth_token = binding.get('auth_token', '')
-    callback_url = binding.get('callback_url', '')
-    reply_in_thread = binding.get('reply_in_thread', False)
+    reply_in_thread = _should_reply_in_thread(binding, project_dir)
 
     data = {
         'project_dir': project_dir,
@@ -2292,7 +2355,7 @@ def _forward_new_request(binding: dict, project_dir: str, prompt: str,
 
     # 新建会话时传递 reply_to，让第一条通知回复用户的 /new 消息
     # 后续通知会通过 last_message_id 链式回复
-    return _forward_claude_request(callback_url, '/cb/claude/new', auth_token,
+    return _forward_claude_request(binding, '/cb/claude/new',
                                    data, chat_id, reply_to=message_id,
                                    reply_in_thread=reply_in_thread)
 
@@ -2356,7 +2419,7 @@ def handle_send_message(binding: Dict[str, Any], data: dict) -> Tuple[bool, dict
         logger.warning("[feishu] /gw/feishu/send: service not enabled")
         return True, {'success': False, 'error': 'Feishu API service not enabled'}
 
-    reply_in_thread = binding.get('reply_in_thread', False)
+    reply_in_thread = _should_reply_in_thread(binding, project_dir)
 
     # 尝试清除 reply_to 消息上的 Typing 表情（新建/继续会话的 processing 阶段可能添加了该表情）
     # 多数场景下消息上并无此表情，remove_reaction 查询到空列表后会直接返回，无副作用
@@ -2417,11 +2480,8 @@ def handle_send_message(binding: Dict[str, Any], data: dict) -> Tuple[bool, dict
 
     # 通过 Callback 后端设置 last_message_id
     if sent_message_id and session_id and project_dir and binding:
-        callback_url = binding.get('callback_url', '')
-        auth_token_from_binding = binding.get('auth_token', '')
-        if callback_url and auth_token_from_binding:
-            _set_last_message_id_to_callback(callback_url, auth_token_from_binding,
-                                              session_id, sent_message_id)
+        if binding.get('callback_url') and binding.get('auth_token'):
+            _set_last_message_id_to_callback(binding, session_id, sent_message_id)
 
     return True, {'success': True, 'message_id': sent_message_id}
 

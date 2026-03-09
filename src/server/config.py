@@ -97,15 +97,15 @@ def get_config(key: str, default: str = '') -> str:
     return default
 
 
-def get_config_int(key: str, default: int) -> int:
-    """获取整数配置值
+def get_config_positive_int(key: str, default: int) -> int:
+    """获取正整数配置值
 
     Args:
         key: 配置项名称
         default: 默认值
 
     Returns:
-        配置值，无效时返回默认值
+        配置值，无效或非正数时返回默认值
     """
     value = get_config(key, '')
     if value and value.isdigit():
@@ -125,7 +125,7 @@ def get_request_timeout() -> int:
     Returns:
         超时秒数
     """
-    return get_config_int('PERMISSION_REQUEST_TIMEOUT', DEFAULT_PERMISSION_REQUEST_TIMEOUT)
+    return get_config_positive_int('PERMISSION_REQUEST_TIMEOUT', DEFAULT_PERMISSION_REQUEST_TIMEOUT)
 
 
 def get_close_page_timeout() -> int:
@@ -139,7 +139,7 @@ def get_close_page_timeout() -> int:
     Returns:
         超时秒数
     """
-    return get_config_int('CALLBACK_PAGE_CLOSE_DELAY', DEFAULT_CALLBACK_PAGE_CLOSE_DELAY)
+    return get_config_positive_int('CALLBACK_PAGE_CLOSE_DELAY', DEFAULT_CALLBACK_PAGE_CLOSE_DELAY)
 
 
 def get_claude_commands() -> List[str]:
@@ -246,12 +246,36 @@ if FEISHU_OWNER_ID:
             f"请在飞书开放平台获取用户的 user_id（纯数字或字母数字组合）。"
         )
 
-# 飞书网关地址（分离部署时配置，网关注册接口为 {FEISHU_GATEWAY_URL}/gw/register）
-# OpenAPI 模式下未配置时，默认使用 CALLBACK_SERVER_URL（单机模式）
-_FEISHU_GATEWAY_URL = get_config('FEISHU_GATEWAY_URL', '')
-FEISHU_GATEWAY_URL = _FEISHU_GATEWAY_URL if _FEISHU_GATEWAY_URL else (
-    CALLBACK_SERVER_URL if FEISHU_SEND_MODE == 'openapi' else ''
-)
+# 飞书网关地址（分离部署时配置）
+# 支持 http(s):// 和 ws(s):// 两种格式：
+#   - ws:// / wss:// → WS 隧道模式（callback 不需要公网可达）
+#   - http:// / https:// → HTTP 回调模式（callback 需要公网可达）
+# FEISHU_GATEWAY_URL 统一为 HTTP base URL，供 API 调用使用
+_FEISHU_GATEWAY_URL_RAW = get_config('FEISHU_GATEWAY_URL', '')
+FEISHU_GATEWAY_MODE = 'ws' if _FEISHU_GATEWAY_URL_RAW.startswith(('ws://', 'wss://')) else 'http'
+
+if _FEISHU_GATEWAY_URL_RAW:
+    # 提取 host:port，统一为 HTTP base URL（供 API 调用）
+    _host_part = _FEISHU_GATEWAY_URL_RAW.split('://', 1)[1].split('/')[0]
+    if FEISHU_GATEWAY_MODE == 'ws':
+        _scheme = 'https' if _FEISHU_GATEWAY_URL_RAW.startswith('wss://') else 'http'
+        FEISHU_GATEWAY_URL = f'{_scheme}://{_host_part}'
+    else:
+        FEISHU_GATEWAY_URL = _FEISHU_GATEWAY_URL_RAW.rstrip('/')
+elif FEISHU_SEND_MODE == 'openapi':
+    # OpenAPI 模式下未配置 FEISHU_GATEWAY_URL 时，默认使用 CALLBACK_SERVER_URL（单机模式）
+    FEISHU_GATEWAY_URL = CALLBACK_SERVER_URL
+else:
+    FEISHU_GATEWAY_URL = ''
+
+# 冲突检测：APP 凭据和网关地址不能同时配置
+if _FEISHU_GATEWAY_URL_RAW and FEISHU_APP_ID and FEISHU_APP_SECRET:
+    raise ValueError(
+        "配置冲突: FEISHU_APP_ID/FEISHU_APP_SECRET 与 FEISHU_GATEWAY_URL 不能同时配置。\n"
+        "  - 单机部署：只需配置 FEISHU_APP_ID + FEISHU_APP_SECRET\n"
+        "  - 分离部署：只需配置 FEISHU_GATEWAY_URL（凭据由网关管理）\n"
+        "请移除其中一组配置。"
+    )
 
 # 默认聊天目录（配置后普通消息自动创建/继续会话）
 # 支持 ~ 开头的路径，自动展开为用户主目录
@@ -261,3 +285,9 @@ DEFAULT_CHAT_DIR = os.path.expanduser(get_config('DEFAULT_CHAT_DIR', ''))
 # True: 回复消息仅出现在话题详情中，不会冒泡到群聊主界面
 # False (默认): 回复消息正常显示在群聊主界面
 FEISHU_REPLY_IN_THREAD = get_config('FEISHU_REPLY_IN_THREAD', 'false').lower() in ('true', '1', 'yes')
+
+# 飞书事件接收模式: auto / http / longpoll
+# - auto: 自动检测（默认）- 有 lark-oapi 则 longpoll，否则 http
+# - http: 传统 HTTP 回调模式（需要公网端点）
+# - longpoll: WebSocket 长连接模式（网关主动连接飞书）
+FEISHU_EVENT_MODE = get_config('FEISHU_EVENT_MODE', 'auto')

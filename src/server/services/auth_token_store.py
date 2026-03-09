@@ -99,6 +99,30 @@ class AuthTokenStore:
         with self._file_lock:
             return AuthTokenStore._token or ''
 
+    def delete(self, owner_id: str) -> bool:
+        """删除 auth_token
+
+        Args:
+            owner_id: 飞书用户 ID
+
+        Returns:
+            是否删除成功
+        """
+        with self._file_lock:
+            try:
+                # 清除内存中的 token
+                AuthTokenStore._token = None
+
+                # 删除文件
+                if os.path.exists(self._file_path):
+                    os.remove(self._file_path)
+                    logger.info(f"[auth-token-store] Deleted token for {owner_id}")
+
+                return True
+            except Exception as e:
+                logger.error(f"[auth-token-store] Failed to delete token: {e}")
+                return False
+
     def _load(self):
         """从文件加载 token"""
         if not os.path.exists(self._file_path):
