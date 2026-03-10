@@ -74,6 +74,9 @@ for arg; do
         update)
             ACTION="update"
             ;;
+        start|stop|restart|status)
+            ACTION="$arg"
+            ;;
         --app-id=*)
             APP_ID="${arg#*=}"
             ;;
@@ -127,6 +130,12 @@ if [ "$SHOW_HELP" = true ] || [ $# -eq 0 ]; then
     echo "更新:"
     echo "  update                      拉取最新代码并重启服务（需在源码目录执行）"
     echo ""
+    echo "服务管理:"
+    echo "  start                       启动服务"
+    echo "  stop                        停止服务"
+    echo "  restart                     重启服务"
+    echo "  status                      查看服务运行状态"
+    echo ""
     echo "通用可选参数:"
     echo "  --owner-id=ID               飞书用户 ID（分离模式必填，单机模式可稍后配置）"
     echo "  --port=PORT                 服务端口（默认 8080）"
@@ -157,6 +166,28 @@ is_valid_source_dir() {
     [ -f "${dir}/.env.example" ] && [ -f "${dir}/src/start-server.sh" ]
 }
 
+# 辅助函数：检查是否在源码目录执行，否则退出
+require_source_dir() {
+    local action="$1"
+    if ! is_valid_source_dir "$SETUP_DIR"; then
+        echo "错误: $action 需要在源码目录执行"
+        echo ""
+        echo "请先 cd 到源码目录："
+        echo "  cd <源码目录> && ./$SCRIPT_NAME $action"
+        exit 1
+    fi
+}
+
+# 辅助函数：检查是否与其他参数混用
+require_no_other_params() {
+    local action="$1"
+    if [ -n "$APP_ID" ] || [ -n "$APP_SECRET" ] || [ -n "$GATEWAY_URL" ] || [ -n "$OWNER_ID" ] || [ -n "$VERIFICATION_TOKEN" ] || [ -n "$PORT" ]; then
+        echo "错误: $action 不能与其他参数一起使用"
+        echo "用法: ./$SCRIPT_NAME $action"
+        exit 1
+    fi
+}
+
 # 辅助函数：打印带颜色的消息（在 source install.sh 之前使用）
 print_success() { echo -e "${GREEN}✓${NC} $1"; }
 print_warning() { echo -e "${YELLOW}⚠${NC} $1"; }
@@ -164,26 +195,30 @@ print_info() { echo -e "${BLUE}ℹ${NC} $1"; }
 print_error() { echo -e "${RED}✗${NC} $1"; }
 print_section() { echo "" && echo -e "${CYAN}━━━ ${BOLD}$1${NC}${CYAN} ━━━${NC}" && echo ""; }
 
+# 辅助函数：询问是/否问题
+ask_yes_no() {
+    local prompt="$1"
+    local default="${2:-N}"
+    local hint
+    case "$default" in
+        y|Y) hint="[Y/n]" ;;
+        *)   hint="[y/N]" ;;
+    esac
+    local choice
+    read -p "$prompt $hint: " choice </dev/tty
+    case "${choice:-$default}" in
+        y|Y|yes|YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # =============================================================================
 # update 子命令：校验并执行（必须在源码目录执行，提前退出避免执行后续逻辑）
 # =============================================================================
 
 if [ "$ACTION" = "update" ]; then
-    # 不允许与其他参数一起使用
-    if [ -n "$APP_ID" ] || [ -n "$APP_SECRET" ] || [ -n "$GATEWAY_URL" ] || [ -n "$OWNER_ID" ] || [ -n "$VERIFICATION_TOKEN" ] || [ -n "$PORT" ]; then
-        echo "错误: update 不能与其他参数一起使用"
-        echo "用法: cd <源码目录> && ./$SCRIPT_NAME update"
-        exit 1
-    fi
-
-    # 必须在源码目录执行
-    if ! is_valid_source_dir "$SETUP_DIR"; then
-        echo "错误: update 需要在源码目录执行"
-        echo ""
-        echo "请先 cd 到源码目录："
-        echo "  cd <源码目录> && ./$SCRIPT_NAME update"
-        exit 1
-    fi
+    require_no_other_params "update"
+    require_source_dir "update"
 
     # 直接在源码目录执行更新
     SOURCE_DIR="$SETUP_DIR"
@@ -223,6 +258,21 @@ if [ "$ACTION" = "update" ]; then
 fi
 
 # =============================================================================
+# 服务管理子命令：start/stop/restart/status（必须在源码目录执行）
+# =============================================================================
+
+case "$ACTION" in
+    start|stop|restart|status)
+        require_no_other_params "$ACTION"
+        require_source_dir "$ACTION"
+
+        # 执行服务管理命令
+        "${SETUP_DIR}/src/start-server.sh" "$ACTION"
+        exit $?
+        ;;
+esac
+
+# =============================================================================
 # 检测/下载源码目录
 # =============================================================================
 
@@ -252,8 +302,7 @@ else
         echo "未检测到源码目录，正在下载..."
 
         if command -v git &>/dev/null; then
-            GIT_CLONE_OUTPUT=$(git clone "$REPO_URL" "$TARGET_DIR" 2>&1)
-            if [ $? -ne 0 ]; then
+            if ! GIT_CLONE_OUTPUT=$(git clone "$REPO_URL" "$TARGET_DIR" 2>&1); then
                 echo "git clone 失败: $GIT_CLONE_OUTPUT"
                 exit 1
             fi
@@ -265,14 +314,11 @@ else
                 echo "请先删除后重试：rm -rf ${SETUP_DIR}/claude-notify-main"
                 exit 1
             fi
-            # 下载并解压
-            CURL_OUTPUT=$(curl -fsSL --connect-timeout 30 "$TARBALL_URL" 2>&1)
-            if [ $? -ne 0 ]; then
-                echo "下载源码失败: $CURL_OUTPUT"
-                exit 1
-            fi
-            if ! echo "$CURL_OUTPUT" | tar xz -C "$SETUP_DIR" 2>&1; then
-                echo "解压源码失败"
+            # 下载并解压（使用管道避免二进制数据存储在变量中）
+            if ! curl -fsSL --connect-timeout 30 "$TARBALL_URL" | tar xz -C "$SETUP_DIR" 2>&1; then
+                echo "下载或解压源码失败"
+                # 清理可能残留的不完整目录
+                rm -rf "${SETUP_DIR}/claude-notify-main" 2>/dev/null
                 exit 1
             fi
             # tar 解压后目录名为 claude-notify-main
@@ -300,7 +346,7 @@ fi
 if [ "$SETUP_DIR" = "$SOURCE_DIR" ]; then
     CMD_PREFIX="./$SCRIPT_NAME"
 else
-    CMD_PREFIX="cd $SOURCE_DIR && ./$SCRIPT_NAME"
+    CMD_PREFIX="cd '$SOURCE_DIR' && ./$SCRIPT_NAME"
 fi
 
 # =============================================================================
@@ -352,6 +398,14 @@ install_lark_oapi() {
         echo "  python3 -m pip install lark-oapi"
         return 1
     fi
+}
+
+# 辅助函数：提示需要 --verification-token 并退出
+require_verification_token() {
+    print_error "HTTP 回调模式需要 --verification-token 参数"
+    echo ""
+    echo "用法: $CMD_PREFIX --app-id=$APP_ID --app-secret=<App Secret> --verification-token=<Token>"
+    exit 1
 }
 
 # =============================================================================
@@ -482,10 +536,7 @@ case "$DEPLOY_MODE" in
                             exit 1
                             ;;
                         2)
-                            print_error "HTTP 回调模式需要 --verification-token 参数"
-                            echo ""
-                            echo "用法: $CMD_PREFIX --app-id=$APP_ID --app-secret=<App Secret> --verification-token=<Token>"
-                            exit 1
+                            require_verification_token
                             ;;
                         *)
                             print_error "无效选项"
@@ -517,10 +568,7 @@ case "$DEPLOY_MODE" in
                         fi
                         ;;
                     2)
-                        print_error "HTTP 回调模式需要 --verification-token 参数"
-                        echo ""
-                        echo "用法: $CMD_PREFIX --app-id=$APP_ID --app-secret=<App Secret> --verification-token=<Token>"
-                        exit 1
+                        require_verification_token
                         ;;
                     *)
                         print_error "无效选项"
@@ -536,12 +584,9 @@ case "$DEPLOY_MODE" in
                     echo "提示: 安装 lark-oapi 可使用长连接模式（无需公网 IP）"
                     echo "  python3 -m pip install lark-oapi"
                     echo ""
-                    read -p "是否现在安装？[y/N]: " install_choice </dev/tty
-                    case "$install_choice" in
-                        y|Y)
-                            install_lark_oapi || print_warning "安装失败，继续使用 HTTP 回调模式"
-                            ;;
-                    esac
+                    if ask_yes_no "是否现在安装？" "N"; then
+                        install_lark_oapi || print_warning "安装失败，继续使用 HTTP 回调模式"
+                    fi
                 else
                     print_info "当前 Python 版本 $(get_python_version)，lark-oapi 需要 Python 3.8+"
                     echo "升级 Python 后可使用长连接模式（无需公网 IP）"
@@ -550,6 +595,45 @@ case "$DEPLOY_MODE" in
         fi
         ;;
 esac
+
+# 分离模式下检测飞书凭证，询问用户是否清除
+CLEAR_CREDENTIALS=""
+CLEAR_GATEWAY=""
+if [ "$DEPLOY_MODE" = "gateway" ]; then
+    ENV_APP_ID=$(get_env_value "FEISHU_APP_ID" "$ENV_FILE")
+    ENV_APP_SECRET=$(get_env_value "FEISHU_APP_SECRET" "$ENV_FILE")
+    ENV_VERIFICATION_TOKEN=$(get_env_value "FEISHU_VERIFICATION_TOKEN" "$ENV_FILE")
+    if [ -n "$ENV_APP_ID" ] || [ -n "$ENV_APP_SECRET" ] || [ -n "$ENV_VERIFICATION_TOKEN" ]; then
+        echo ""
+        print_warning "检测到 .env 中存在飞书应用凭证配置："
+        [ -n "$ENV_APP_ID" ] && echo "  - FEISHU_APP_ID=$ENV_APP_ID"
+        [ -n "$ENV_APP_SECRET" ] && echo "  - FEISHU_APP_SECRET=******"
+        [ -n "$ENV_VERIFICATION_TOKEN" ] && echo "  - FEISHU_VERIFICATION_TOKEN=******"
+        echo ""
+        print_warning "分离模式下这些配置可能导致冲突"
+        if ask_yes_no "是否清除这些凭证？" "N"; then
+            CLEAR_CREDENTIALS="true"
+            print_info "将清除飞书应用凭证"
+        else
+            print_info "已跳过清除，如需手动清除请编辑 $ENV_FILE"
+        fi
+    fi
+elif [ "$DEPLOY_MODE" = "standalone" ]; then
+    ENV_GATEWAY_URL=$(get_env_value "FEISHU_GATEWAY_URL" "$ENV_FILE")
+    if [ -n "$ENV_GATEWAY_URL" ]; then
+        echo ""
+        print_warning "检测到 .env 中存在网关配置："
+        echo "  - FEISHU_GATEWAY_URL=$ENV_GATEWAY_URL"
+        echo ""
+        print_warning "单机模式下这些配置可能导致冲突"
+        if ask_yes_no "是否清除网关配置？" "N"; then
+            CLEAR_GATEWAY="true"
+            print_info "将清除网关配置"
+        else
+            print_info "已跳过清除，如需手动清除请编辑 $ENV_FILE"
+        fi
+    fi
+fi
 
 # 使用 Python 更新 .env 文件（避免 sed -i 跨平台问题）
 ENV_FILE="$ENV_FILE" \
@@ -560,6 +644,8 @@ GATEWAY_URL="$GATEWAY_URL" \
 OWNER_ID="$OWNER_ID" \
 VERIFICATION_TOKEN="$VERIFICATION_TOKEN" \
 PORT="$PORT" \
+CLEAR_CREDENTIALS="$CLEAR_CREDENTIALS" \
+CLEAR_GATEWAY="$CLEAR_GATEWAY" \
 python3 << 'PYTHON_SCRIPT'
 import os
 import re
@@ -572,6 +658,8 @@ gateway_url = os.environ.get('GATEWAY_URL', '')
 owner_id = os.environ.get('OWNER_ID', '')
 verification_token = os.environ.get('VERIFICATION_TOKEN', '')
 port = os.environ.get('PORT', '')
+clear_credentials = os.environ.get('CLEAR_CREDENTIALS', '')
+clear_gateway = os.environ.get('CLEAR_GATEWAY', '')
 
 with open(env_file, 'r') as f:
     content = f.read()
@@ -592,8 +680,16 @@ if deploy_mode == 'standalone':
     content = update_env_var(content, 'FEISHU_APP_SECRET', app_secret)
     if verification_token:
         content = update_env_var(content, 'FEISHU_VERIFICATION_TOKEN', verification_token)
+    # 单机模式下清除网关配置
+    if clear_gateway:
+        content = update_env_var(content, 'FEISHU_GATEWAY_URL', '')
 else:
     content = update_env_var(content, 'FEISHU_GATEWAY_URL', gateway_url)
+    # 分离模式下清除飞书应用凭证
+    if clear_credentials:
+        content = update_env_var(content, 'FEISHU_APP_ID', '')
+        content = update_env_var(content, 'FEISHU_APP_SECRET', '')
+        content = update_env_var(content, 'FEISHU_VERIFICATION_TOKEN', '')
 
 if owner_id:
     content = update_env_var(content, 'FEISHU_OWNER_ID', owner_id)
@@ -624,16 +720,15 @@ if [ "$DEPLOY_MODE" = "standalone" ]; then
     if [ -n "$VERIFICATION_TOKEN" ]; then
         print_success "FEISHU_VERIFICATION_TOKEN=******"
     fi
+    # 如果用户选择清除网关配置，显示清除结果
+    if [ "$CLEAR_GATEWAY" = "true" ]; then
+        print_success "已清除 FEISHU_GATEWAY_URL"
+    fi
 else
     print_success "FEISHU_GATEWAY_URL=$GATEWAY_URL"
-    # 检测 .env 中是否残留飞书应用凭证
-    ENV_APP_ID=$(get_env_value "FEISHU_APP_ID" "$ENV_FILE")
-    ENV_APP_SECRET=$(get_env_value "FEISHU_APP_SECRET" "$ENV_FILE")
-    if [ -n "$ENV_APP_ID" ] && [ -n "$ENV_APP_SECRET" ]; then
-        echo ""
-        print_warning ".env 中存在 FEISHU_APP_ID/FEISHU_APP_SECRET 配置"
-        print_warning "分离模式下这些配置会导致冲突，请手动清除："
-        echo -e "     编辑 ${YELLOW}$ENV_FILE${NC}，将 FEISHU_APP_ID 和 FEISHU_APP_SECRET 的值清空"
+    # 如果用户选择清除凭证，显示清除结果
+    if [ "$CLEAR_CREDENTIALS" = "true" ]; then
+        print_success "已清除 FEISHU_APP_ID & FEISHU_APP_SECRET & FEISHU_VERIFICATION_TOKEN"
     fi
     # 非 ws/wss 协议时，CALLBACK_SERVER_URL 需要公网可访问
     case "$GATEWAY_URL" in
@@ -709,7 +804,7 @@ echo ""
 if [ "$SETUP_DIR" = "$SOURCE_DIR" ]; then
     RESTART_CMD="./src/start-server.sh restart"
 else
-    RESTART_CMD="cd $SOURCE_DIR && ./src/start-server.sh restart"
+    RESTART_CMD="cd '$SOURCE_DIR' && ./src/start-server.sh restart"
 fi
 
 STEP=1

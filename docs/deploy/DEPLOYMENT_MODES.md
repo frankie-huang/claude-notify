@@ -4,10 +4,37 @@
 
 ## 目录
 
+- [快速安装](#快速安装)
 - [模式对比](#模式对比)
 - [决策流程](#决策流程)
 - [Webhook 模式](#webhook-模式)
 - [OpenAPI 模式](#openapi-模式)
+
+---
+
+## 快速安装
+
+### OpenAPI 模式一键安装
+
+```bash
+# 单机模式
+curl -fsSL https://raw.githubusercontent.com/frankie-huang/claude-notify/main/setup.sh | \
+  bash -s -- --app-id=cli_xxx --app-secret=xxx --owner-id=<用户ID>
+
+# 分离模式（连接远程网关）
+curl -fsSL https://raw.githubusercontent.com/frankie-huang/claude-notify/main/setup.sh | \
+  bash -s -- --gateway-url=ws://gateway:8080 --owner-id=<用户ID>
+```
+
+安装后使用 `./setup.sh` 管理服务：
+
+```bash
+./setup.sh start      # 启动服务
+./setup.sh stop       # 停止服务
+./setup.sh restart    # 重启服务
+./setup.sh status     # 查看状态
+./setup.sh update     # 更新代码并重启
+```
 
 ---
 

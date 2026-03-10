@@ -390,11 +390,26 @@ curl -fsSL https://raw.githubusercontent.com/frankie-huang/claude-notify/main/se
   bash -s -- --gateway-url=ws://gateway:8080 --owner-id=<用户ID>
 ```
 
-**更新**：
+**服务管理**：
 
 ```bash
-cd <源码目录> && ./setup.sh update
+./setup.sh start      # 启动服务
+./setup.sh stop       # 停止服务
+./setup.sh restart    # 重启服务
+./setup.sh status     # 查看状态
+./setup.sh update     # 更新代码并重启
 ```
+
+**参数说明**：
+
+| 参数 | 说明 |
+|------|------|
+| `--app-id` | 飞书应用 App ID（单机模式必填） |
+| `--app-secret` | 飞书应用 App Secret（单机模式必填） |
+| `--verification-token` | 飞书 Verification Token（HTTP 回调模式需要） |
+| `--gateway-url` | 飞书网关地址（分离模式必填） |
+| `--owner-id` | 飞书用户 ID（分离模式必填，单机模式可稍后配置） |
+| `--port` | 服务端口（默认 8080） |
 
 #### lark-oapi 安装逻辑
 

@@ -33,7 +33,8 @@
 
 ```
 claude-notify/
-├── install.sh                  # 安装配置脚本
+├── setup.sh                    # 一键安装脚本（推荐）
+├── install.sh                  # 安装配置脚本（手动安装）
 ├── .env.example                # 环境变量模板
 ├── src/                        # 源代码目录
 │   ├── hook-router.sh          # Hook 统一入口（配置到 Claude Code）
@@ -108,7 +109,34 @@ claude-notify/
 
 ## 快速开始
 
-### 1. 运行安装脚本
+### 方式一：一键安装（推荐）
+
+使用 `setup.sh` 脚本自动完成下载源码、依赖检测、Hook 配置和环境变量配置：
+
+```bash
+# 单机模式
+curl -fsSL https://raw.githubusercontent.com/frankie-huang/claude-notify/main/setup.sh | \
+  bash -s -- --app-id=cli_xxx --app-secret=xxx --owner-id=<用户ID>
+
+# 分离模式（连接远程网关）
+curl -fsSL https://raw.githubusercontent.com/frankie-huang/claude-notify/main/setup.sh | \
+  bash -s -- --gateway-url=ws://gateway:8080 --owner-id=<用户ID>
+```
+
+安装后使用 `./setup.sh` 管理服务：
+```bash
+./setup.sh start      # 启动
+./setup.sh stop       # 停止
+./setup.sh restart    # 重启
+./setup.sh status     # 状态
+./setup.sh update     # 更新
+```
+
+> 详细说明请参考 [OpenAPI 模式部署文档](docs/deploy/DEPLOYMENT_OPENAPI.md) 的「一键安装」章节
+
+### 方式二：手动安装
+
+#### 1. 运行安装脚本
 
 ```bash
 ./install.sh
@@ -119,7 +147,7 @@ claude-notify/
 - 配置 Claude Code hook
 - 生成环境变量配置模板
 
-### 2. 配置环境变量
+#### 2. 配置环境变量
 
 复制并编辑环境变量文件：
 
@@ -138,7 +166,7 @@ vim .env
 
 > 详细的模式对比、架构设计和配置指南请参考 [部署模式架构文档](docs/deploy/DEPLOYMENT_MODES.md)
 
-### 3. 启动回调服务
+#### 3. 启动回调服务
 
 ```bash
 ./src/start-server.sh
@@ -146,7 +174,7 @@ vim .env
 
 > **注意**：脚本会自动从 `.env` 文件读取配置，无需手动 `source .env`。
 
-### 4. 开始使用
+#### 4. 开始使用
 
 启动 Claude Code，权限请求将自动发送到飞书。
 
@@ -332,6 +360,7 @@ Callback 通过 WebSocket 长连接主动接入网关，无需公网 IP，适合
 
 | 脚本 | 用途 | Hook 类型 |
 |------|------|-----------|
+| `setup.sh` | 一键安装、服务管理、更新 | - |
 | `src/hook-router.sh` | Hook 统一入口（配置到 Claude Code） | 所有 Hook 事件 |
 | `src/hooks/permission.sh` | 权限请求处理（可交互） | PermissionRequest |
 | `src/hooks/webhook.sh` | 通用通知（任务暂停等） | Notification |

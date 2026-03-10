@@ -10,9 +10,10 @@ Feishu OpenAPI Service - 飞书开放平台 API 服务
 
 import json
 import logging
+import re
 import threading
 import time
-from typing import Optional, Tuple, Dict, List, Any
+from typing import Optional, Tuple, Dict, List, Any, Pattern
 
 from urllib.request import Request, build_opener, ProxyHandler
 from urllib.error import URLError, HTTPError
@@ -39,6 +40,99 @@ TOKEN_REFRESH_BUFFER = 300  # 5 分钟
 
 # HTTP 请求超时（秒）
 HTTP_TIMEOUT = 10
+
+# 飞书敏感信息拦截错误码
+SENSITIVE_CONTENT_CODE = 230022
+
+
+# =============================================================================
+# 敏感数据脱敏
+# =============================================================================
+
+# 预编译脱敏正则（模块加载时编译一次）
+# 注意：身份证必须在手机号之前匹配，避免18位数字串被11位规则局部命中
+_SANITIZE_PATTERNS: List[Tuple[Pattern[str], str]] = [
+    # 身份证号：18位（6位地区码 + 8位出生日期 + 3位顺序码 + 1位校验码）
+    # 保留前6位和后4位，中间8位用*替代
+    # 使用非捕获组 (?:...) 包裹日期部分，只捕获前6位和后4位
+    (re.compile(r'(?<!\d)(\d{6})(?:(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(\d{3}[\dXx])(?!\d)'),
+     r'\1********\2'),
+    # 手机号：1[3-9]开头的11位数字，保留前3后4
+    (re.compile(r'(?<!\d)(1[3-9]\d)\d{4}(\d{4})(?!\d)'),
+     r'\1****\2'),
+    # 座机号：区号-号码（010-12345678, 0755-1234567），保留区号和后4位
+    (re.compile(r'(?<!\d)(0\d{2,3})-\d{3,4}(\d{4})(?!\d)'),
+     r'\1-****\2'),
+    # 邮箱地址：@ 替换为 [at]，避免被飞书识别为敏感信息
+    (re.compile(r'([a-zA-Z0-9._%+\-]+)@([a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})'),
+     r'\1[at]\2'),
+]
+
+
+def _sanitize_text(text: str) -> str:
+    """对纯文本中的敏感信息进行脱敏处理
+
+    处理规则（按优先级顺序）:
+        - 身份证号（18位，含日期校验）: 110101********1234
+        - 手机号（11位，1[3-9]开头）: 138****5678
+        - 座机号（区号-号码）: 010-****5678
+        - 邮箱地址: user[at]example.com
+    """
+    for pattern, replacement in _SANITIZE_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# 飞书卡片 JSON 中需要脱敏的文本字段名
+_CARD_TEXT_KEYS = frozenset({'content', 'text', 'title', 'subtitle', 'value'})
+
+# 飞书卡片 JSON 中应跳过脱敏的字段名（URL、ID、技术字段）
+_CARD_SKIP_KEYS = frozenset({
+    'url', 'default_url', 'icon', 'icon_key', 'image_key', 'img_key',
+    'avatar', 'avatar_key',
+    'tag', 'callback_id', 'action', 'name', 'key', 'token',
+    'multi_url', 'pc_url', 'ios_url', 'android_url', 'fallback_url',
+    'forward_url', 'open_url', 'template_id',
+})
+
+
+def _sanitize_obj(obj: Any) -> Any:
+    """递归脱敏 JSON 对象中的文本字段
+
+    策略：白名单脱敏 + 黑名单跳过 + 其余只递归不脱敏
+    """
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            if k in _CARD_SKIP_KEYS:
+                # 技术字段，原样保留（不递归子节点）
+                result[k] = v
+            elif k in _CARD_TEXT_KEYS and isinstance(v, str):
+                # 用户可见文本字段，脱敏
+                result[k] = _sanitize_text(v)
+            else:
+                # 其余字段：递归子结构（但不脱敏字符串值本身）
+                result[k] = _sanitize_obj(v)
+        return result
+    elif isinstance(obj, list):
+        return [_sanitize_obj(item) for item in obj]
+    return obj
+
+
+def _sanitize_content(content: Any) -> Any:
+    """统一脱敏入口，自动处理 dict/str/list"""
+    if isinstance(content, dict):
+        return _sanitize_obj(content)
+    elif isinstance(content, list):
+        return [_sanitize_obj(item) for item in content]
+    elif isinstance(content, str):
+        # 字符串可能是 JSON 或纯文本
+        try:
+            data = json.loads(content)
+            return _sanitize_obj(data)
+        except (json.JSONDecodeError, ValueError):
+            return _sanitize_text(content)
+    return content
 
 
 # =============================================================================
@@ -218,6 +312,87 @@ class MessageSender:
     def __init__(self, token_manager: TokenManager):
         self._token_manager = token_manager
 
+    def _send_with_retry(
+        self,
+        url: str,
+        msg_type: str,
+        content: Any,
+        payload_extra: Optional[Dict[str, Any]] = None,
+        log_prefix: str = "Message"
+    ) -> Tuple[bool, str]:
+        """通用发送方法，支持敏感内容自动脱敏重试
+
+        Args:
+            url: 请求 URL
+            msg_type: 消息类型 (interactive / text)
+            content: 消息内容 (dict)
+            payload_extra: 额外的 payload 字段
+            log_prefix: 日志前缀 (Message / Text)
+
+        Returns:
+            (success, message_id or error)
+        """
+        token = self._token_manager.get_token()
+        if not token:
+            return False, "Failed to get access token"
+
+        headers = {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Authorization': f'Bearer {token}'
+        }
+
+        # 第一次尝试：使用原始内容
+        content_str = json.dumps(content, ensure_ascii=False)
+        payload = {'msg_type': msg_type, 'content': content_str}
+        if payload_extra:
+            payload.update(payload_extra)
+
+        success, resp = _http_request(
+            url,
+            method='POST',
+            headers=headers,
+            data=json.dumps(payload).encode('utf-8')
+        )
+
+        if not success:
+            return False, str(resp.get('error', 'Unknown error'))
+
+        code = resp.get('code', -1)
+        if code == 0:
+            message_id = resp.get('data', {}).get('message_id', '')
+            logger.info(f"[feishu-api] {log_prefix} sent: {message_id}")
+            return True, message_id
+
+        # 如果是敏感信息拦截错误，脱敏后重试
+        if code == SENSITIVE_CONTENT_CODE:
+            logger.info(f"[feishu-api] Sensitive content detected ({msg_type}), sanitizing and retrying...")
+            sanitized = _sanitize_content(content)
+            content_str = json.dumps(sanitized, ensure_ascii=False)
+            if content != sanitized:
+                logger.debug("[sanitize] before=%s", json.dumps(content, ensure_ascii=False))
+                logger.debug("[sanitize] after =%s", content_str)
+            payload['content'] = content_str
+
+            success, resp = _http_request(
+                url,
+                method='POST',
+                headers=headers,
+                data=json.dumps(payload).encode('utf-8')
+            )
+
+            if not success:
+                return False, str(resp.get('error', 'Unknown error'))
+
+            code = resp.get('code', -1)
+            if code == 0:
+                message_id = resp.get('data', {}).get('message_id', '')
+                logger.info(f"[feishu-api] {log_prefix} sent after sanitization: {message_id}")
+                return True, message_id
+
+        error_msg = resp.get('msg', 'Unknown error')
+        logger.error(f"[feishu-api] {log_prefix} send failed: code={code}, msg={error_msg}")
+        return False, f"API error: {error_msg}"
+
     def send_card(
         self,
         card_json: str,
@@ -234,55 +409,25 @@ class MessageSender:
         Returns:
             (success, message_id or error)
         """
-        # 自动检测类型
         if not receive_id_type:
             receive_id_type = detect_receive_id_type(receive_id)
 
         if not receive_id:
             return False, "No receive_id specified"
 
-        token = self._token_manager.get_token()
-        if not token:
-            return False, "Failed to get access token"
-
-        # 解析卡片 JSON
         try:
             card_data = json.loads(card_json)
         except json.JSONDecodeError as e:
             return False, f"Invalid card JSON: {e}"
 
-        # 构建请求
         url = f"{FEISHU_API_BASE}/im/v1/messages?receive_id_type={receive_id_type}"
-        headers = {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Authorization': f'Bearer {token}'
-        }
-
-        payload = {
-            'receive_id': receive_id,
-            'msg_type': 'interactive',
-            'content': json.dumps(card_data, ensure_ascii=False)
-        }
-
-        success, resp = _http_request(
-            url,
-            method='POST',
-            headers=headers,
-            data=json.dumps(payload).encode('utf-8')
+        return self._send_with_retry(
+            url=url,
+            msg_type='interactive',
+            content=card_data,
+            payload_extra={'receive_id': receive_id},
+            log_prefix='Card'
         )
-
-        if not success:
-            return False, str(resp.get('error', 'Unknown error'))
-
-        code = resp.get('code', -1)
-        if code != 0:
-            error_msg = resp.get('msg', 'Unknown error')
-            logger.error(f"[feishu-api] Send message failed: code={code}, msg={error_msg}")
-            return False, f"API error: {error_msg}"
-
-        message_id = resp.get('data', {}).get('message_id', '')
-        logger.info(f"[feishu-api] Message sent: {message_id}")
-        return True, message_id
 
     def reply_card(
         self,
@@ -305,49 +450,20 @@ class MessageSender:
         if not message_id:
             return False, "No message_id specified for reply"
 
-        token = self._token_manager.get_token()
-        if not token:
-            return False, "Failed to get access token"
-
-        # 解析卡片 JSON
         try:
             card_data = json.loads(card_json)
         except json.JSONDecodeError as e:
             return False, f"Invalid card JSON: {e}"
 
-        # 使用回复消息 API
         url = f"{FEISHU_API_BASE}/im/v1/messages/{message_id}/reply"
-        headers = {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Authorization': f'Bearer {token}'
-        }
-
-        payload = {
-            'msg_type': 'interactive',
-            'content': json.dumps(card_data, ensure_ascii=False)
-        }
-        if reply_in_thread:
-            payload['reply_in_thread'] = True
-
-        success, resp = _http_request(
-            url,
-            method='POST',
-            headers=headers,
-            data=json.dumps(payload).encode('utf-8')
+        payload_extra = {'reply_in_thread': True} if reply_in_thread else None
+        return self._send_with_retry(
+            url=url,
+            msg_type='interactive',
+            content=card_data,
+            payload_extra=payload_extra,
+            log_prefix='Card reply'
         )
-
-        if not success:
-            return False, str(resp.get('error', 'Unknown error'))
-
-        code = resp.get('code', -1)
-        if code != 0:
-            error_msg = resp.get('msg', 'Unknown error')
-            logger.error(f"[feishu-api] Reply message failed: code={code}, msg={error_msg}")
-            return False, f"API error: {error_msg}"
-
-        new_message_id = resp.get('data', {}).get('message_id', '')
-        logger.info(f"[feishu-api] Message replied: {new_message_id}, parent_id={message_id}, in_thread={reply_in_thread}")
-        return True, new_message_id
 
     def send_text(
         self,
@@ -365,48 +481,20 @@ class MessageSender:
         Returns:
             (success, message_id or error)
         """
-        # 自动检测类型
         if not receive_id_type:
             receive_id_type = detect_receive_id_type(receive_id)
 
         if not receive_id:
             return False, "No receive_id specified"
 
-        token = self._token_manager.get_token()
-        if not token:
-            return False, "Failed to get access token"
-
         url = f"{FEISHU_API_BASE}/im/v1/messages?receive_id_type={receive_id_type}"
-        headers = {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Authorization': f'Bearer {token}'
-        }
-
-        payload = {
-            'receive_id': receive_id,
-            'msg_type': 'text',
-            'content': json.dumps({'text': text})
-        }
-
-        success, resp = _http_request(
-            url,
-            method='POST',
-            headers=headers,
-            data=json.dumps(payload).encode('utf-8')
+        return self._send_with_retry(
+            url=url,
+            msg_type='text',
+            content={'text': text},
+            payload_extra={'receive_id': receive_id},
+            log_prefix='Text'
         )
-
-        if not success:
-            return False, str(resp.get('error', 'Unknown error'))
-
-        code = resp.get('code', -1)
-        if code != 0:
-            error_msg = resp.get('msg', 'Unknown error')
-            logger.error(f"[feishu-api] Send text failed: code={code}, msg={error_msg}")
-            return False, f"API error: {error_msg}"
-
-        message_id = resp.get('data', {}).get('message_id', '')
-        logger.info(f"[feishu-api] Text sent: {message_id}")
-        return True, message_id
 
     def reply_text(
         self,
@@ -429,43 +517,15 @@ class MessageSender:
         if not message_id:
             return False, "No message_id specified for reply"
 
-        token = self._token_manager.get_token()
-        if not token:
-            return False, "Failed to get access token"
-
-        # 使用回复消息 API
         url = f"{FEISHU_API_BASE}/im/v1/messages/{message_id}/reply"
-        headers = {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Authorization': f'Bearer {token}'
-        }
-
-        payload = {
-            'msg_type': 'text',
-            'content': json.dumps({'text': text})
-        }
-        if reply_in_thread:
-            payload['reply_in_thread'] = True
-
-        success, resp = _http_request(
-            url,
-            method='POST',
-            headers=headers,
-            data=json.dumps(payload).encode('utf-8')
+        payload_extra = {'reply_in_thread': True} if reply_in_thread else None
+        return self._send_with_retry(
+            url=url,
+            msg_type='text',
+            content={'text': text},
+            payload_extra=payload_extra,
+            log_prefix='Text reply'
         )
-
-        if not success:
-            return False, str(resp.get('error', 'Unknown error'))
-
-        code = resp.get('code', -1)
-        if code != 0:
-            error_msg = resp.get('msg', 'Unknown error')
-            logger.error(f"[feishu-api] Reply text failed: code={code}, msg={error_msg}")
-            return False, f"API error: {error_msg}"
-
-        new_message_id = resp.get('data', {}).get('message_id', '')
-        logger.info(f"[feishu-api] Text replied: {new_message_id}, parent_id={message_id}, in_thread={reply_in_thread}")
-        return True, new_message_id
 
     def add_reaction(
         self,
@@ -661,7 +721,7 @@ class FeishuAPIService:
         success, result = service.send_card(card_json)
     """
 
-    _instance = None  # type: Optional[FeishuAPIService]
+    _instance: Optional['FeishuAPIService'] = None
     _lock = threading.Lock()
 
     def __init__(self, app_id: str, app_secret: str):

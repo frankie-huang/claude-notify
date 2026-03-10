@@ -52,7 +52,10 @@ def _forward_via_ws_or_http(binding: Dict[str, Any], endpoint: str, payload: Dic
                             timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """通过 WS 或 HTTP 转发请求到 Callback
 
-    优先使用 WS 隧道，如果不可用则 fallback 到 HTTP。
+    根据 callback_url 协议决定转发方式：
+    - ws:// 或 wss:// → 通过 WebSocket 隧道转发
+    - http:// 或 https:// → 通过 HTTP 请求转发
+
     从 binding 字典中提取路由信息（owner_id、callback_url、auth_token）。
 
     Args:
@@ -70,31 +73,36 @@ def _forward_via_ws_or_http(binding: Dict[str, Any], endpoint: str, payload: Dic
     callback_url = binding.get('callback_url', '')
     auth_token = binding.get('auth_token', '')
 
-    # 尝试通过 WS 转发
-    registry = WebSocketRegistry.get_instance()
-    if owner_id and registry and registry.is_authenticated(owner_id):
-        # 获取该连接的 auth_token 用于本地 handler 验证
-        ws_auth_token = registry.get_auth_token(owner_id)
-        headers = {'X-Auth-Token': ws_auth_token} if ws_auth_token else {}
-        response = registry.send_request(owner_id, endpoint, payload, headers, timeout=timeout)
-        if response is not None:
-            # WS 隧道返回格式: {status: HTTP码, body: 业务响应}
-            # 提取 body 作为真正的业务响应
-            return response.get('body', response)
-        logger.warning("[feishu] WS tunnel failed for %s, falling back to HTTP", owner_id)
+    # 根据 callback_url 协议决定转发方式
+    is_ws_mode = callback_url.startswith(('ws://', 'wss://'))
 
-    # Fallback 到 HTTP（ws:// 和 wss:// 是 WS 隧道地址，不能用于 HTTP 请求）
-    if callback_url and not callback_url.startswith(('ws://', 'wss://')):
+    if is_ws_mode:
+        # 尝试通过 WS 转发
+        registry = WebSocketRegistry.get_instance()
+        if owner_id and registry and registry.is_authenticated(owner_id):
+            # 获取该连接的 auth_token 用于本地 handler 验证
+            ws_auth_token = registry.get_auth_token(owner_id)
+            headers = {'X-Auth-Token': ws_auth_token} if ws_auth_token else {}
+            response = registry.send_request(owner_id, endpoint, payload, headers, timeout=timeout)
+            if response is not None:
+                # WS 隧道返回格式: {status: HTTP码, body: 业务响应}
+                # 提取 body 作为真正的业务响应
+                return response.get('body', response)
+        logger.warning("[feishu] WS tunnel not available for %s", owner_id)
+        return None
+
+    # HTTP 模式（ws:// 或 wss:// 是 WS 隧道地址，不能用于 HTTP 请求）
+    if callback_url:
         api_url = f"{callback_url.rstrip('/')}{endpoint}"
         http_timeout = int(timeout) if timeout else 10
         logger.debug("[feishu] Using HTTP for %s: %s", owner_id, api_url)
         try:
             return _post_json(api_url, payload, auth_token=auth_token, timeout=http_timeout)
         except Exception as e:
-            logger.error("[feishu] HTTP fallback failed: %s", e)
+            logger.error("[feishu] HTTP request failed: %s", e)
             return None
 
-    logger.warning("[feishu] No available route for %s", owner_id)
+    logger.warning("[feishu] No callback_url configured for %s", owner_id)
     return None
 
 

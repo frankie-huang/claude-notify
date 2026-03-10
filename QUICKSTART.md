@@ -14,7 +14,23 @@
 
 ---
 
-## Webhook 模式
+## OpenAPI 一键安装
+
+```bash
+# 单机模式
+curl -fsSL https://raw.githubusercontent.com/frankie-huang/claude-notify/main/setup.sh | \
+  bash -s -- --app-id=cli_xxx --app-secret=xxx --owner-id=<用户ID>
+
+# 分离模式（连接远程网关）
+curl -fsSL https://raw.githubusercontent.com/frankie-huang/claude-notify/main/setup.sh | \
+  bash -s -- --gateway-url=ws://gateway:8080 --owner-id=<用户ID>
+```
+
+> 详细说明和服务管理命令请参考 [OpenAPI 模式部署文档](docs/deploy/DEPLOYMENT_OPENAPI.md) 的「一键安装」章节
+
+---
+
+## Webhook 模式（手动安装）
 
 最简单的部署方式，只需一个飞书群机器人 Webhook 地址。
 
@@ -136,7 +152,7 @@ curl -s http://localhost:8080/status                              # 确认服务
 
 ---
 
-## OpenAPI 模式（进阶）
+## OpenAPI 模式（手动安装，进阶）
 
 适合需要飞书内直接响应、回复继续会话、多实例部署的场景。
 
