@@ -3,8 +3,9 @@
 Callback 后端使用，启动时自动向飞书网关注册获取 auth_token。
 
 OpenAPI 模式下：
-  - 分离部署（配置 FEISHU_GATEWAY_URL）：向远端网关注册
-  - 单机部署（未配置 FEISHU_GATEWAY_URL）：向本地网关注册（CALLBACK_SERVER_URL）
+  - 分离部署（配置 FEISHU_GATEWAY_URL=http(s)://）：HTTP 回调模式，向远端网关注册
+  - 分离部署（配置 FEISHU_GATEWAY_URL=ws(s)://）：WS 隧道模式，无需 HTTP 注册
+  - 单机部署（未配置 FEISHU_GATEWAY_URL）：使用 WS 隧道连接本地网关
 
 需配置：CALLBACK_SERVER_URL、FEISHU_OWNER_ID
 注册接口：{FEISHU_GATEWAY_URL}/gw/register

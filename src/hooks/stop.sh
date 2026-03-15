@@ -199,11 +199,13 @@ extract_response() {
     if [ -d "$subagents_dir" ]; then
         log "Main transcript has no response, searching in subagents: $subagents_dir"
 
-        # 按修改时间倒序遍历子代理文件
-        local subagent_files
-        subagent_files=$(ls -t "$subagents_dir"/*.jsonl 2>/dev/null) || true
+        # 按修改时间倒序遍历子代理文件（兼容 macOS + Linux）
+        local subagent_files=()
+        while IFS= read -r f; do
+            [ -n "$f" ] && subagent_files+=("$f")
+        done < <(ls -t "$subagents_dir"/*.jsonl 2>/dev/null)
 
-        for subagent_file in $subagent_files; do
+        for subagent_file in "${subagent_files[@]}"; do
             if [ -f "$subagent_file" ]; then
                 log "Searching in subagent: $(basename "$subagent_file")"
                 result=$(extract_response_from_file "$subagent_file" 3)

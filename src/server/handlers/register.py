@@ -417,6 +417,73 @@ def _build_authorization_card(title: str, content: str, approve_value: dict, den
     }
 
 
+def _notify_admin_of_registration(
+    service: Any,
+    requester_id: str,
+    client_ip: str,
+    callback_url: str,
+    old_callback_url: str = ''
+):
+    """发送注册通知给网关管理员
+
+    如果未配置 FEISHU_OWNER_ID 或管理员就是请求者自己，则不发送通知。
+
+    Args:
+        service: 飞书 API 服务实例
+        requester_id: 请求注册的用户 ID
+        client_ip: 客户端 IP
+        callback_url: Callback 后端 URL
+        old_callback_url: 旧的 callback_url（有值则表示换绑场景）
+    """
+    from config import FEISHU_OWNER_ID as gateway_owner_id
+
+    # 未配置管理员或管理员就是请求者自己，不需要通知
+    if not gateway_owner_id or gateway_owner_id == requester_id:
+        return
+
+    # 构建通知内容（有 old_callback_url 则是换绑场景）
+    is_rebind = bool(old_callback_url)
+    if is_rebind:
+        action_text = "换绑"
+        detail = f"**旧设备**: `{old_callback_url}`\n**新设备**: `{callback_url}`"
+    else:
+        action_text = "注册"
+        detail = f"**Callback URL**: `{callback_url}`"
+
+    # 使用 lark_md 格式，@ 注册用户让管理员知道是谁
+    content = (
+        f"<at id=\"{requester_id}\"></at> 正在请求{action_text}\n\n"
+        f"**来源 IP**: `{client_ip}`\n"
+        f"{detail}"
+    )
+
+    # 构建简单的通知卡片
+    card = {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": f"用户{action_text}通知"},
+            "template": "blue"
+        },
+        "body": {
+            "direction": "vertical",
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": content}
+                }
+            ]
+        }
+    }
+
+    success, result = service.send_card(json.dumps(card, ensure_ascii=False), receive_id=gateway_owner_id)
+
+    if success:
+        logger.info(f"[register] Admin notification sent to {gateway_owner_id}")
+    else:
+        logger.error(f"[register] Failed to send admin notification: {result}")
+
+
 def _send_authorization_card(
     callback_url: str,
     owner_id: str,
@@ -495,6 +562,15 @@ def _send_authorization_card(
         logger.info(f"[register] Authorization card sent to {owner_id}")
     else:
         logger.error(f"[register] Failed to send authorization card: {result}")
+
+    # 通知网关管理员
+    _notify_admin_of_registration(
+        service=service,
+        requester_id=owner_id,
+        client_ip=client_ip,
+        callback_url=callback_url,
+        old_callback_url=old_callback_url
+    )
 
 
 def _build_register_status_card(
@@ -730,7 +806,8 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
                                 client_ip: str, title: str, content: str,
                                 reply_in_thread: bool = False,
                                 claude_commands: Optional[List[str]] = None,
-                                default_chat_dir: str = '') -> bool:
+                                default_chat_dir: str = '',
+                                old_ip: str = '') -> bool:
     """发送 WS 模式授权卡片（注册/换绑共用）
 
     每个终端独立发送自己的卡片，包含允许/拒绝按钮。
@@ -745,6 +822,7 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
+        old_ip: 旧终端 IP（有值则表示换绑场景）
 
     Returns:
         True 表示卡片发送成功
@@ -782,6 +860,15 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
         logger.info("[ws_register] Authorization card sent to %s: %s", owner_id, title)
     else:
         logger.error("[ws_register] Failed to send authorization card: %s", result)
+
+    # 通知网关管理员
+    _notify_admin_of_registration(
+        service=service,
+        requester_id=owner_id,
+        client_ip=client_ip,
+        callback_url=f'WS 隧道 ({client_ip})',
+        old_callback_url=f'WS 隧道 ({old_ip})' if old_ip else ''
+    )
 
     return success
 
@@ -856,7 +943,8 @@ def handle_ws_rebind_registration(owner_id: str, request_id: str,
     return _send_ws_authorization_card(owner_id, request_id, client_ip, title, content,
                                        reply_in_thread=reply_in_thread,
                                        claude_commands=claude_commands,
-                                       default_chat_dir=default_chat_dir)
+                                       default_chat_dir=default_chat_dir,
+                                       old_ip=old_ip)
 
 
 def handle_ws_authorization_approved(owner_id: str, request_id: str,

@@ -330,6 +330,16 @@ def _handle_message_event(data: dict):
     # 将清理后的纯文本写入 message['plain_text']，供下游直接使用
     message['plain_text'] = text
 
+    # 获取用户绑定信息（后续处理统一使用）
+    binding = _get_binding_from_event(event)
+
+    # 未注册用户：统一提示需要先注册
+    # 注意：此检查位于命令解析之前，若未来新增不需要注册的命令需调整顺序
+    if not binding:
+        user_id = sender.get('sender_id', {}).get('user_id', sender_id)
+        _run_in_background(_send_reject_message, (chat_id, "您尚未注册，无法使用此功能。\n您的用户 ID：`%s`" % user_id, message_id))
+        return
+
     # 检查是否是命令（优先处理，因为命令也可能是回复消息）
     is_command, command, args = _parse_command(text)
     if is_command:
@@ -338,21 +348,19 @@ def _handle_message_event(data: dict):
 
     # 检查是否是回复消息（用于继续会话）
     if parent_id:
-        _handle_reply_message(data, parent_id)
+        _handle_reply_message(data, parent_id, binding)
         return
 
     # 非回复、非命令的普通消息
     if text.strip():
-        # 从 binding 获取用户的默认聊天目录
-        binding = _get_binding_from_event(event)
-        default_chat_dir = binding.get('default_chat_dir', '') if binding else ''
+        default_chat_dir = binding.get('default_chat_dir', '')
 
         # 配置了默认聊天目录时，自动创建/继续会话
         if default_chat_dir:
             _handle_default_chat_message(data, text.strip(), binding)
             return
 
-        # 未配置默认目录：发送使用提示
+        # 已注册但未配置默认目录：发送使用提示
         supported = _get_supported_commands()
         hint = "💡 我还不能直接对话哦，请通过以下方式使用：\n\n" \
                "**发起新会话：**\n" \
@@ -488,12 +496,13 @@ def _forward_new_request_for_default_dir(binding: Dict[str, Any], project_dir: s
     return session_id
 
 
-def _handle_reply_message(data: dict, parent_id: str):
+def _handle_reply_message(data: dict, parent_id: str, binding: Dict[str, Any]):
     """处理用户回复消息，继续 Claude 会话
 
     Args:
         data: 飞书事件数据
         parent_id: 被回复的消息 ID
+        binding: 用户绑定信息
     """
     from services.message_session_store import MessageSessionStore
 
@@ -524,9 +533,6 @@ def _handle_reply_message(data: dict, parent_id: str):
         logger.info(f"[feishu] No mapping found for parent_id={parent_id}, ignoring")
         _run_in_background(_send_reject_message, (chat_id, "无法找到对应的会话（可能已过期或被清理），请重新发起 /new 指令", message_id))
         return
-
-    # 获取 binding（用于转发请求）
-    binding = _get_binding_from_event(event)
 
     # 在后台线程中转发到 Callback 后端
     _run_in_background(_forward_continue_request, (binding, mapping['session_id'], mapping['project_dir'], prompt, chat_id, message_id))
@@ -632,7 +638,7 @@ def _extract_http_error_detail(http_error):
         error_body = http_error.read().decode('utf-8')
         error_data = json.loads(error_body)
         return error_data.get('error', '')
-    except:
+    except Exception:
         return ''
 
 

@@ -252,20 +252,23 @@ if FEISHU_OWNER_ID:
 #   - http:// / https:// → HTTP 回调模式（callback 需要公网可达）
 # FEISHU_GATEWAY_URL 统一为 HTTP base URL，供 API 调用使用
 _FEISHU_GATEWAY_URL_RAW = get_config('FEISHU_GATEWAY_URL', '')
-FEISHU_GATEWAY_MODE = 'ws' if _FEISHU_GATEWAY_URL_RAW.startswith(('ws://', 'wss://')) else 'http'
 
 if _FEISHU_GATEWAY_URL_RAW:
-    # 提取 host:port，统一为 HTTP base URL（供 API 调用）
+    # 有配置 FEISHU_GATEWAY_URL
     _host_part = _FEISHU_GATEWAY_URL_RAW.split('://', 1)[1].split('/')[0]
-    if FEISHU_GATEWAY_MODE == 'ws':
+    if _FEISHU_GATEWAY_URL_RAW.startswith(('ws://', 'wss://')):
+        FEISHU_GATEWAY_MODE = 'ws'
         _scheme = 'https' if _FEISHU_GATEWAY_URL_RAW.startswith('wss://') else 'http'
         FEISHU_GATEWAY_URL = f'{_scheme}://{_host_part}'
     else:
+        FEISHU_GATEWAY_MODE = 'http'
         FEISHU_GATEWAY_URL = _FEISHU_GATEWAY_URL_RAW.rstrip('/')
 elif FEISHU_SEND_MODE == 'openapi':
-    # OpenAPI 模式下未配置 FEISHU_GATEWAY_URL 时，默认使用 CALLBACK_SERVER_URL（单机模式）
+    # 单机模式：默认使用 WS 隧道连接本地网关（架构统一，与分离部署行为一致）
+    FEISHU_GATEWAY_MODE = 'ws'
     FEISHU_GATEWAY_URL = CALLBACK_SERVER_URL
 else:
+    FEISHU_GATEWAY_MODE = ''
     FEISHU_GATEWAY_URL = ''
 
 # 冲突检测：APP 凭据和网关地址不能同时配置

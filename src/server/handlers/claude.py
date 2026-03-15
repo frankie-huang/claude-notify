@@ -240,9 +240,8 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
 
     # 等待一小段时间检查进程状态
     try:
-        returncode = proc.wait(timeout=STARTUP_CHECK_SECONDS)
-        # 进程已退出
-        stdout, stderr = proc.communicate()
+        stdout, stderr = proc.communicate(timeout=STARTUP_CHECK_SECONDS)
+        returncode = proc.returncode
         if returncode == 0:
             logger.info(f"{log_prefix} Command completed quickly")
             return Response.completed(stdout[:MAX_LOG_LENGTH * 2] if stdout else '')
@@ -286,6 +285,7 @@ def _wait_for_completion(proc: subprocess.Popen, session_id: str, chat_id: str =
     except subprocess.TimeoutExpired:
         logger.error(f"[claude] Command timed out after {TIMEOUT_SECONDS // 60} minutes, session: {session_id}")
         proc.kill()
+        proc.wait()
         # 超时也算异常，发送通知
         if chat_id:
             _send_error_notification(chat_id, f"执行超时（超过 {TIMEOUT_SECONDS // 60} 分钟）")
