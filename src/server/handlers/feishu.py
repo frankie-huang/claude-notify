@@ -337,7 +337,14 @@ def _handle_message_event(data: dict):
     # 注意：此检查位于命令解析之前，若未来新增不需要注册的命令需调整顺序
     if not binding:
         user_id = sender.get('sender_id', {}).get('user_id', sender_id)
-        _run_in_background(_send_reject_message, (chat_id, "您尚未注册，无法使用此功能。\n您的用户 ID：`%s`" % user_id, message_id))
+        gateway_ws_url = _get_gateway_ws_url()
+        hint = "您（用户 ID：`%s`）尚未注册，无法使用此功能。" % user_id
+        if gateway_ws_url:
+            hint += "\n\n请在部署了 Claude Code 的系统终端上执行以下命令完成注册：\n" \
+                    "```\ncurl -fsSL https://raw.githubusercontent.com/frankie-huang/claude-notify/refs/heads/main/setup.sh | bash -s -- --gateway-url=%s --owner-id=%s\n```" \
+                    "\n如果网关地址（`--gateway-url`）非公网可达，请联系管理员获取对外可用的网关地址。" \
+                    "\n\n注意：执行命令前，请先申请当前应用的使用权限，否则将无法接收到注册绑定卡片。如未申请，请先申请权限后再执行命令。" % (gateway_ws_url, user_id)
+        _run_in_background(_send_reject_message, (chat_id, hint, message_id))
         return
 
     # 检查是否是命令（优先处理，因为命令也可能是回复消息）
@@ -888,6 +895,24 @@ def _verify_operator_match(operator: dict, owner_id: str) -> bool:
             return True
 
     return False
+
+
+def _get_gateway_ws_url() -> str:
+    """获取网关的 WebSocket 地址，用于注册提示
+
+    从 CALLBACK_SERVER_URL（HTTP）转换为 ws(s):// 格式。
+
+    Returns:
+        ws(s):// 格式的网关地址，无法获取时返回空字符串
+    """
+    from config import CALLBACK_SERVER_URL
+    if not CALLBACK_SERVER_URL:
+        return ''
+    if CALLBACK_SERVER_URL.startswith('https://'):
+        return 'wss://' + CALLBACK_SERVER_URL[8:]
+    elif CALLBACK_SERVER_URL.startswith('http://'):
+        return 'ws://' + CALLBACK_SERVER_URL[7:]
+    return ''
 
 
 def _get_binding_from_event(feishu_event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1747,7 +1772,7 @@ def _build_browse_result_card(browse_data: dict, form_values: dict, custom_dir_v
     owner_id = binding.get('_owner_id', '') if binding else ''
 
     # 获取常用目录列表
-    recent_dirs = _fetch_recent_dirs_from_callback(binding, limit=5) if binding and binding.get('auth_token') else []
+    recent_dirs = _fetch_recent_dirs_from_callback(binding, limit=20) if binding and binding.get('auth_token') else []
 
     card = _build_new_session_card(
         owner_id=owner_id, chat_id=chat_id, message_id=message_id,
@@ -2245,7 +2270,7 @@ def _send_new_session_card(binding: dict, owner_id: str, chat_id: str,
     reply_in_thread = _should_reply_in_thread(binding, project_dir)
 
     # 从 Callback 后端获取常用目录列表
-    recent_dirs = _fetch_recent_dirs_from_callback(binding, limit=5)
+    recent_dirs = _fetch_recent_dirs_from_callback(binding, limit=20)
 
     card = _build_new_session_card(
         owner_id=owner_id, chat_id=chat_id, message_id=message_id,

@@ -240,6 +240,23 @@ def handle_set_last_message_id(data: Dict[str, Any], headers: Dict[str, str]) ->
         return 500, {'success': False, 'error': 'SessionChatStore not initialized'}
 
 
+def handle_record_dir_usage(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
+    """记录目录使用（供 feishu.sh 调用）"""
+    if not check_global_auth_token(headers, '/cb/claude/record-dir-usage'):
+        return 401, {'error': 'Unauthorized'}
+
+    project_dir = data.get('project_dir', '')
+    if not project_dir:
+        return 400, {'error': 'Missing project_dir'}
+
+    from services.dir_history_store import DirHistoryStore
+    store = DirHistoryStore.get_instance()
+    if store:
+        store.record_usage(project_dir)
+        return 200, {'success': True}
+    return 500, {'error': 'DirHistoryStore not initialized'}
+
+
 def handle_callback_decision(data: Dict[str, Any], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
     """处理纯决策请求（供飞书网关或其他服务调用）
 
@@ -389,6 +406,7 @@ BACKEND_ROUTES: Dict[str, PostRouteHandler] = {
     '/cb/decision': handle_callback_decision,
     '/cb/claude/new': handle_claude_new,
     '/cb/claude/continue': handle_claude_continue,
+    '/cb/claude/record-dir-usage': handle_record_dir_usage,
     '/cb/claude/recent-dirs': handle_recent_dirs,
     '/cb/claude/browse-dirs': handle_browse_dirs,
 }

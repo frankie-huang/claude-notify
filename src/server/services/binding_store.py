@@ -128,10 +128,12 @@ class BindingStore:
                 data = self._load()
                 existing = data.get(owner_id)
                 # 清除其他用户对同一 callback_url 的旧绑定
+                # WS 隧道模式下 callback_url 是共享占位符（ws://tunnel），不能清理
+                is_ws = callback_url.startswith(('ws://', 'wss://'))
                 stale_owners = [
                     oid for oid, info in data.items()
                     if oid != owner_id and info.get('callback_url') == callback_url
-                ]
+                ] if not is_ws else []
                 for oid in stale_owners:
                     del data[oid]
                     logger.info(
@@ -158,6 +160,12 @@ class BindingStore:
                     old_callback = existing.get('callback_url', '') if existing else ''
                     # 注意：old_dir 为空时，os.path.realpath('') 会返回 cwd，导致错误比较
                     # 更换设备（callback_url 改变）时，session_id 已失效，需要清除
+                    # WS 模式：callback_url 都是 ws://tunnel，同值即视为同设备；
+                    #   无法精确区分不同机器，但不用 registered_ip 判断，
+                    #   因为同一台机器换网络环境 IP 就会变。
+                    #   目录相同就保留 session_id，换机器但路径碰巧相同时，
+                    #   callback 端发现 session 无效应该自行重建。
+                    # 协议变化（HTTP↔WS）视为换设备，清除 session_id。
                     callback_unchanged = old_callback == callback_url
                     if (old_dir and os.path.realpath(default_chat_dir) == os.path.realpath(old_dir)
                             and existing and 'default_chat_session_id' in existing

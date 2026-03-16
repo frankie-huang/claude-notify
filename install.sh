@@ -131,7 +131,51 @@ check_dependencies() {
         print_info "可选依赖 (${optional_missing[*]}) 未安装，但不影响基本功能"
     fi
 
+    # 检查 claude 命令是否可用（通过用户登录 shell 检查，模拟实际执行环境）
+    echo ""
+    _check_claude_command
+
     return 0
+}
+
+# 检查 claude 命令在用户 shell 环境中是否可用
+# 与后端 build_shell_cmd (handlers/utils.py) 使用相同的 shell 参数
+_check_claude_command() {
+    local user_shell="${SHELL:-/bin/bash}"
+    local shell_name
+    shell_name="$(basename "$user_shell")"
+
+    # shell 参数与后端 build_shell_cmd (handlers/utils.py) 保持一致
+    # zsh 用 -ic（交互模式）才能加载 .zshrc 中的 PATH/nvm 等配置
+    # 副作用：交互模式可能输出 .zshrc 中的 echo 等内容，用 tail -1 只取最后一行来规避
+    local shell_args
+    case "$shell_name" in
+        zsh)  shell_args="-ic" ;;
+        fish) shell_args="-c" ;;
+        *)    shell_args="-lc" ;;
+    esac
+
+    # 检查 claude 是否存在（command -v 在 fish 中同样可用）
+    # tail -1: 过滤交互式 shell 可能产生的多余输出，只保留最后一行（即实际结果）
+    local claude_path
+    claude_path=$("$user_shell" $shell_args "command -v claude" 2>/dev/null | tail -1)
+
+    if [ -z "$claude_path" ]; then
+        print_warning "claude: 在 $shell_name 环境中未找到"
+        echo "         后端服务通过 '$user_shell $shell_args' 执行 claude 命令"
+        echo "         请确保 claude 已安装并在 $shell_name 的 PATH 中可用"
+        echo "         安装方法: npm install -g @anthropic-ai/claude-code"
+        return
+    fi
+
+    # 尝试获取版本
+    local claude_version
+    claude_version=$("$user_shell" $shell_args "claude --version" 2>/dev/null | tail -1)
+    if [ -n "$claude_version" ]; then
+        print_success "claude: $claude_version (via $shell_name)"
+    else
+        print_success "claude: $claude_path (via $shell_name)"
+    fi
 }
 
 # =============================================================================
@@ -175,7 +219,7 @@ perm_hooks = hooks.get('PermissionRequest', [])
 max_timeout = 0
 for entry in perm_hooks:
     for hook in entry.get('hooks', []):
-        if hook.get('command') == hook_path:
+        if hook.get('command', '').endswith(hook_path):
             t = hook.get('timeout', 0)
             if t > max_timeout:
                 max_timeout = t

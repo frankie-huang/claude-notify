@@ -10,6 +10,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 import uuid
 from typing import Tuple, Dict, Any
 
@@ -19,7 +20,7 @@ from handlers.utils import build_shell_cmd, run_in_background as _run_in_backgro
 logger = logging.getLogger(__name__)
 
 # 常量定义
-TIMEOUT_SECONDS = 600  # 后台等待超时时间（秒）
+STARTUP_TIMEOUT_SECONDS = 30  # 后台启动阶段等待时间（秒），兜住延迟失败
 STARTUP_CHECK_SECONDS = 2  # 启动检查等待时间（秒）
 MAX_LOG_LENGTH = 500  # 日志最大长度
 MAX_NOTIFICATION_LENGTH = 500  # 通知消息最大长度
@@ -127,14 +128,6 @@ def handle_continue_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]
     if result[0]:  # success
         response = result[1]
         response['session_id'] = session_id
-
-        # 记录目录使用历史（仅在会话成功启动时）
-        if Response.is_processing(result):
-            from services.dir_history_store import DirHistoryStore
-            store = DirHistoryStore.get_instance()
-            if store:
-                store.record_usage(project_dir)
-                logger.info(f"[claude-continue] Recorded dir usage: {project_dir}")
 
     return result
 
@@ -291,7 +284,10 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
 
 def _wait_for_completion(proc: subprocess.Popen, session_id: str, chat_id: str = ''):
     """
-    在后台等待进程完成
+    在后台短暂等待，捕获启动阶段的延迟失败
+
+    只等待 STARTUP_TIMEOUT_SECONDS 秒。如果进程在此期间失败，发送通知；
+    如果仍在运行，说明 claude 已正常启动，不再监控。
 
     Args:
         proc: 子进程对象
@@ -299,13 +295,13 @@ def _wait_for_completion(proc: subprocess.Popen, session_id: str, chat_id: str =
         chat_id: 群聊 ID（用于异常通知）
     """
     try:
-        stdout, stderr = proc.communicate(timeout=TIMEOUT_SECONDS)
+        stdout, stderr = proc.communicate(timeout=STARTUP_TIMEOUT_SECONDS)
         if proc.returncode == 0:
             logger.info(f"[claude] Command completed successfully, session: {session_id}")
             if stdout:
                 logger.debug(f"[claude] stdout: {stdout[:MAX_LOG_LENGTH]}...")
         else:
-            # 异常退出，记录日志
+            # 启动阶段失败，记录日志
             error_summary = stderr.strip()[:MAX_LOG_LENGTH] if stderr.strip() else '(无错误输出)'
             logger.warning(f"[claude] Command failed with exit code {proc.returncode}, session: {session_id}, error: {error_summary}")
 
@@ -313,12 +309,15 @@ def _wait_for_completion(proc: subprocess.Popen, session_id: str, chat_id: str =
             if chat_id and stderr:
                 _send_error_notification(chat_id, stderr.strip()[:MAX_LOG_LENGTH])
     except subprocess.TimeoutExpired:
-        logger.error(f"[claude] Command timed out after {TIMEOUT_SECONDS // 60} minutes, session: {session_id}")
-        proc.kill()
-        proc.wait()
-        # 超时也算异常，发送通知
-        if chat_id:
-            _send_error_notification(chat_id, f"执行超时（超过 {TIMEOUT_SECONDS // 60} 分钟）")
+        # 进程仍在运行，说明 claude 已正常启动，放手让它自己跑
+        logger.info(f"[claude] Process still running after {STARTUP_TIMEOUT_SECONDS}s, session: {session_id} — detaching")
+        # 关闭 pipe，避免 buffer 满导致子进程阻塞
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.stderr:
+            proc.stderr.close()
+        # 启动守护线程回收子进程，防止 zombie
+        threading.Thread(target=proc.wait, daemon=True).start()
     except Exception as e:
         logger.error(f"[claude] Execution error: {e}, session: {session_id}")
         if chat_id:
@@ -403,13 +402,5 @@ def handle_new_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
         # 添加 session_id 到响应
         response = result[1]
         response['session_id'] = session_id
-
-        # 记录目录使用历史（仅在会话成功启动时）
-        if Response.is_processing(result):
-            from services.dir_history_store import DirHistoryStore
-            store = DirHistoryStore.get_instance()
-            if store:
-                store.record_usage(project_dir)
-                logger.info(f"[claude-new] Recorded dir usage: {project_dir}")
 
     return result

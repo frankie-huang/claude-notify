@@ -46,6 +46,11 @@ HTTP_TIMEOUT = 10
 # 230028: 消息DLP审查未通过（明文电话号码、邮箱等）
 SENSITIVE_CONTENT_CODES = frozenset({230022, 230028})
 
+# 卡片表格超限错误码及关键词
+# 11310: 卡片内容校验失败（表格元素数量超限等）
+CARD_TABLE_OVER_LIMIT_CODE = 11310
+CARD_TABLE_OVER_LIMIT_KEYWORD = 'card table number over limit'
+
 
 # =============================================================================
 # 敏感数据脱敏
@@ -135,6 +140,107 @@ def _sanitize_content(content: Any) -> Any:
         except (json.JSONDecodeError, ValueError):
             return _sanitize_text(content)
     return content
+
+
+# =============================================================================
+# 卡片表格降级（markdown table → code block）
+# =============================================================================
+
+# 匹配 markdown 表格：至少包含表头行 + 分隔行（|---|）
+_MD_TABLE_RE = re.compile(
+    r'(?:^|\n)'                   # 表格前的换行或字符串开头
+    r'('                          # 捕获整个表格
+    r'\|[^\n]+\|\s*\n'            # 表头行：| ... |
+    r'\|[\s:|\-]+\|\s*\n'         # 分隔行：|---|---|
+    r'(?:\|[^\n]+\|\s*(?:\n|$))*' # 数据行（0 或多行）
+    r')'
+)
+
+
+def _table_to_codeblock(match: Any) -> str:
+    """将单个 markdown 表格转换为代码块
+
+    保留表格的文本内容，去掉 | 边框，用空格对齐。
+    """
+    table_text = match.group(1)
+    lines = table_text.strip().split('\n')
+
+    # 解析每行的单元格内容
+    rows: List[List[str]] = []
+    for line in lines:
+        # 去掉首尾 |，按 | 分割
+        cells = [c.strip() for c in line.strip().strip('|').split('|')]
+        rows.append(cells)
+
+    # 跳过分隔行（第二行，内容为 ---, :--: 等）
+    if len(rows) > 1:
+        separator = rows[1]
+        is_sep = all(re.match(r'^[\s:\-]+$', c) for c in separator)
+        if is_sep:
+            rows = rows[:1] + rows[2:]
+
+    if not rows:
+        return match.group(0)
+
+    # 计算每列最大宽度
+    col_count = max(len(r) for r in rows)
+    col_widths = [0] * col_count
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < col_count:
+                col_widths[i] = max(col_widths[i], len(cell))
+
+    # 格式化为对齐的纯文本
+    formatted_lines = []
+    for row in rows:
+        parts = []
+        for i in range(col_count):
+            cell = row[i] if i < len(row) else ''
+            parts.append(cell.ljust(col_widths[i]))
+        formatted_lines.append('  '.join(parts).rstrip())
+
+    prefix = '\n' if match.group(0).startswith('\n') else ''
+    return prefix + '```\n' + '\n'.join(formatted_lines) + '\n```\n'
+
+
+def _convert_tables_to_codeblocks(text: str) -> str:
+    """将 markdown 文本中的所有表格转换为代码块
+
+    跳过已经在代码块（```...```）内的表格。
+    """
+    # 先找到所有代码块的范围，避免误转换
+    code_block_ranges: List[Tuple[int, int]] = []
+    for m in re.finditer(r'```[\s\S]*?```', text):
+        code_block_ranges.append((m.start(), m.end()))
+
+    def _in_code_block(pos: int) -> bool:
+        for start, end in code_block_ranges:
+            if start <= pos < end:
+                return True
+        return False
+
+    def _safe_replace(match: Any) -> str:
+        if _in_code_block(match.start()):
+            return match.group(0)
+        return _table_to_codeblock(match)
+
+    return _MD_TABLE_RE.sub(_safe_replace, text)
+
+
+def _simplify_card_tables(obj: Any) -> Any:
+    """递归遍历卡片 JSON，将 markdown 元素中的表格转为代码块
+
+    只处理 tag=markdown 的元素的 content 字段。
+    """
+    if isinstance(obj, dict):
+        if obj.get('tag') == 'markdown' and 'content' in obj and isinstance(obj['content'], str):
+            result = dict(obj)
+            result['content'] = _convert_tables_to_codeblocks(obj['content'])
+            return result
+        return {k: _simplify_card_tables(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_simplify_card_tables(item) for item in obj]
+    return obj
 
 
 # =============================================================================
@@ -322,7 +428,7 @@ class MessageSender:
         payload_extra: Optional[Dict[str, Any]] = None,
         log_prefix: str = "Message"
     ) -> Tuple[bool, str]:
-        """通用发送方法，支持敏感内容自动脱敏重试
+        """通用发送方法，支持敏感内容自动脱敏重试 + 卡片表格超限降级
 
         Args:
             url: 请求 URL
@@ -381,12 +487,43 @@ class MessageSender:
             )
             code = resp.get('code', -1)
 
+            if not success:
+                return False, str(resp.get('error', 'Unknown error'))
+
+            if code == 0:
+                message_id = resp.get('data', {}).get('message_id', '')
+                logger.info(f"[feishu-api] {log_prefix} sent after sanitization: {message_id}")
+                return True, message_id
+
+        # 如果是卡片表格超限错误，将 markdown 中的表格转为代码块后重试
+        error_msg = resp.get('msg', 'Unknown error')
+        if msg_type == 'interactive' and \
+                code == CARD_TABLE_OVER_LIMIT_CODE and CARD_TABLE_OVER_LIMIT_KEYWORD in error_msg.lower():
+            logger.info(f"[feishu-api] Card table over limit detected (code={code}), converting tables to code blocks and retrying...")
+            # 从当前 payload 中解析 content（可能已经过脱敏处理）
+            try:
+                current_content = json.loads(payload['content'])
+            except (json.JSONDecodeError, ValueError, KeyError):
+                current_content = content
+            simplified = _simplify_card_tables(current_content)
+            if simplified != current_content:
+                payload['content'] = json.dumps(simplified, ensure_ascii=False)
+                success, resp = _http_request(
+                    url,
+                    method='POST',
+                    headers=headers,
+                    data=json.dumps(payload).encode('utf-8')
+                )
+                code = resp.get('code', -1)
+            else:
+                logger.debug("[feishu-api] No tables found to simplify, skipping retry")
+
         if not success:
             return False, str(resp.get('error', 'Unknown error'))
 
         if code == 0:
             message_id = resp.get('data', {}).get('message_id', '')
-            logger.info(f"[feishu-api] {log_prefix} sent after sanitization: {message_id}")
+            logger.info(f"[feishu-api] {log_prefix} sent after table simplification: {message_id}")
             return True, message_id
 
         # 返回失败信息

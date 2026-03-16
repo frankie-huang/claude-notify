@@ -1099,6 +1099,32 @@ _send_via_http_endpoint() {
 }
 
 # ----------------------------------------------------------------------------
+# _record_dir_usage - 记录目录使用（内部函数）
+# ----------------------------------------------------------------------------
+# 功能: 调用 Callback 后端的 /cb/claude/record-dir-usage 接口记录目录使用次数
+#       后台静默执行，失败不阻塞主流程
+#
+# 参数:
+#   $1 - project_dir  项目目录路径
+# ----------------------------------------------------------------------------
+_record_dir_usage() {
+    local project_dir="$1"
+
+    if [ -z "$project_dir" ]; then
+        return 0
+    fi
+
+    local callback_url="${CALLBACK_SERVER_URL:-http://localhost:${CALLBACK_SERVER_PORT:-8080}}"
+    callback_url=$(echo "$callback_url" | sed 's:/*$::')
+
+    _do_curl_post "${callback_url}/cb/claude/record-dir-usage" \
+        "$(json_build_object "project_dir" "$project_dir")" \
+        "cb/record-dir-usage" \
+        "$(_get_auth_token)" >/dev/null 2>&1 || true
+}
+
+
+# ----------------------------------------------------------------------------
 # send_feishu_card - 发送飞书卡片
 # ----------------------------------------------------------------------------
 # 功能: 根据 FEISHU_SEND_MODE 发送飞书卡片消息
@@ -1201,6 +1227,11 @@ send_feishu_card() {
         fi
 
         send_feishu_text "$fallback_text"
+    fi
+
+    # 发送成功且有 project_dir 时，记录目录使用（后台静默执行）
+    if [ $result -eq 0 ] && [ -n "$project_dir" ] && [ -n "$CALLBACK_SERVER_URL" ]; then
+        _record_dir_usage "$project_dir" &
     fi
 
     return $result
@@ -1313,15 +1344,10 @@ _send_feishu_card_http_endpoint() {
     local request_body
     local extra_fields=""
 
-    # JSON 转义函数
-    _json_escape() {
-        printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
-    }
-
     # 构建额外字段
     if [ -n "$session_id" ] && [ -n "$project_dir" ] && [ -n "$callback_url" ]; then
-        local escaped_project_dir=$(_json_escape "$project_dir")
-        local escaped_callback_url=$(_json_escape "$callback_url")
+        local escaped_project_dir=$(json_escape "$project_dir")
+        local escaped_callback_url=$(json_escape "$callback_url")
         extra_fields="\"session_id\":\"$session_id\",\"project_dir\":\"$escaped_project_dir\",\"callback_url\":\"$escaped_callback_url\","
     fi
 

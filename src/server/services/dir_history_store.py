@@ -18,7 +18,6 @@ from typing import Optional, List, Dict, Any
 logger = logging.getLogger(__name__)
 
 # 目录历史配置
-MAX_DIRS = 20  # 最多保留的目录数量
 DIR_EXPIRE_SECONDS = 30 * 24 * 3600  # 30天过期
 
 
@@ -111,11 +110,12 @@ class DirHistoryStore:
                 logger.error(f"[dir-history-store] Failed to record usage: {e}")
                 return False
 
-    def get_recent_dirs(self, limit: int = 5) -> List[str]:
+    def get_recent_dirs(self, limit: int = 5, min_count: int = 2) -> List[str]:
         """获取近期常用目录列表
 
         Args:
             limit: 最多返回的目录数量
+            min_count: 最小使用次数阈值，使用次数少于此值的目录不返回
 
         Returns:
             目录路径列表，按使用频率和时间排序，过滤掉不存在的目录
@@ -139,6 +139,12 @@ class DirHistoryStore:
                     removed_paths = [p for p in data if p not in valid_dirs]
                     logger.info(f"[dir-history-store] Cleaning up {removed_count} non-existent dirs: {removed_paths}")
                     self._save(valid_dirs)
+
+                # 过滤掉使用次数少于阈值的目录
+                valid_dirs = {
+                    path: info for path, info in valid_dirs.items()
+                    if info.get('count', 0) >= min_count
+                }
 
                 # 排序：优先按使用次数降序，次数相同按最近使用时间降序
                 sorted_dirs = sorted(
@@ -193,9 +199,7 @@ class DirHistoryStore:
     def _cleanup(self, dirs: Dict[str, Any]) -> Dict[str, Any]:
         """清理目录历史数据
 
-        清理规则：
-        1. 删除超过 30 天未使用的目录
-        2. 最多保留 20 条记录
+        清理规则：删除超过 30 天未使用的目录
 
         Args:
             dirs: 目录历史字典
@@ -212,15 +216,5 @@ class DirHistoryStore:
         ]
         for path in expired:
             del dirs[path]
-
-        # 限制数量：保留最近使用的 N 条
-        if len(dirs) > MAX_DIRS:
-            # 按最近使用时间排序，保留最新的
-            sorted_items = sorted(
-                dirs.items(),
-                key=lambda x: x[1]['last_used'],
-                reverse=True
-            )
-            dirs = dict(sorted_items[:MAX_DIRS])
 
         return dirs
