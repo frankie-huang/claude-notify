@@ -46,9 +46,9 @@ HTTP_TIMEOUT = 10
 # 230028: 消息DLP审查未通过（明文电话号码、邮箱等）
 SENSITIVE_CONTENT_CODES = frozenset({230022, 230028})
 
-# 卡片表格超限错误码及关键词
-# 11310: 卡片内容校验失败（表格元素数量超限等）
-CARD_TABLE_OVER_LIMIT_CODE = 11310
+# 卡片内容创建失败错误码及表格超限关键词
+# 230099: 创建卡片内容失败（表格元素数量超限等）
+CARD_CREATE_ERROR_CODE = 230099
 CARD_TABLE_OVER_LIMIT_KEYWORD = 'card table number over limit'
 
 
@@ -158,9 +158,19 @@ _MD_TABLE_RE = re.compile(
 
 
 def _table_to_codeblock(match: Any) -> str:
-    """将单个 markdown 表格转换为代码块
+    """将单个 markdown 表格原样包裹在代码块中"""
+    table_text = match.group(1).strip()
+    prefix = '\n' if match.group(0).startswith('\n') else ''
+    return prefix + '```\n' + table_text + '\n```\n'
 
-    保留表格的文本内容，去掉 | 边框，用空格对齐。
+
+def _table_to_codeblock_aligned(match: Any) -> str:
+    """将单个 markdown 表格转换为对齐的纯文本代码块（备选方案，勿删）
+
+    去掉 | 边框和分隔行，按列宽用空格对齐。
+    注意：len() 按字符数计算，中文等宽字符会导致对齐偏移。
+
+    当前未使用，可在 _convert_tables_to_codeblocks 中切换启用。
     """
     table_text = match.group(1)
     lines = table_text.strip().split('\n')
@@ -207,6 +217,14 @@ def _convert_tables_to_codeblocks(text: str) -> str:
     """将 markdown 文本中的所有表格转换为代码块
 
     跳过已经在代码块（```...```）内的表格。
+
+    有两种转换策略：
+    - _table_to_codeblock（默认）：原样保留表格文本，直接包裹代码块。
+      简单可靠，保留 | 边框便于区分表头和数据。
+    - _table_to_codeblock_aligned：去掉 | 边框和分隔行，按列宽空格对齐。
+      显示更简洁，但 len() 按字符数计算，中文列对齐会偏移。
+
+    默认使用原样包裹方式，因为更简单且无中文对齐问题。
     """
     # 先找到所有代码块的范围，避免误转换
     code_block_ranges: List[Tuple[int, int]] = []
@@ -228,15 +246,28 @@ def _convert_tables_to_codeblocks(text: str) -> str:
 
 
 def _simplify_card_tables(obj: Any) -> Any:
-    """递归遍历卡片 JSON，将 markdown 元素中的表格转为代码块
+    """递归遍历卡片 JSON，将 markdown 表格转为代码块
 
-    只处理 tag=markdown 的元素的 content 字段。
+    处理场景：
+    1. tag=markdown 元素的 content 字段
+    2. 模板卡片的 data.template_variable 中的字符串值
     """
     if isinstance(obj, dict):
+        # 处理 markdown 元素
         if obj.get('tag') == 'markdown' and 'content' in obj and isinstance(obj['content'], str):
             result = dict(obj)
             result['content'] = _convert_tables_to_codeblocks(obj['content'])
             return result
+
+        # 处理模板卡片的 template_variable
+        if 'template_variable' in obj and isinstance(obj['template_variable'], dict):
+            tv = {}
+            for k, v in obj['template_variable'].items():
+                tv[k] = _convert_tables_to_codeblocks(v) if isinstance(v, str) else _simplify_card_tables(v)
+            new_obj = {k: _simplify_card_tables(v) for k, v in obj.items() if k != 'template_variable'}
+            new_obj['template_variable'] = tv
+            return new_obj
+
         return {k: _simplify_card_tables(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [_simplify_card_tables(item) for item in obj]
@@ -498,7 +529,7 @@ class MessageSender:
         # 如果是卡片表格超限错误，将 markdown 中的表格转为代码块后重试
         error_msg = resp.get('msg', 'Unknown error')
         if msg_type == 'interactive' and \
-                code == CARD_TABLE_OVER_LIMIT_CODE and CARD_TABLE_OVER_LIMIT_KEYWORD in error_msg.lower():
+                code == CARD_CREATE_ERROR_CODE and CARD_TABLE_OVER_LIMIT_KEYWORD in error_msg.lower():
             logger.info(f"[feishu-api] Card table over limit detected (code={code}), converting tables to code blocks and retrying...")
             # 从当前 payload 中解析 content（可能已经过脱敏处理）
             try:
