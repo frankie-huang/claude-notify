@@ -348,7 +348,7 @@ send_permission_notification() {
 
     # 构建飞书卡片
     local card
-    card=$(build_permission_card "$TOOL_NAME" "$PROJECT_NAME" "$TIMESTAMP" "$COMMAND_CONTENT" "$DESCRIPTION" "$TEMPLATE_COLOR" "$buttons" "${SESSION_ID:0:8}" "$custom_footer_hint")
+    card=$(build_permission_card "$TOOL_NAME" "$PROJECT_NAME" "$TIMESTAMP" "$COMMAND_CONTENT" "$DESCRIPTION" "$TEMPLATE_COLOR" "$buttons" "$SESSION_ID" "$custom_footer_hint")
 
     # 传递 session_id、project_dir、callback_url 支持回复继续会话
     local options
@@ -376,15 +376,77 @@ run_interactive_mode() {
         exit $EXIT_FALLBACK
     fi
 
-    # AskUserQuestion 类型：发送通知卡片，不等待响应，回退到终端交互
-    # 因为 AskUserQuestion 需要用户选择选项，而不是简单的批准/拒绝
+    # AskUserQuestion 类型：发送表单卡片，等待用户选择/输入
     if [ "$TOOL_NAME" = "AskUserQuestion" ]; then
-        log "AskUserQuestion detected, sending notification-only card and falling back to terminal"
-        send_permission_notification "" "请在终端中选择您的答案"
-        log "AskUserQuestion notification sent, falling back to terminal interaction"
-        exit $EXIT_FALLBACK
+        # 提取 questions JSON
+        local questions_json
+        questions_json=$(json_get_array "$INPUT" "tool_input.questions")
+
+        if [ -z "$questions_json" ] || [ "$questions_json" = "[]" ]; then
+            log "Error: Failed to extract questions from input"
+            send_permission_notification "" "AskUserQuestion 解析失败，请回退终端"
+            exit $EXIT_FALLBACK
+        fi
+
+        # 构建 AskUserQuestion 卡片
+        local ask_card
+        if ! ask_card=$(build_ask_question_card "$questions_json" "$PROJECT_NAME" "$TIMESTAMP" "$SESSION_ID" "$REQUEST_ID" "$OWNER_ID") || [ -z "$ask_card" ]; then
+            log "Error: Failed to build AskUserQuestion card"
+            send_permission_notification "" "AskUserQuestion 卡片构建失败，请回退终端"
+            exit $EXIT_FALLBACK
+        fi
+
+        # 发送卡片
+        local ask_options
+        ask_options=$(json_build_object "webhook_url" "$WEBHOOK_URL" "session_id" "$SESSION_ID" "project_dir" "$PROJECT_DIR" "callback_url" "$CALLBACK_SERVER_URL")
+        send_feishu_card "$ask_card" "$ask_options"
+
+        # 构建请求 JSON（携带 raw_input_encoded + questions_encoded）
+        local request_json
+        local encoded_input
+        local encoded_questions
+        encoded_input=$(printf '%s' "$INPUT" | base64 | tr -d '\n')
+        encoded_questions=$(printf '%s' "$questions_json" | base64 | tr -d '\n')
+
+        request_json=$(json_build_object "request_id" "$REQUEST_ID" "project_dir" "$PROJECT_DIR" "raw_input_encoded" "$encoded_input" "questions_encoded" "$encoded_questions" "hook_pid" "$$")
+
+        # 通过 Socket 发送请求并等待响应
+        local response
+        response=$(socket_send_request "$request_json" "$SOCKET_PATH")
+
+        if [ -z "$response" ]; then
+            log "Socket communication failed, empty response (card already sent)"
+            exit $EXIT_FALLBACK
+        fi
+
+        # 解析响应
+        parse_socket_response "$response"
+
+        local has_updated_input="no"
+        [ -n "$RESPONSE_UPDATED_INPUT" ] && has_updated_input="yes"
+        log "AskUserQuestion response: success=$RESPONSE_SUCCESS, behavior=$RESPONSE_BEHAVIOR, has_updated_input=$has_updated_input"
+
+        if [ "$RESPONSE_FALLBACK" = "true" ]; then
+            log "Server timeout, falling back to terminal interaction (card already sent)"
+            exit $EXIT_FALLBACK
+        fi
+
+        if [ "$RESPONSE_SUCCESS" = "true" ]; then
+            # 检查是否有 updated_input（AskUserQuestion 回答）
+            if [ -n "$RESPONSE_UPDATED_INPUT" ]; then
+                output_decision_with_updated_input "$RESPONSE_BEHAVIOR" "$RESPONSE_UPDATED_INPUT"
+            else
+                output_decision "$RESPONSE_BEHAVIOR" "$RESPONSE_MESSAGE" "$RESPONSE_INTERRUPT"
+            fi
+            vscode_proxy_activate "$PROJECT_DIR"
+            exit $EXIT_HOOK_SUCCESS
+        else
+            log "Callback service returned error, falling back to terminal (card already sent)"
+            exit $EXIT_FALLBACK
+        fi
     fi
 
+    # 非 AskUserQuestion 的其他 permission 请求：发送带交互按钮的权限卡片
     # 构建交互按钮（根据 FEISHU_SEND_MODE 自动选择按钮类型）
     local buttons
     buttons=$(build_permission_buttons "$CALLBACK_SERVER_URL" "$REQUEST_ID" "$OWNER_ID")
@@ -396,7 +458,7 @@ run_interactive_mode() {
     # 构建请求 JSON
     local request_json
     local encoded_input
-    encoded_input=$(echo "$INPUT" | base64 | tr -d '\n')
+    encoded_input=$(printf '%s' "$INPUT" | base64 | tr -d '\n')
 
     if [ "$JSON_HAS_JQ" = "true" ]; then
         request_json=$(jq -n \
@@ -497,6 +559,32 @@ output_decision() {
 EOF
 
     log "Decision output complete"
+}
+
+# =============================================================================
+# 输出带 updatedInput 的决策给 Claude Code（用于 AskUserQuestion）
+# =============================================================================
+# 参数:
+#   $1 - behavior         决策行为（allow/deny）
+#   $2 - updated_input    updatedInput JSON 字符串
+# =============================================================================
+output_decision_with_updated_input() {
+    local behavior="$1"
+    local updated_input="$2"
+
+    log "Outputting decision with updatedInput: behavior=$behavior"
+
+    # updatedInput 必须在 decision 对象内部（Claude Code 文档要求）
+    # 使用 printf 避免 heredoc 对 updated_input 中 $ 反引号等字符的 shell 展开
+    printf '{
+  "hookSpecificOutput": {
+    "hookEventName": "PermissionRequest",
+    "decision": {
+      "behavior": "%s",
+      "updatedInput": %s
+    }
+  }
+}\n' "$behavior" "$updated_input"
 }
 
 # =============================================================================

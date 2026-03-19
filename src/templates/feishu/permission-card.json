@@ -98,6 +98,20 @@
             "text_align": "left",
             "text_color": "grey"
           }
+        },
+        {
+          "tag": "hr",
+          "margin": "0px 0px 0px 0px"
+        },
+        {
+          "tag": "div",
+          "text": {
+            "tag": "lark_md",
+            "content": "恢复会话：`claude --resume {{resume_session_id}}`",
+            "text_size": "notation",
+            "text_align": "left",
+            "text_color": "grey"
+          }
         }
       ]
     }

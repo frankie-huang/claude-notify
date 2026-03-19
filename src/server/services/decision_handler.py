@@ -2,14 +2,14 @@
 Decision Handler Service - 决策处理服务
 
 功能：
-    - 处理权限决策请求（allow/always/deny/interrupt）
+    - 处理权限决策请求（allow/always/deny/interrupt/answer）
     - 提供统一的纯决策处理逻辑，不包含渲染信息
     - 调用方根据返回的决策结果自行生成响应（HTML/Toast/JSON 等）
 """
 
 import logging
 import os
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from models.decision import Decision
 from services.request_manager import RequestManager
@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 def handle_decision(
     request_id: str,
     action: str,
-    project_dir: Optional[str] = None
-) -> Tuple[bool, str, Optional[str]]:
+    project_dir: Optional[str] = None,
+    answers: Optional[Dict[str, str]] = None,
+    questions: Optional[List[Dict[str, Any]]] = None
+) -> Tuple[bool, Optional[str], Optional[str]]:
     """处理权限决策
 
     这是核心决策接口，返回纯决策结果。
@@ -30,8 +32,10 @@ def handle_decision(
 
     Args:
         request_id: 请求 ID
-        action: 动作类型 (allow/always/deny/interrupt)
+        action: 动作类型 (allow/always/deny/interrupt/answer)
         project_dir: 项目目录（可选，用于 always 时写入规则）
+        answers: AskUserQuestion 的答案字典（仅 action=answer 时使用）
+        questions: AskUserQuestion 的原始问题数组（仅 action=answer 时使用）
 
     Returns:
         (success, decision, message): 三元组
@@ -45,7 +49,8 @@ def handle_decision(
         return False, None, '缺少请求 ID'
 
     # 验证 action
-    if action not in ('allow', 'always', 'deny', 'interrupt'):
+    valid_actions = ('allow', 'always', 'deny', 'interrupt', 'answer')
+    if action not in valid_actions:
         return False, None, f'未知的动作类型: {action}'
 
     # 获取请求数据
@@ -81,7 +86,17 @@ def handle_decision(
             return False, None, '无法传递决策：权限请求已超时或被取消，请返回终端查看当前状态'
 
     # 构建决策
-    if action in ('allow', 'always'):
+    if action == 'answer':
+        # AskUserQuestion 回答
+        if not answers or not isinstance(answers, dict) or not questions or not isinstance(questions, list):
+            return False, None, '缺少答案或问题数据'
+        updated_input = {
+            'answers': answers,
+            'questions': questions
+        }
+        decision = Decision.allow_with_updated_input(updated_input)
+        decision_type = 'allow'
+    elif action in ('allow', 'always'):
         decision = Decision.allow()
         decision_type = 'allow'
     elif action == 'deny':
@@ -122,6 +137,7 @@ def handle_decision(
         'allow': '已批准运行',
         'always': '已始终允许，后续相同操作将自动批准',
         'deny': '已拒绝运行',
-        'interrupt': '已拒绝并中断'
+        'interrupt': '已拒绝并中断',
+        'answer': '已提交回答'
     }
     return True, decision_type, action_messages.get(action, '操作成功')

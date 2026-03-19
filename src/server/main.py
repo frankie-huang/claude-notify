@@ -168,6 +168,7 @@ def handle_socket_client(conn: socket.socket, addr):
                 logger.warning(f"[socket] Failed to decode raw_input_encoded: {e}")
                 request['session_id'] = 'unknown'
         else:
+            # 兜底：无 raw_input_encoded 的请求（理论上不应到达这里）
             request['session_id'] = 'unknown'
 
         session_id = request['session_id']

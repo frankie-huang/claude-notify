@@ -270,9 +270,11 @@ def handle_callback_decision(data: Dict[str, Any], headers: Dict[str, str]) -> T
 
     Args:
         data: 请求数据
-            - action: 动作类型 (allow/always/deny/interrupt)
+            - action: 动作类型 (allow/always/deny/interrupt/answer)
             - request_id: 请求 ID
             - project_dir: 项目目录（可选，用于 always 写入规则）
+            - answers: AskUserQuestion 的答案字典（仅 action=answer 时使用）
+            - questions: AskUserQuestion 的原始问题数组（仅 action=answer 时使用）
         headers: 请求头字典
     """
     # 验证 auth_token（飞书网关调用）
@@ -286,6 +288,8 @@ def handle_callback_decision(data: Dict[str, Any], headers: Dict[str, str]) -> T
     action = data.get('action', '')
     request_id = data.get('request_id', '')
     project_dir = data.get('project_dir', '')
+    answers = data.get('answers')
+    questions = data.get('questions')
 
     logger.info("[cb/decision] action=%s, request_id=%s", action, request_id)
 
@@ -299,7 +303,10 @@ def handle_callback_decision(data: Dict[str, Any], headers: Dict[str, str]) -> T
         }
 
     # 调用纯决策接口
-    success, decision, message = handle_decision(request_id, action, project_dir)
+    success, decision, message = handle_decision(
+        request_id, action, project_dir,
+        answers=answers, questions=questions
+    )
 
     logger.info(
         "[cb/decision] result: request_id=%s, success=%s, decision=%s, message=%s",

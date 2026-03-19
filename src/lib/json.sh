@@ -9,6 +9,7 @@
 #   json_get()               - 获取 JSON 字段值
 #   json_get_multi()         - 批量获取多个 JSON 字段值
 #   json_get_object()        - 获取 JSON 对象
+#   json_get_array()         - 获取 JSON 数组
 #   json_get_array_value()   - 从数组中提取指定条件的值
 #   json_has_field()         - 检查字段是否存在
 #   json_build_object()      - 构建 JSON 对象（无 jq 时使用）
@@ -218,21 +219,19 @@ for f in sys.argv[1:]:
 }
 
 # =============================================================================
-# 获取 JSON 对象
+# 内部函数：获取 JSON 复合类型（对象或数组）
 # =============================================================================
-# 功能：从 JSON 字符串中提取指定的对象部分
-# 用法：json_get_object "json_string" "field_path"
+# 功能：从 JSON 字符串中提取指定路径的复合类型值
 # 参数：
-#   json_string  - JSON 字符串
-#   field_path   - 对象路径（如 "tool_input"）
-# 输出：JSON 对象字符串
-#
-# 示例：
-#   tool_input=$(json_get_object "$json" "tool_input")
+#   $1 - json_string   JSON 字符串
+#   $2 - field_path    路径（如 "tool_input"、"tool_input.questions"）
+#   $3 - fallback      路径不存在时的默认值（"{}" 或 "[]"）
+# 输出：JSON 对象/数组字符串
 # =============================================================================
-json_get_object() {
+_json_get_complex() {
     local json="$1"
     local field_path="$2"
+    local fallback="$3"  # "{}" 或 "[]"
 
     # 如果未初始化，先初始化
     if [ -z "$JSON_PARSER" ]; then
@@ -241,19 +240,20 @@ json_get_object() {
 
     # 空值处理
     if [ -z "$json" ] || [ -z "$field_path" ]; then
-        echo "{}"
+        echo "$fallback"
         return 1
     fi
 
     case "$JSON_PARSER" in
         jq)
             # jq 解析
-            echo "$json" | jq -c ".$field_path // {}" 2>/dev/null
+            echo "$json" | jq -c ".$field_path // $fallback" 2>/dev/null
             ;;
         python3)
             # Python3 解析（安全处理中间键不存在）
             echo "$json" | python3 -c "
 import sys, json
+fallback = json.loads(sys.argv[2])
 d = json.load(sys.stdin)
 parts = sys.argv[1].split('.')
 result = d
@@ -262,14 +262,19 @@ try:
         if isinstance(result, dict) and part in result:
             result = result[part]
         else:
-            result = {}
+            result = fallback
             break
     print(json.dumps(result))
 except Exception:
-    print('{}')
-" "$field_path" 2>/dev/null
+    print(sys.argv[2])
+" "$field_path" "$fallback" 2>/dev/null
             ;;
         native)
+            # native 仅支持单层对象提取，数组直接返回 fallback
+            if [ "$fallback" != "{}" ]; then
+                echo "$fallback"
+                return 1
+            fi
             # grep/sed 解析（简化版，仅支持单层对象）
             if [[ "$field_path" == *"."* ]]; then
                 echo "{}"
@@ -287,10 +292,44 @@ except Exception:
             fi
             ;;
         *)
-            echo "{}"
+            echo "$fallback"
             return 1
             ;;
     esac
+}
+
+# =============================================================================
+# 获取 JSON 对象
+# =============================================================================
+# 功能：从 JSON 字符串中提取指定的对象部分
+# 用法：json_get_object "json_string" "field_path"
+# 参数：
+#   json_string  - JSON 字符串
+#   field_path   - 对象路径（如 "tool_input"）
+# 输出：JSON 对象字符串，路径不存在时返回 {}
+#
+# 示例：
+#   tool_input=$(json_get_object "$json" "tool_input")
+# =============================================================================
+json_get_object() {
+    _json_get_complex "$1" "$2" "{}"
+}
+
+# =============================================================================
+# 获取 JSON 数组
+# =============================================================================
+# 功能：从 JSON 字符串中提取指定路径的数组
+# 用法：json_get_array "json_string" "field_path"
+# 参数：
+#   json_string  - JSON 字符串
+#   field_path   - 数组路径（如 "tool_input.questions"）
+# 输出：JSON 数组字符串，路径不存在时返回 []
+#
+# 示例：
+#   questions=$(json_get_array "$json" "tool_input.questions")
+# =============================================================================
+json_get_array() {
+    _json_get_complex "$1" "$2" "[]"
 }
 
 # =============================================================================

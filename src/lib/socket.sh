@@ -179,8 +179,9 @@ parse_socket_response() {
     RESPONSE_MESSAGE=""
     RESPONSE_INTERRUPT="false"
     RESPONSE_FALLBACK="false"
+    RESPONSE_UPDATED_INPUT=""
 
-    # 一次调用获取所有字段，减少进程开销
+    # 一次调用获取所有标量字段，减少进程开销
     local -a values=()
     while IFS= read -r _line; do
         values+=("$_line")
@@ -191,6 +192,12 @@ parse_socket_response() {
     local message="${values[2]:-}"
     local interrupt="${values[3]:-}"
     local fallback="${values[4]:-}"
+
+    # updated_input 仅在 AskUserQuestion 响应中存在，字符串预判跳过普通响应避免 fork
+    local updated_input
+    if [[ "$response_json" == *'"updated_input":'* ]]; then
+        updated_input=$(json_get_object "$response_json" "decision.updated_input")
+    fi
 
     if [ "$success" = "true" ] || [ "$success" = "True" ]; then
         RESPONSE_SUCCESS="true"
@@ -210,7 +217,12 @@ parse_socket_response() {
         RESPONSE_FALLBACK="true"
     fi
 
-    export RESPONSE_SUCCESS RESPONSE_BEHAVIOR RESPONSE_MESSAGE RESPONSE_INTERRUPT RESPONSE_FALLBACK
+    # updated_input 是一个 JSON 对象，空对象 {} 视为无值
+    if [ -n "$updated_input" ] && [ "$updated_input" != "{}" ]; then
+        RESPONSE_UPDATED_INPUT="$updated_input"
+    fi
+
+    export RESPONSE_SUCCESS RESPONSE_BEHAVIOR RESPONSE_MESSAGE RESPONSE_INTERRUPT RESPONSE_FALLBACK RESPONSE_UPDATED_INPUT
 }
 
 # =============================================================================

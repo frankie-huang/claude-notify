@@ -12,6 +12,7 @@ WebSocket 隧道支持：
     - 适用于 Callback 后端不可公网访问的场景（本地开发、内网部署）
 """
 
+import base64
 import hmac
 import json
 import logging
@@ -1881,11 +1882,194 @@ def _handle_card_action(data: dict) -> Tuple[bool, dict]:
             }
         }
 
+    # 提取卡片消息 ID（用于添加表情）
+    context = event.get('context', {})
+    card_message_id = context.get('open_message_id', '')
+
+    # AskUserQuestion 表单提交（action=answer）
+    if action_type == 'answer':
+        return _handle_ask_question_answer(request_id, form_value, data, card_message_id)
+
     # 调用 callback_url 的决策接口（callback_url 从 BindingStore 获取）
-    return _forward_permission_request(request_id, data, action_type)
+    return _forward_permission_request(request_id, data, action_type, card_message_id)
 
 
-def _forward_permission_request(request_id: str, original_data: dict, action_type: str) -> Tuple[bool, dict]:
+def _add_typing_reaction(card_message_id: str):
+    """后台任务：给卡片消息添加 Typing 表情，表示 Claude 正在处理
+
+    Args:
+        card_message_id: 卡片消息 ID
+    """
+    if not card_message_id:
+        return
+    from services.feishu_api import FeishuAPIService
+    service = FeishuAPIService.get_instance()
+    if service and service.enabled:
+        service.add_reaction(card_message_id, 'Typing')
+
+
+def _handle_ask_question_answer(request_id: str, form_value: dict, original_data: dict,
+                                card_message_id: str = '') -> Tuple[bool, dict]:
+    """处理 AskUserQuestion 表单提交
+
+    从 form_value 中提取用户的选择/输入，构造 answers dict，
+    然后调用 callback 服务的决策接口。
+
+    Args:
+        request_id: 请求 ID
+        form_value: 表单提交数据，包含 q_0_select, q_0_custom 等字段
+        original_data: 原始飞书事件数据
+        card_message_id: 卡片消息 ID（用于添加表情）
+
+    Returns:
+        (handled, toast_response)
+    """
+    logger.info("[feishu] Handling AskUserQuestion answer: request_id=%s", request_id)
+    logger.debug("[feishu] form_value: %s", json.dumps(form_value, ensure_ascii=False, indent=2))
+
+    # 获取绑定信息
+    event = original_data.get('event', {})
+    binding = _get_binding_from_event(event)
+    if not binding:
+        logger.warning("[feishu] No binding found for AskUserQuestion request")
+        return True, {
+            'toast': {
+                'type': TOAST_ERROR,
+                'content': '身份验证失败，请重新注册网关'
+            }
+        }
+
+    # 从 RequestManager 获取原始请求数据（包含 questions）
+    from services.request_manager import RequestManager
+    request_manager = RequestManager.get_instance()
+    req_data = request_manager.get_request_data(request_id)
+
+    if not req_data:
+        logger.warning("[feishu] Request not found: %s", request_id)
+        return True, {
+            'toast': {
+                'type': TOAST_ERROR,
+                'content': '请求不存在或已过期'
+            }
+        }
+
+    # 解码 questions（base64 编码）
+    questions_encoded = req_data.get('questions_encoded', '')
+    questions = []
+    if questions_encoded:
+        try:
+            questions_json = base64.b64decode(questions_encoded.encode()).decode('utf-8')
+            questions = json.loads(questions_json)
+        except Exception as e:
+            logger.error("[feishu] Failed to decode questions: %s", e)
+            return True, {
+                'toast': {
+                    'type': TOAST_ERROR,
+                    'content': '问题数据解析失败'
+                }
+            }
+
+    if not questions:
+        logger.warning("[feishu] No questions found for request: %s", request_id)
+        return True, {
+            'toast': {
+                'type': TOAST_ERROR,
+                'content': '问题数据不存在'
+            }
+        }
+
+    # 从 form_value 中提取答案
+    answers = {}
+    overridden_questions = []  # 记录自定义内容覆盖了选项的单选题
+    for i, q in enumerate(questions):
+        question_text = q.get('question', '')
+        select_name = f'q_{i}_select'
+        custom_name = f'q_{i}_custom'
+
+        select_value = form_value.get(select_name, '')
+        custom_value = form_value.get(custom_name, '')
+
+        # 处理多选情况（select_value 可能是列表）
+        if isinstance(select_value, list):
+            # 多选：选中的选项 + 自定义输入全部作为答案
+            selected_labels = list(select_value)
+            if custom_value:
+                selected_labels.append(custom_value)
+            answer = ', '.join(selected_labels) if selected_labels else ''
+        else:
+            # 单选：自定义输入优先（因为下拉选中后无法清空）
+            if custom_value and select_value:
+                overridden_questions.append((i + 1, select_value))
+            answer = custom_value if custom_value else (select_value or '')
+
+        answers[question_text] = answer
+        logger.debug("[feishu] Question %d: '%s' -> '%s'", i, question_text, answer)
+
+    logger.info("[feishu] AskUserQuestion answers: %s", json.dumps(answers, ensure_ascii=False))
+
+    # 构建请求数据
+    request_data = {
+        'action': 'answer',
+        'request_id': request_id,
+        'answers': answers,
+        'questions': questions
+    }
+
+    start_time = time.time()
+
+    try:
+        # 使用 WS/HTTP 路由分发
+        response_data = _forward_via_ws_or_http(binding, '/cb/decision', request_data, timeout=2)
+
+        if response_data is None:
+            logger.warning("[feishu] AskUserQuestion forward failed: no available route")
+            return True, {
+                'toast': {
+                    'type': TOAST_ERROR,
+                    'content': '回调服务不可达，请检查服务状态'
+                }
+            }
+
+        elapsed = (time.time() - start_time) * 1000
+
+        success = response_data.get('success', False)
+        decision = response_data.get('decision')
+        message = response_data.get('message', '')
+
+        if success and decision:
+            toast_type = TOAST_SUCCESS
+            toast_content = message or '已提交回答'
+            # 如果有单选题被自定义内容覆盖，在提示中告知用户
+            if overridden_questions:
+                nums = '、'.join(f'第{qnum}题' for qnum, _ in overridden_questions)
+                toast_content += f'（{nums}的自定义内容已覆盖选项）'
+            logger.info("[feishu] AskUserQuestion succeeded: decision=%s, elapsed=%.0fms", decision, elapsed)
+            # 决策成功后，给卡片消息添加 Typing 表情，表示 Claude 正在处理
+            _run_in_background(_add_typing_reaction, (card_message_id,))
+        else:
+            toast_type = TOAST_ERROR
+            toast_content = message or '提交失败'
+            logger.warning("[feishu] AskUserQuestion failed: message=%s, elapsed=%.0fms", toast_content, elapsed)
+
+        return True, {
+            'toast': {
+                'type': toast_type,
+                'content': toast_content
+            }
+        }
+
+    except Exception as e:
+        logger.error("[feishu] AskUserQuestion error: %s", e)
+        return True, {
+            'toast': {
+                'type': TOAST_ERROR,
+                'content': f'提交失败: {str(e)}'
+            }
+        }
+
+
+def _forward_permission_request(request_id: str, original_data: dict, action_type: str,
+                                card_message_id: str = '') -> Tuple[bool, dict]:
     """转发权限请求到 Callback 服务
 
     调用 callback 服务的纯决策接口，根据返回的决策结果生成 toast。
@@ -1898,6 +2082,7 @@ def _forward_permission_request(request_id: str, original_data: dict, action_typ
         request_id: 请求 ID
         original_data: 原始飞书事件数据（用于提取绑定信息和 project_dir）
         action_type: 动作类型 (allow/always/deny/interrupt)
+        card_message_id: 卡片消息 ID（用于添加表情）
 
     Returns:
         (handled, toast_response)
@@ -1964,6 +2149,8 @@ def _forward_permission_request(request_id: str, original_data: dict, action_typ
                 toast_type = TOAST_WARNING
             toast_content = message or ('已批准运行' if decision == 'allow' else '已拒绝运行')
             logger.info(f"[feishu] Decision succeeded: decision={decision}, message={message}, elapsed={elapsed:.0f}ms")
+            # 决策成功后，给卡片消息添加 Typing 表情，表示 Claude 正在处理
+            _run_in_background(_add_typing_reaction, (card_message_id,))
         else:
             toast_type = TOAST_ERROR
             toast_content = message or '处理失败'

@@ -137,7 +137,8 @@ render_template() {
            [[ "$key" != "description_element" ]] && \
            [[ "$key" != "detail_elements" ]] && \
            [[ "$key" != "thinking_element" ]] && \
-           [[ "$key" != "response_elements" ]]; then
+           [[ "$key" != "response_elements" ]] && \
+           [[ "$key" != "ask_question_form_elements" ]]; then
             # 转义特殊字符为 JSON 格式
             # 注意: JSON 解析器（jq/python3）会将转义序列解释为实际字符（如 \t → TAB, \n → LF）
             # 因此需要将这些实际字符重新转义回 JSON 格式
@@ -338,6 +339,9 @@ render_card_template() {
         "buttons-openapi")
             template_file="${template_dir}/buttons-openapi.json"
             ;;
+        "ask-question-card")
+            template_file="${template_dir}/ask-question-card.json"
+            ;;
         *)
             log_error "Unknown card type: $card_type"
             return 1
@@ -537,21 +541,23 @@ build_permission_card() {
             "tool_name=$tool_name" \
             "project_name=$project_name" \
             "timestamp=$timestamp" \
-            "session_id=$session_id" \
+            "session_id=${session_id:0:8}" \
             "detail_elements=$detail_elements" \
             "buttons_json=$buttons_json" \
             "at_user=$at_user" \
-            "footer_hint=$final_footer_hint")
+            "footer_hint=$final_footer_hint" \
+            "resume_session_id=$session_id")
     else
         card=$(render_card_template "$card_type" \
             "template_color=$template_color" \
             "tool_name=$tool_name" \
             "project_name=$project_name" \
             "timestamp=$timestamp" \
-            "session_id=$session_id" \
+            "session_id=${session_id:0:8}" \
             "detail_elements=$detail_elements" \
             "at_user=$at_user" \
-            "footer_hint=$final_footer_hint")
+            "footer_hint=$final_footer_hint" \
+            "resume_session_id=$session_id")
     fi
 
     if [ $? -ne 0 ]; then
@@ -1437,3 +1443,140 @@ send_feishu_text() {
         _send_via_webhook "$message_text" "$webhook_url" "webhook-text"
     fi
 }
+
+# =============================================================================
+# AskUserQuestion 卡片构建
+# =============================================================================
+
+# ----------------------------------------------------------------------------
+# build_ask_question_card - 构建 AskUserQuestion 表单卡片
+# ----------------------------------------------------------------------------
+# 功能: 根据 questions 数组动态构建飞书表单卡片
+#
+# 参数:
+#   $1 - questions_json   questions 数组 JSON 字符串
+#   $2 - project_name     项目名称
+#   $3 - timestamp        时间戳
+#   $4 - session_id       会话 ID
+#   $5 - request_id       请求 ID
+#   $6 - owner_id         飞书用户 ID
+#
+# 输出:
+#   卡片 JSON 字符串
+#
+# 示例:
+#   card=$(build_ask_question_card "$questions_json" "myproject" "2024-01-01" "abc123" "req-123" "ou_xxx")
+# ----------------------------------------------------------------------------
+build_ask_question_card() {
+    local questions_json="$1"
+    local project_name="$2"
+    local timestamp="$3"
+    local session_id="$4"
+    local request_id="$5"
+    local owner_id="$6"
+
+    # 使用 Python 动态构建表单元素（通过环境变量传递 JSON，避免 stdin 和 heredoc 冲突）
+    local form_elements
+    form_elements=$(QUESTIONS_JSON="$questions_json" python3 << 'PYTHON_SCRIPT'
+import json
+import sys
+import os
+
+try:
+    questions = json.loads(os.environ.get('QUESTIONS_JSON', '[]'))
+except:
+    print('[]')
+    sys.exit(1)
+
+elements = []
+
+for i, q in enumerate(questions):
+    question_text = q.get('question', '')
+    header = q.get('header', '')
+    options = q.get('options', [])
+    multi_select = q.get('multiSelect', False)
+
+    # 1. 问题标题 (序号 + header + 单选/多选标识 + question)
+    type_tag = '多选' if multi_select else '单选'
+    # 注意: 空 header 时不能用 **1. **（有空格），飞书 Markdown 会直接显示原始文本而非粗体
+    header_part = '**{}. {}**（{}）'.format(i + 1, header, type_tag) if header else '**{}.**（{}）'.format(i + 1, type_tag)
+    question_content = header_part + '\n' + question_text
+
+    elements.append({
+        'tag': 'markdown',
+        'content': question_content,
+        'text_align': 'left',
+        'text_size': 'normal_v2'
+    })
+
+    # 2. 下拉选择
+    select_options = []
+    for opt in options:
+        label = opt.get('label', '')
+        desc = opt.get('description', '')
+        display_text = label
+        if desc:
+            display_text = '{} - {}'.format(label, desc)
+        select_options.append({
+            'text': {'tag': 'plain_text', 'content': display_text},
+            'value': label
+        })
+
+    select_tag = 'multi_select_static' if multi_select else 'select_static'
+    select_element = {
+        'tag': select_tag,
+        'name': 'q_{}_select'.format(i),
+        'placeholder': {'tag': 'plain_text', 'content': '选择回答'},
+        'width': 'fill',
+        'options': select_options
+    }
+
+    elements.append(select_element)
+
+    # 3. 自定义输入框
+    custom_placeholder = '或者自定义输入（填写后会覆盖本题选项）' if not multi_select else '可在此补充自定义内容'
+    elements.append({
+        'tag': 'input',
+        'name': 'q_{}_custom'.format(i),
+        'input_type': 'text',
+        'placeholder': {'tag': 'plain_text', 'content': custom_placeholder},
+        'width': 'fill',
+        'margin': '4px 0px 12px 0px'
+    })
+
+    # 4. 分隔线（最后一个问题不加）
+    if i < len(questions) - 1:
+        elements.append({
+            'tag': 'hr',
+            'margin': '8px 0px 8px 0px'
+        })
+
+# 输出逗号分隔的 JSON 元素（非 JSON 数组），用于模板 {{ask_question_form_elements}} 文本替换
+print(','.join(json.dumps(e, ensure_ascii=False) for e in elements))
+PYTHON_SCRIPT
+)
+
+    if [ -z "$form_elements" ] || [ "$form_elements" = "[]" ]; then
+        log "Error: Failed to build form elements"
+        return 1
+    fi
+
+    # 构建 @ 用户标签
+    local at_user
+    at_user=$(_build_at_user_tag)
+
+    # 渲染模板
+    local card
+    card=$(render_card_template "ask-question-card" \
+        "project_name=$project_name" \
+        "timestamp=$timestamp" \
+        "session_id=${session_id:0:8}" \
+        "request_id=$request_id" \
+        "owner_id=$owner_id" \
+        "ask_question_form_elements=$form_elements" \
+        "at_user=$at_user" \
+        "resume_session_id=$session_id")
+
+    echo "$card"
+}
+
