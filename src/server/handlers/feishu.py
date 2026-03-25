@@ -111,7 +111,7 @@ def _forward_via_ws_or_http(binding: Dict[str, Any], endpoint: str, payload: Dic
 def _should_reply_in_thread(binding: Dict[str, Any], project_dir: str) -> bool:
     """判断是否应该回复到话题
 
-    当工作目录为该用户的默认聊天目录时，不回复到话题。
+    当工作目录为该用户的默认聊天目录且未开启话题跟随时，不回复到话题。
 
     Args:
         binding: 绑定信息
@@ -122,7 +122,10 @@ def _should_reply_in_thread(binding: Dict[str, Any], project_dir: str) -> bool:
     """
     default_chat_dir = binding.get('default_chat_dir', '')
     if project_dir and default_chat_dir and os.path.realpath(project_dir) == os.path.realpath(default_chat_dir):
-        return False
+        # DEFAULT_CHAT_FOLLOW_THREAD=false 时，默认聊天目录的回复强制在主界面显示
+        # DEFAULT_CHAT_FOLLOW_THREAD=true（默认）时，跟随 FEISHU_REPLY_IN_THREAD 全局配置
+        if not binding.get('default_chat_follow_thread', True):
+            return False
     return binding.get('reply_in_thread', False)
 
 
@@ -2259,6 +2262,7 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
     reply_in_thread = value.get('reply_in_thread', False)
     claude_commands = value.get('claude_commands', None)
     default_chat_dir = value.get('default_chat_dir', '')
+    default_chat_follow_thread = value.get('default_chat_follow_thread', True)
 
     # WebSocket 模式
     if mode == 'ws':
@@ -2268,7 +2272,8 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
                 owner_id, request_id, request_ip,
                 reply_in_thread=reply_in_thread,
                 claude_commands=claude_commands,
-                default_chat_dir=default_chat_dir
+                default_chat_dir=default_chat_dir,
+                default_chat_follow_thread=default_chat_follow_thread
             )
         elif action == 'deny_register':
             logger.info("[feishu] WS registration denied: owner_id=%s, request_id=%s", owner_id, request_id)
@@ -2289,7 +2294,7 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
     if action == 'approve_register':
         logger.info("[feishu] Registration approved: owner_id=%s, callback_url=%s, reply_in_thread=%s", owner_id, callback_url, reply_in_thread)
         return True, handle_authorization_decision(
-            callback_url, owner_id, request_ip, approved=True, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir
+            callback_url, owner_id, request_ip, approved=True, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir, default_chat_follow_thread=default_chat_follow_thread
         )
     elif action == 'deny_register':
         logger.info("[feishu] Registration denied: owner_id=%s", owner_id)

@@ -216,6 +216,33 @@ ask_yes_no() {
 # update 子命令：校验并执行（必须在源码目录执行，提前退出避免执行后续逻辑）
 # =============================================================================
 
+# 提取配置文件中的所有键名（每行一个）
+# 支持: KEY=value, KEY =value (兼容 = 前有空格的格式)
+extract_config_keys() {
+    grep -E '^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' "$1" 2>/dev/null | sed 's/[[:space:]]*=.*//' | sort
+}
+
+# 检测并显示 .env.example 相对于 .env 的新增配置项
+check_config_diff() {
+    local example_file="$1"
+    local env_file="$2"
+
+    local example_keys=$(extract_config_keys "$example_file")
+    local env_keys=$(extract_config_keys "$env_file")
+
+    if [ -n "$example_keys" ] && [ -n "$env_keys" ]; then
+        local new_keys=$(comm -13 <(echo "$env_keys") <(echo "$example_keys"))
+        if [ -n "$new_keys" ]; then
+            echo ""
+            echo "⚠️  检测到 .env.example 中有新增配置项："
+            echo "$new_keys" | while read -r key; do
+                echo "   - $key"
+            done
+            echo "请根据需要参考 .env.example 更新您的 .env 文件"
+        fi
+    fi
+}
+
 if [ "$ACTION" = "update" ]; then
     require_no_other_params "update"
     require_source_dir "update"
@@ -223,34 +250,48 @@ if [ "$ACTION" = "update" ]; then
     # 直接在源码目录执行更新
     SOURCE_DIR="$SETUP_DIR"
     set +e
-    echo "正在更新..."
 
-    # 拉取最新代码
-    if [ -e "${SOURCE_DIR}/.git" ]; then
-        echo ""
-        GIT_PULL_OUTPUT=$(git -C "$SOURCE_DIR" pull 2>&1)
-        GIT_PULL_EXIT=$?
-        if [ $GIT_PULL_EXIT -eq 0 ]; then
-            echo ""
-            echo "代码已更新"
-        else
-            echo "git pull 失败: $GIT_PULL_OUTPUT"
-            exit 1
-        fi
-    else
-        echo "错误: ${SOURCE_DIR} 不是 git 仓库，无法自动更新"
-        echo "请手动下载最新代码"
+    # 1. 停止服务
+    print_section "停止服务"
+    "${SOURCE_DIR}/src/start-server.sh" stop
+    STOP_EXIT=$?
+    # stop 成功返回 0（无论服务是否运行），失败返回 1
+    if [ $STOP_EXIT -ne 0 ]; then
+        print_error "停止服务失败，退出码: $STOP_EXIT"
         exit 1
     fi
 
-    # 重启服务
-    echo ""
-    if "${SOURCE_DIR}/src/start-server.sh" restart; then
-        echo ""
-        echo "更新完成"
+    # 2. 拉取代码
+    print_section "更新代码"
+    if [ -e "${SOURCE_DIR}/.git" ]; then
+        GIT_PULL_OUTPUT=$(git -C "$SOURCE_DIR" pull 2>&1)
+        GIT_PULL_EXIT=$?
+        if [ $GIT_PULL_EXIT -eq 0 ]; then
+            print_success "代码已更新"
+        else
+            print_error "git pull 失败: $GIT_PULL_OUTPUT"
+            echo ""
+            print_info "尝试恢复服务..."
+            "${SOURCE_DIR}/src/start-server.sh" start
+            exit 1
+        fi
     else
+        print_error "${SOURCE_DIR} 不是 git 仓库，无法自动更新"
+        print_info "请手动下载最新代码"
         echo ""
-        echo "代码已更新，但服务启动失败，请检查上方错误信息"
+        print_info "尝试恢复服务..."
+        "${SOURCE_DIR}/src/start-server.sh" start
+        exit 1
+    fi
+
+    # 3. 启动服务
+    print_section "启动服务"
+    if "${SOURCE_DIR}/src/start-server.sh" start; then
+        check_config_diff "${SOURCE_DIR}/.env.example" "${SOURCE_DIR}/.env"
+        echo ""
+        print_success "更新完成"
+    else
+        print_error "代码已更新，但服务启动失败，请检查上方错误信息"
         exit 1
     fi
 

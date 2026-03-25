@@ -271,18 +271,34 @@ else:
     FEISHU_GATEWAY_MODE = ''
     FEISHU_GATEWAY_URL = ''
 
-# 冲突检测：APP 凭据和网关地址不能同时配置
-if _FEISHU_GATEWAY_URL_RAW and FEISHU_APP_ID and FEISHU_APP_SECRET:
-    raise ValueError(
-        "配置冲突: FEISHU_APP_ID/FEISHU_APP_SECRET 与 FEISHU_GATEWAY_URL 不能同时配置。\n"
-        "  - 单机部署：只需配置 FEISHU_APP_ID + FEISHU_APP_SECRET\n"
-        "  - 分离部署：只需配置 FEISHU_GATEWAY_URL（凭据由网关管理）\n"
-        "请移除其中一组配置。"
-    )
+# =============================================================================
+# OpenAPI 模式下的服务模式判断与冲突检测
+# =============================================================================
+IS_CALLBACK_BACKEND = False  # 默认值，webhook 模式或未配置
+
+if FEISHU_SEND_MODE == 'openapi':
+    # 冲突检测：APP 凭据和网关地址不能同时配置
+    if _FEISHU_GATEWAY_URL_RAW and FEISHU_APP_ID and FEISHU_APP_SECRET:
+        raise ValueError(
+            "配置冲突: FEISHU_APP_ID/FEISHU_APP_SECRET 与 FEISHU_GATEWAY_URL 不能同时配置。\n"
+            "  - 单机部署：只需配置 FEISHU_APP_ID + FEISHU_APP_SECRET\n"
+            "  - 分离部署：只需配置 FEISHU_GATEWAY_URL（凭据由网关管理）\n"
+            "请移除其中一组配置。"
+        )
+
+    # 是否为分离部署的 Callback 后端（显式配置了 FEISHU_GATEWAY_URL）
+    # - 单机部署（False）：同时充当网关 + Callback 后端，网关地址自动指向本地
+    # - 分离部署（True）：纯 Callback 后端，连接远程网关
+    IS_CALLBACK_BACKEND = bool(_FEISHU_GATEWAY_URL_RAW)
 
 # 默认聊天目录（配置后普通消息自动创建/继续会话）
 # 支持 ~ 开头的路径，自动展开为用户主目录
 DEFAULT_CHAT_DIR = os.path.expanduser(get_config('DEFAULT_CHAT_DIR', ''))
+
+# 默认聊天目录话题跟随模式
+# True (默认): 跟随 FEISHU_REPLY_IN_THREAD 全局配置
+# False: 默认聊天目录的回复始终在主界面显示（不收敛进话题）
+DEFAULT_CHAT_FOLLOW_THREAD = get_config('DEFAULT_CHAT_FOLLOW_THREAD', 'true').lower() in ('true', '1', 'yes')
 
 # 话题内回复模式：回复消息时是否收进话题详情（不刷群聊主界面）
 # True: 回复消息仅出现在话题详情中，不会冒泡到群聊主界面

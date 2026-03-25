@@ -83,6 +83,7 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
     reply_in_thread = data.get('reply_in_thread', False)
     claude_commands = data.get('claude_commands', None)
     default_chat_dir = data.get('default_chat_dir', '')
+    default_chat_follow_thread = data.get('default_chat_follow_thread', True)
 
     # 验证参数
     if not callback_url or not owner_id:
@@ -95,7 +96,7 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
     logger.info(f"[register] Registration request: owner_id={owner_id}, callback_url={callback_url}, ip={client_ip}, reply_in_thread={reply_in_thread}, claude_commands={claude_commands}, default_chat_dir={default_chat_dir}")
 
     # 在后台线程中处理注册逻辑（异步）
-    _run_in_background(_process_registration, (callback_url, owner_id, client_ip, reply_in_thread, claude_commands, default_chat_dir))
+    _run_in_background(_process_registration, (callback_url, owner_id, client_ip, reply_in_thread, claude_commands, default_chat_dir, default_chat_follow_thread))
 
     # 立即返回成功
     return True, {
@@ -213,7 +214,8 @@ def _process_registration(
     client_ip: str,
     reply_in_thread: bool = False,
     claude_commands: Optional[List[str]] = None,
-    default_chat_dir: str = ''
+    default_chat_dir: str = '',
+    default_chat_follow_thread: bool = True
 ):
     """处理注册逻辑（后台线程）
 
@@ -231,6 +233,7 @@ def _process_registration(
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
+        default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
     """
     from services.binding_store import BindingStore
     from services.auth_token import generate_auth_token
@@ -257,7 +260,7 @@ def _process_registration(
             logger.info(f"[register] Existing binding with same callback_url, updating token")
             auth_token = generate_auth_token(FEISHU_APP_SECRET, owner_id)
             _notify_callback(callback_url, owner_id, auth_token, client_ip)
-            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands, default_chat_dir)
+            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands, default_chat_dir, default_chat_follow_thread)
         else:
             # callback_url 不同：发送授权卡片让用户确认是否更换设备
             # 不提前生成 auth_token，等用户批准后再生成
@@ -265,7 +268,7 @@ def _process_registration(
                 f"[register] Existing binding with different callback_url: "
                 f"old={bound_callback_url}, new={callback_url}"
             )
-            _send_authorization_card(callback_url, owner_id, client_ip, old_callback_url=bound_callback_url, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir)
+            _send_authorization_card(callback_url, owner_id, client_ip, old_callback_url=bound_callback_url, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir, default_chat_follow_thread=default_chat_follow_thread)
     else:
         # 未绑定：先验证 callback_url 是否属于该 owner_id
         logger.info(f"[register] No existing binding, verifying callback_url ownership")
@@ -277,7 +280,7 @@ def _process_registration(
             return
         # 验证通过，发送飞书授权卡片
         # 不提前生成 auth_token，等用户批准后再生成
-        _send_authorization_card(callback_url, owner_id, client_ip, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir)
+        _send_authorization_card(callback_url, owner_id, client_ip, reply_in_thread=reply_in_thread, claude_commands=claude_commands, default_chat_dir=default_chat_dir, default_chat_follow_thread=default_chat_follow_thread)
 
 
 def _check_owner_id(callback_url: str, owner_id: str) -> bool:
@@ -491,7 +494,8 @@ def _send_authorization_card(
     old_callback_url: str = '',
     reply_in_thread: bool = False,
     claude_commands: Optional[List[str]] = None,
-    default_chat_dir: str = ''
+    default_chat_dir: str = '',
+    default_chat_follow_thread: bool = True
 ):
     """发送飞书授权卡片（HTTP 注册模式）
 
@@ -506,6 +510,7 @@ def _send_authorization_card(
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
+        default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
     """
     from services.feishu_api import FeishuAPIService
 
@@ -547,7 +552,8 @@ def _send_authorization_card(
             "old_callback_url": old_callback_url,
             "reply_in_thread": reply_in_thread,
             "claude_commands": claude_commands,
-            "default_chat_dir": default_chat_dir
+            "default_chat_dir": default_chat_dir,
+            "default_chat_follow_thread": default_chat_follow_thread
         },
         deny_value={
             "action": "deny_register",
@@ -659,7 +665,8 @@ def handle_authorization_decision(
     approved: bool,
     reply_in_thread: bool = False,
     claude_commands: Optional[List[str]] = None,
-    default_chat_dir: str = ''
+    default_chat_dir: str = '',
+    default_chat_follow_thread: bool = True
 ) -> Dict[str, Any]:
     """处理用户授权决策
 
@@ -671,6 +678,7 @@ def handle_authorization_decision(
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
+        default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
 
     Returns:
         飞书响应（包含 toast 和更新的卡片）
@@ -697,7 +705,7 @@ def handle_authorization_decision(
         # 用户允许：通知 Callback 后端并创建绑定
         store = BindingStore.get_instance()
         if store:
-            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands, default_chat_dir)
+            store.upsert(owner_id, callback_url, auth_token, client_ip, reply_in_thread, claude_commands, default_chat_dir, default_chat_follow_thread)
 
         # 通知 Callback 后端
         _notify_callback(callback_url, owner_id, auth_token, client_ip)
@@ -807,6 +815,7 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
                                 reply_in_thread: bool = False,
                                 claude_commands: Optional[List[str]] = None,
                                 default_chat_dir: str = '',
+                                default_chat_follow_thread: bool = True,
                                 old_ip: str = '') -> bool:
     """发送 WS 模式授权卡片（注册/换绑共用）
 
@@ -822,6 +831,7 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
+        default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
         old_ip: 旧终端 IP（有值则表示换绑场景）
 
     Returns:
@@ -844,7 +854,8 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
             "request_ip": client_ip,
             "reply_in_thread": reply_in_thread,
             "claude_commands": claude_commands,
-            "default_chat_dir": default_chat_dir
+            "default_chat_dir": default_chat_dir,
+            "default_chat_follow_thread": default_chat_follow_thread
         },
         deny_value={
             "action": "deny_register",
@@ -877,7 +888,8 @@ def handle_ws_registration(owner_id: str, request_id: str,
                            client_ip: str,
                            reply_in_thread: bool = False,
                            claude_commands: Optional[List[str]] = None,
-                           default_chat_dir: str = '') -> bool:
+                           default_chat_dir: str = '',
+                           default_chat_follow_thread: bool = True) -> bool:
     """处理 WebSocket 隧道的注册请求
 
     发送飞书授权卡片，用户授权后通过 WS 通道下发 auth_token。
@@ -890,6 +902,7 @@ def handle_ws_registration(owner_id: str, request_id: str,
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
+        default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
 
     Returns:
         True 表示卡片发送成功
@@ -905,14 +918,16 @@ def handle_ws_registration(owner_id: str, request_id: str,
     return _send_ws_authorization_card(owner_id, request_id, client_ip, title, content,
                                        reply_in_thread=reply_in_thread,
                                        claude_commands=claude_commands,
-                                       default_chat_dir=default_chat_dir)
+                                       default_chat_dir=default_chat_dir,
+                                       default_chat_follow_thread=default_chat_follow_thread)
 
 
 def handle_ws_rebind_registration(owner_id: str, request_id: str,
                                    client_ip: str, old_ip: str,
                                    reply_in_thread: bool = False,
                                    claude_commands: Optional[List[str]] = None,
-                                   default_chat_dir: str = '') -> bool:
+                                   default_chat_dir: str = '',
+                                   default_chat_follow_thread: bool = True) -> bool:
     """处理 WS 模式的换绑注册请求（新终端替换旧终端）
 
     发送飞书授权卡片，展示旧终端 IP 和新终端 IP，用户授权后走现有
@@ -927,6 +942,7 @@ def handle_ws_rebind_registration(owner_id: str, request_id: str,
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
+        default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
 
     Returns:
         True 表示卡片发送成功
@@ -944,6 +960,7 @@ def handle_ws_rebind_registration(owner_id: str, request_id: str,
                                        reply_in_thread=reply_in_thread,
                                        claude_commands=claude_commands,
                                        default_chat_dir=default_chat_dir,
+                                       default_chat_follow_thread=default_chat_follow_thread,
                                        old_ip=old_ip)
 
 
@@ -951,7 +968,8 @@ def handle_ws_authorization_approved(owner_id: str, request_id: str,
                                      client_ip: str,
                                      reply_in_thread: bool = False,
                                      claude_commands: Optional[List[str]] = None,
-                                     default_chat_dir: str = '') -> Dict[str, Any]:
+                                     default_chat_dir: str = '',
+                                     default_chat_follow_thread: bool = True) -> Dict[str, Any]:
     """处理 WS 模式授权通过
 
     生成 auth_token，存入 BindingStore，通过 WS 下发给客户端。
@@ -963,6 +981,7 @@ def handle_ws_authorization_approved(owner_id: str, request_id: str,
         reply_in_thread: 是否使用回复话题模式
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
+        default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
 
     Returns:
         飞书响应（包含 toast 和更新的卡片）
@@ -1031,7 +1050,8 @@ def handle_ws_authorization_approved(owner_id: str, request_id: str,
             'client_ip': client_ip,
             'reply_in_thread': reply_in_thread,
             'claude_commands': claude_commands,
-            'default_chat_dir': default_chat_dir
+            'default_chat_dir': default_chat_dir,
+            'default_chat_follow_thread': default_chat_follow_thread
         }):
             logger.warning("[ws_register] prepare_authorization failed: connection gone for %s, request_id=%s", owner_id, request_id)
             return {

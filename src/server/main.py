@@ -42,7 +42,7 @@ from config import (
     FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_SEND_MODE,
     CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL,
     FEISHU_GATEWAY_MODE, DEFAULT_CHAT_DIR,
-    FEISHU_EVENT_MODE
+    FEISHU_EVENT_MODE, IS_CALLBACK_BACKEND
 )
 from services.request_manager import RequestManager
 from services.card_cache import CardCache
@@ -457,30 +457,37 @@ def main():
     server = ThreadedHTTPServer(('0.0.0.0', HTTP_PORT), HttpRequestHandler)
     logger.info(f"HTTP server listening on port {HTTP_PORT} (threading enabled)")
 
-    # 注册到飞书网关
+    # 连接网关服务
+    # - 分离部署：连接远程网关（FEISHU_GATEWAY_URL 由用户配置）
+    # - 单机部署：连接本地网关（FEISHU_GATEWAY_URL 默认为 CALLBACK_SERVER_URL）
     # ws(s):// → WS 隧道模式；http(s):// → HTTP 回调模式
-    if FEISHU_GATEWAY_MODE == 'ws' and FEISHU_GATEWAY_URL and FEISHU_OWNER_ID:
-        # WS 隧道模式：客户端主动连接网关，适用于本地开发（callback 不可公网访问）
-        from services.ws_tunnel_client import start_ws_tunnel_client
-        from config import FEISHU_REPLY_IN_THREAD, get_claude_commands
-        start_ws_tunnel_client(
-            FEISHU_GATEWAY_URL, FEISHU_OWNER_ID,
-            reply_in_thread=FEISHU_REPLY_IN_THREAD,
-            claude_commands=get_claude_commands(),
-            default_chat_dir=DEFAULT_CHAT_DIR
-        )
-        logger.info("WebSocket tunnel client started, gateway: %s", FEISHU_GATEWAY_URL)
-    elif CALLBACK_SERVER_URL and FEISHU_OWNER_ID and FEISHU_GATEWAY_URL:
-        # HTTP 回调模式：需要 Callback 后端公网可达
-        from services.auto_register import AutoRegister
-        AutoRegister.initialize(CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL)
-        auto_register = AutoRegister.get_instance()
-        if auto_register and auto_register.enabled:
-            auto_register.register_in_background()
-        else:
-            logger.info("Auto-registration disabled")
+    if FEISHU_GATEWAY_URL and FEISHU_OWNER_ID:
+        logger.info("[main] Connecting to gateway at %s (mode=%s)", FEISHU_GATEWAY_URL, "separated" if IS_CALLBACK_BACKEND else "standalone")
+        # 根据网关模式选择连接方式
+        if FEISHU_GATEWAY_MODE == 'ws':
+            # WS 隧道模式：客户端主动连接网关，适用于本地开发（callback 不可公网访问）
+            from services.ws_tunnel_client import start_ws_tunnel_client
+            from config import FEISHU_REPLY_IN_THREAD, DEFAULT_CHAT_FOLLOW_THREAD, get_claude_commands
+            start_ws_tunnel_client(
+                FEISHU_GATEWAY_URL, FEISHU_OWNER_ID,
+                reply_in_thread=FEISHU_REPLY_IN_THREAD,
+                claude_commands=get_claude_commands(),
+                default_chat_dir=DEFAULT_CHAT_DIR,
+                default_chat_follow_thread=DEFAULT_CHAT_FOLLOW_THREAD
+            )
+            logger.info("WebSocket tunnel client started, gateway: %s", FEISHU_GATEWAY_URL)
+        elif CALLBACK_SERVER_URL:
+            # HTTP 回调模式：需要 Callback 后端公网可达
+            from services.auto_register import AutoRegister
+            AutoRegister.initialize(CALLBACK_SERVER_URL, FEISHU_OWNER_ID, FEISHU_GATEWAY_URL)
+            auto_register = AutoRegister.get_instance()
+            if auto_register and auto_register.enabled:
+                auto_register.register_in_background()
+            else:
+                logger.info("Auto-registration disabled")
     else:
-        logger.info("Gateway registration disabled (missing FEISHU_GATEWAY_URL or FEISHU_OWNER_ID)")
+        # FEISHU_OWNER_ID 未配置：当前服务作为纯粹的飞书网关，不携带用户凭据，无需注册
+        logger.info("[main] Running as pure gateway without user credentials")
 
     # 启动遥测服务（后台线程定期上报心跳）
     from telemetry.client import TelemetryService

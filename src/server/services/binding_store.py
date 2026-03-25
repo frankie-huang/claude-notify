@@ -29,6 +29,7 @@ class BindingStore:
             "reply_in_thread": true,
             "claude_commands": ["claude", "claude --model opus"],
             "default_chat_dir": "/home/user/project",
+            "default_chat_follow_thread": true,
             "default_chat_session_id": "uuid-xxx",
             "updated_at": 1706745600,
             "registered_ip": "1.2.3.4"
@@ -107,7 +108,8 @@ class BindingStore:
         registered_ip: str = '',
         reply_in_thread: bool = False,
         claude_commands: Optional[List[str]] = None,
-        default_chat_dir: str = ''
+        default_chat_dir: str = '',
+        default_chat_follow_thread: bool = True
     ) -> bool:
         """创建或更新绑定
 
@@ -119,6 +121,7 @@ class BindingStore:
             reply_in_thread: 是否使用回复话题模式
             claude_commands: 可用的 Claude 命令列表（从 Callback 后端传递）
             default_chat_dir: 默认聊天目录（从 Callback 后端传递）
+            default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
 
         Returns:
             是否保存成功
@@ -145,6 +148,7 @@ class BindingStore:
                     'callback_url': callback_url,
                     'auth_token': auth_token,
                     'reply_in_thread': reply_in_thread,
+                    'default_chat_follow_thread': default_chat_follow_thread,
                     'claude_commands': valid_commands or ['claude'],
                     'updated_at': int(time.time()),
                     'registered_ip': registered_ip

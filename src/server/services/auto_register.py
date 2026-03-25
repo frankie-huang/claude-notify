@@ -98,7 +98,7 @@ class AutoRegister:
 
     def _register(self):
         """执行注册"""
-        from config import FEISHU_REPLY_IN_THREAD, DEFAULT_CHAT_DIR, get_claude_commands
+        from config import FEISHU_REPLY_IN_THREAD, DEFAULT_CHAT_DIR, DEFAULT_CHAT_FOLLOW_THREAD, get_claude_commands
 
         logger.info(
             f"[auto-register] Starting registration in background: "
@@ -112,7 +112,8 @@ class AutoRegister:
             register_url,
             reply_in_thread=FEISHU_REPLY_IN_THREAD,
             claude_commands=get_claude_commands(),
-            default_chat_dir=DEFAULT_CHAT_DIR
+            default_chat_dir=DEFAULT_CHAT_DIR,
+            default_chat_follow_thread=DEFAULT_CHAT_FOLLOW_THREAD
         )
 
         if success:
@@ -127,7 +128,8 @@ class AutoRegister:
         register_url: str,
         reply_in_thread: bool = False,
         claude_commands: Optional[List[str]] = None,
-        default_chat_dir: str = ''
+        default_chat_dir: str = '',
+        default_chat_follow_thread: bool = True
     ) -> Tuple[bool, str]:
         """向飞书网关注册
 
@@ -138,6 +140,7 @@ class AutoRegister:
             reply_in_thread: 是否使用回复话题模式
             claude_commands: 可用的 Claude 命令列表
             default_chat_dir: 默认聊天目录
+            default_chat_follow_thread: 默认聊天目录是否跟随全局话题模式
 
         Returns:
             (success, message): success 表示是否成功，message 是响应消息或错误信息
@@ -155,6 +158,8 @@ class AutoRegister:
         # 添加 default_chat_dir（如果配置）
         if default_chat_dir:
             request_data['default_chat_dir'] = default_chat_dir
+        # 添加 default_chat_follow_thread
+        request_data['default_chat_follow_thread'] = default_chat_follow_thread
 
         logger.info(f"[auto-register] Registering to gateway: {api_url}")
 

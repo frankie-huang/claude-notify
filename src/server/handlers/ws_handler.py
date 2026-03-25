@@ -178,6 +178,7 @@ def _process_tunnel_connection(sock: socket.socket, handler: Any, owner_id: str,
         msg_reply_in_thread = msg.get('reply_in_thread', False)
         msg_claude_commands = msg.get('claude_commands')
         msg_default_chat_dir = msg.get('default_chat_dir', '')
+        msg_default_chat_follow_thread = msg.get('default_chat_follow_thread', True)
 
         # 提取客户端携带的 auth_token（用于比对是否为同一终端）
         msg_auth_token = msg.get('auth_token', '')
@@ -208,7 +209,8 @@ def _process_tunnel_connection(sock: socket.socket, handler: Any, owner_id: str,
                     'client_ip': client_ip,
                     'reply_in_thread': msg_reply_in_thread,
                     'claude_commands': msg_claude_commands,
-                    'default_chat_dir': msg_default_chat_dir
+                    'default_chat_dir': msg_default_chat_dir,
+                    'default_chat_follow_thread': msg_default_chat_follow_thread
                 })
 
                 # 发送新 token，等待消息循环中的 auth_ok_ack 完成认证
@@ -240,7 +242,8 @@ def _process_tunnel_connection(sock: socket.socket, handler: Any, owner_id: str,
                     owner_id, request_id, client_ip, old_ip,
                     reply_in_thread=msg_reply_in_thread,
                     claude_commands=msg_claude_commands,
-                    default_chat_dir=msg_default_chat_dir
+                    default_chat_dir=msg_default_chat_dir,
+                    default_chat_follow_thread=msg_default_chat_follow_thread
                 )
                 if card_sent:
                     registry.set_card_cooldown(owner_id)
@@ -266,7 +269,8 @@ def _process_tunnel_connection(sock: socket.socket, handler: Any, owner_id: str,
             owner_id, request_id, client_ip,
             reply_in_thread=msg_reply_in_thread,
             claude_commands=msg_claude_commands,
-            default_chat_dir=msg_default_chat_dir
+            default_chat_dir=msg_default_chat_dir,
+            default_chat_follow_thread=msg_default_chat_follow_thread
         )
         if card_sent:
             registry.set_card_cooldown(owner_id)
@@ -402,7 +406,8 @@ def _handle_ws_message(sock: socket.socket, owner_id: str, msg: Dict[str, Any], 
                         binding_params.get('client_ip', ''),
                         binding_params.get('reply_in_thread', False),
                         binding_params.get('claude_commands'),
-                        binding_params.get('default_chat_dir', '')
+                        binding_params.get('default_chat_dir', ''),
+                        binding_params.get('default_chat_follow_thread', True)
                     )
 
             # 原子地从 pending 升级为已认证连接

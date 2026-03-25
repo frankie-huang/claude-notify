@@ -666,6 +666,7 @@ FEISHU_OWNER_ID=ou_admin_user
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `DEFAULT_CHAT_DIR` | 默认聊天目录，配置后直接发消息即可自动创建/继续会话，详见下文 | 空（不启用） |
+| `DEFAULT_CHAT_FOLLOW_THREAD` | 默认聊天目录的话题跟随模式，详见下文 | `true` |
 | `CLAUDE_COMMAND` | Claude 命令，支持多命令列表如 `[claude, claude --setting opus]`，详见下文 | `claude` |
 
 **默认聊天目录**
@@ -681,6 +682,23 @@ DEFAULT_CHAT_DIR=/home/user/my-project
 - `/new prompt` → 在默认目录创建新会话（替换当前活跃会话）
 - `/new --dir=/other prompt` → 在指定目录创建（不影响默认会话）
 - 服务启动时自动创建不存在的目录
+
+**话题跟随模式**
+
+`DEFAULT_CHAT_FOLLOW_THREAD` 控制默认聊天目录的回复是否收敛进话题：
+
+```bash
+# 跟随全局配置（默认）- 若 FEISHU_REPLY_IN_THREAD=true，则回复收敛进话题
+DEFAULT_CHAT_FOLLOW_THREAD=true
+
+# 始终在主界面显示 - 回复不收敛进话题，适合即时通讯场景
+DEFAULT_CHAT_FOLLOW_THREAD=false
+```
+
+| 配置值 | 行为 |
+|--------|------|
+| `true`（默认） | 跟随 `FEISHU_REPLY_IN_THREAD` 全局配置 |
+| `false` | 默认聊天目录的回复始终在群聊主界面显示 |
 
 **多命令配置**
 
