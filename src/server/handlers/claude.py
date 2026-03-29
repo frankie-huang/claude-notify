@@ -233,6 +233,12 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
         flags = f'{claude_cmd} -p --resume {safe_session}'
         log_prefix = '[claude-continue]'
 
+    # 打印可直接复制执行的简化命令（不含 mcp 参数，prompt 用占位符）
+    debug_shell_cmd = build_shell_cmd(shell, f"{flags} -- <prompt>")
+    if len(debug_shell_cmd) >= 3:
+        logger.info(f"{log_prefix} Copyable: cd {project_dir} && "
+                    f"{debug_shell_cmd[0]} {debug_shell_cmd[1]} {shlex.quote(debug_shell_cmd[2])}")
+
     mcp_args = _get_mcp_args(project_dir, session_id).strip()
     if mcp_args:
         flags += ' ' + mcp_args
@@ -242,8 +248,8 @@ def _execute_and_check(session_id: str, project_dir: str, prompt: str, chat_id: 
 
     cmd = build_shell_cmd(shell, cmd_str)
 
-    # 打印命令（log_cmd 隐藏了 prompt 内容）
-    logger.info(f"{log_prefix} Executing: cd {project_dir} && {log_cmd}")
+    # 打印完整命令（含 mcp 参数，隐藏 prompt 内容）
+    logger.info(f"{log_prefix} shell={shell}, Executing: cd {project_dir} && {log_cmd}")
 
     # 清除 CLAUDECODE 环境变量，避免嵌套会话检测阻止子会话启动
     # 参考：https://code.claude.com/docs/en/headless
@@ -338,12 +344,12 @@ def _send_error_notification(chat_id: str, error_msg: str):
     """
     from handlers.utils import send_feishu_text
 
-    text = "❌ Claude 执行异常:\n%s" % error_msg
+    text = f"❌ Claude 执行异常:\n{error_msg}"
     success, result = send_feishu_text(chat_id, text)
     if success:
-        logger.info("[claude] Sent error notification to %s", chat_id)
+        logger.info(f"[claude] Sent error notification to {chat_id}")
     else:
-        logger.error("[claude] Failed to send error notification: %s", result)
+        logger.error(f"[claude] Failed to send error notification: {result}")
 
 
 def handle_new_session(data: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:

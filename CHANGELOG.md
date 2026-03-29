@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Released]
 
+### Improved - 2026-03-30
+
+#### install.sh 卸载流程增强与维护命令
+
+- `--uninstall` 从仅移除 hook 配置升级为完整卸载流程：确认提示、停止服务、移除配置、可选清理 runtime/log/.env
+- 卸载时遍历所有 hook 事件（不再硬编码事件名），更健壮
+- 新增 `--clean-cache` 命令，清理 Python `__pycache__` 缓存目录
+- `.env.example` 配置表补充 `FEISHU_EVENT_MODE` 字段说明
+
 ### Added - 2026-03-29
 
 #### UserPromptSubmit 事件：终端 Prompt 同步到飞书话题

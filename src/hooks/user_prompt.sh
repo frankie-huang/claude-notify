@@ -74,8 +74,16 @@ send_user_prompt_async() {
 ...(已截断)"
     fi
 
-    # 构建显示文本
-    local message_text="${display_prompt}"
+    # 判断是否为首条消息（没有 last_message_id 说明该 session 尚未在飞书发过消息）
+    # 首条消息加上 /new --dir=... 前缀，与飞书发起的新会话显示风格对齐
+    local last_msg_id
+    last_msg_id=$(_get_last_message_id "$SESSION_ID")
+    local message_text
+    if [ -z "$last_msg_id" ]; then
+        message_text="/new --dir=${PROJECT_DIR} ${display_prompt}"
+    else
+        message_text="${display_prompt}"
+    fi
 
     # 使用 send_feishu_post 发送富文本消息（带 session threading + at）
     local options

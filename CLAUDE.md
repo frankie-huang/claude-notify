@@ -32,7 +32,6 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 | 运算符 | 普通赋值 `x = foo()` | `:=` walrus (3.8+) |
 | 类型注解风格 | 内联注解 `def foo(x: str) -> int:` | `# type:` 注释风格 |
 | 字符串格式化 | f-string `f"hello {name}"` | `.format()` / `%` 格式化 |
-| logging 格式化 | lazy `logger.info("x=%s", x)` | f-string `logger.info(f"x={x}")` |
 
 **常见错误示例：**
 

@@ -38,7 +38,11 @@ SETTINGS_FILE="${HOME}/.claude/settings.json"
 print_header() {
     echo -e "${BLUE}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║       Claude Code 飞书通知 - 安装脚本                         ║"
+    if [ "${1:-}" = "uninstall" ]; then
+        echo "║       Claude Code 飞书通知 - 卸载脚本                         ║"
+    else
+        echo "║       Claude Code 飞书通知 - 安装脚本                         ║"
+    fi
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
@@ -370,6 +374,7 @@ for event, desired in desired_hooks.items():
 
 with open(settings_file, 'w') as f:
     json.dump(config, f, indent=2)
+    f.write('\n')
 PYTHON_SCRIPT
 
     echo ""
@@ -424,17 +429,38 @@ generate_env_template() {
 # =============================================================================
 
 uninstall() {
-    print_section "卸载 Claude Code Hook"
-
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        print_info "配置文件不存在，无需卸载"
+    # --- 确认 ---
+    echo -e "${YELLOW}即将执行以下操作：${NC}"
+    echo "  1. 停止正在运行的服务进程"
+    echo "  2. 从 ${SETTINGS_FILE} 移除本项目的 hook 配置"
+    echo "  3. 可选清理运行时数据、日志和配置文件"
+    echo ""
+    printf "确认卸载？[y/N] "
+    read -r confirm
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        print_info "已取消"
         return 0
     fi
 
-    # 使用 Python 精确移除指向本项目脚本的 hook（保留用户的其他 hook）
-    # 退出码: 0=有变更已写入, 1=错误, 2=无需操作
-    local py_exit=0
-    SETTINGS_FILE="$SETTINGS_FILE" HOOK_PATH="$HOOK_PATH" python3 << 'PYTHON_SCRIPT' || py_exit=$?
+    # --- 1. 停止服务 ---
+    print_section "停止服务"
+    local server_script="${SCRIPT_DIR}/src/start-server.sh"
+    if [ -x "$server_script" ]; then
+        "$server_script" stop || print_warning "服务停止失败，继续卸载"
+    else
+        print_info "未找到服务管理脚本，跳过"
+    fi
+
+    # --- 2. 移除 hook 配置 ---
+    print_section "移除 Hook 配置"
+
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        print_info "配置文件不存在，无需移除"
+    else
+        # 使用 Python 精确移除指向本项目脚本的 hook（保留用户的其他 hook）
+        # 退出码: 0=有变更已写入, 1=错误, 2=无需操作
+        local py_exit=0
+        SETTINGS_FILE="$SETTINGS_FILE" HOOK_PATH="$HOOK_PATH" python3 << 'PYTHON_SCRIPT' || py_exit=$?
 import json
 import os
 
@@ -448,21 +474,17 @@ hook_path = os.environ.get('HOOK_PATH', '')
 try:
     with open(settings_file, 'r') as f:
         config = json.load(f)
-except:
+except Exception:
     print(f"{YELLOW}⚠{NC} 无法读取配置文件")
     exit(1)
 
 if 'hooks' not in config:
-    print(f"{GREEN}✓{NC} 未找到 hooks 配置，无需卸载")
+    print(f"{GREEN}✓{NC} 未找到 hooks 配置，无需移除")
     exit(2)
 
-events_to_check = ['UserPromptSubmit', 'PermissionRequest', 'Stop']
 removed = []
 
-for event in events_to_check:
-    if event not in config['hooks']:
-        continue
-
+for event in list(config['hooks'].keys()):
     entries = config['hooks'][event]
     # 过滤掉包含本项目脚本的条目，保留其他 hook
     remaining = []
@@ -484,8 +506,6 @@ for event in events_to_check:
         else:
             del config['hooks'][event]
             print(f"{GREEN}✓{NC} {event} 已移除")
-    else:
-        print(f"{YELLOW}⚠{NC} {event} 未找到本项目的 hook 配置")
 
 if not removed:
     print(f"{GREEN}✓{NC} 未找到需要移除的配置")
@@ -496,12 +516,79 @@ if 'hooks' in config and len(config['hooks']) == 0:
     del config['hooks']
 with open(settings_file, 'w') as f:
     json.dump(config, f, indent=2)
+    f.write('\n')
 PYTHON_SCRIPT
 
-    if [ $py_exit -eq 1 ]; then
-        return 1
-    elif [ $py_exit -eq 0 ]; then
-        print_success "卸载完成"
+        if [ $py_exit -eq 1 ]; then
+            print_error "移除 hook 配置失败"
+        fi
+    fi
+
+    # --- 3. 清理运行时数据和日志 ---
+    local runtime_dir="${SCRIPT_DIR}/runtime"
+    local log_dir="${SCRIPT_DIR}/log"
+    local env_file="${SCRIPT_DIR}/.env"
+
+    if [ -d "$runtime_dir" ] || [ -d "$log_dir" ]; then
+        print_section "清理数据"
+        echo "以下数据可以清理："
+        [ -d "$runtime_dir" ] && echo "  - runtime/  （运行时数据：会话记录、绑定信息等）"
+        [ -d "$log_dir" ] && echo "  - log/      （运行日志）"
+        echo ""
+        printf "是否清理以上数据？[y/N] "
+        read -r clean_data
+        if [ "$clean_data" = "y" ] || [ "$clean_data" = "Y" ]; then
+            if [ -d "$runtime_dir" ]; then
+                rm -rf "$runtime_dir"
+                print_success "已清理 runtime/"
+            fi
+            if [ -d "$log_dir" ]; then
+                rm -rf "$log_dir"
+                print_success "已清理 log/"
+            fi
+        else
+            print_info "保留运行时数据和日志"
+        fi
+    fi
+
+    # --- 4. 清理 .env 配置文件 ---
+    if [ -f "$env_file" ]; then
+        echo ""
+        print_warning ".env 文件包含你的飞书凭据等敏感配置，删除后不可恢复"
+        printf "是否删除 .env？[y/N] "
+        read -r clean_env
+        if [ "$clean_env" = "y" ] || [ "$clean_env" = "Y" ]; then
+            rm -f "$env_file"
+            print_success "已删除 .env"
+        else
+            print_info "保留 .env"
+        fi
+    fi
+
+    # --- 完成 ---
+    echo ""
+    print_success "卸载完成"
+    print_info "项目源码目录仍保留在 ${SCRIPT_DIR}，如需彻底删除可手动执行 rm -rf ${SCRIPT_DIR}"
+}
+
+# =============================================================================
+# 清理缓存
+# =============================================================================
+
+clean_cache() {
+    print_section "清理 Python 缓存"
+
+    local count=0
+    while IFS= read -r dir; do
+        rm -rf "$dir"
+        print_success "已删除 ${dir#${SCRIPT_DIR}/}"
+        count=$((count + 1))
+    done < <(find "$SCRIPT_DIR" -type d -name "__pycache__" 2>/dev/null)
+
+    if [ "$count" -eq 0 ]; then
+        print_info "未找到 __pycache__ 目录"
+    else
+        print_success "共清理 ${count} 个缓存目录"
     fi
 }
 
@@ -513,17 +600,19 @@ show_help() {
     echo "用法: $0 [选项]"
     echo ""
     echo "选项:"
-    echo "  (无参数)     交互式安装，依次执行以下操作："
-    echo "                 1. 检测环境依赖 (不会自动安装，缺失时提示命令)"
-    echo "                 2. 配置 hook → 写入 ~/.claude/settings.json"
-    echo "                 3. 生成配置 → 复制 .env.example 为 .env"
+    echo "  (无参数)       交互式安装，依次执行以下操作："
+    echo "                   1. 检测环境依赖 (不会自动安装，缺失时提示命令)"
+    echo "                   2. 配置 hook → 写入 ~/.claude/settings.json"
+    echo "                   3. 生成配置 → 复制 .env.example 为 .env"
     echo ""
-    echo "  --check      仅检测环境依赖，不做任何写入"
+    echo "  --check        仅检测环境依赖，不做任何写入"
     echo ""
-    echo "  --uninstall  从 ~/.claude/settings.json 移除本项目的 hook 配置"
-    echo "               仅移除本项目的 hook，保留用户的其他配置"
+    echo "  --uninstall    卸载：停止服务、移除 hook 配置、可选清理数据"
+    echo "                 仅移除本项目的 hook，保留用户的其他配置"
     echo ""
-    echo "  --help       显示此帮助信息"
+    echo "  --clean-cache  清理 Python 缓存文件 (__pycache__)"
+    echo ""
+    echo "  --help         显示此帮助信息"
 }
 
 # =============================================================================
@@ -539,9 +628,11 @@ main() {
             check_timeout_config
             ;;
         --uninstall)
-            print_header
-            print_dim "将从 ${SETTINGS_FILE} 移除本项目的 hook 配置（保留其他配置）"
+            print_header "uninstall"
             uninstall
+            ;;
+        --clean-cache)
+            clean_cache
             ;;
         --help|-h)
             show_help
