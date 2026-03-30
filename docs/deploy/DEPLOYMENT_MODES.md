@@ -178,7 +178,7 @@ FEISHU_SEND_MODE=openapi
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
 FEISHU_OWNER_ID=ou_xxx  # 必需
-# FEISHU_EVENT_MODE=auto  # 默认 auto，longpoll 模式无需公网端点
+# FEISHU_EVENT_MODE=auto  # 一般无需配置，auto 自动选择
 # FEISHU_VERIFICATION_TOKEN=xxx  # HTTP 回调模式建议配置
 ```
 

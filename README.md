@@ -527,7 +527,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 }
 ```
 
-> **注意**：PermissionRequest hook 的 `timeout`（秒）建议配置为大于服务端 `PERMISSION_REQUEST_TIMEOUT`（默认 600 秒）的值，确保服务端超时先触发，避免 hook 被 Claude Code 强制终止。上例配置为 660 秒。
+> **注意**：PermissionRequest hook 的 `timeout`（秒）建议配置为大于服务端 `PERMISSION_REQUEST_TIMEOUT`（默认值见 `.env.example`）的值，确保服务端超时先触发，避免 hook 被 Claude Code 强制终止。上例配置为 660 秒。
 
 ### 环境变量
 
@@ -567,13 +567,9 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `FEISHU_APP_ID` | 飞书应用 App ID（单机/网关必填） | - |
 | `FEISHU_APP_SECRET` | 飞书应用 App Secret（单机/网关必填） | - |
 | `FEISHU_VERIFICATION_TOKEN` | 飞书验证 Token（HTTP 回调模式建议配置，长连接模式不需要） | - |
-| `FEISHU_EVENT_MODE` | 飞书事件接收模式：`auto`（默认）/ `http` / `longpoll` | `auto` |
+| `FEISHU_EVENT_MODE` | 飞书事件接收模式：`auto` / `http` / `longpoll`（一般无需配置，auto 自动选择） | `auto` |
 
 **OpenAPI 模式 — 事件接收**
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `FEISHU_EVENT_MODE` | 事件接收模式：`auto` / `http` / `longpoll` | `auto` |
 
 - **auto**（默认）：自动检测 — 有 `lark-oapi` SDK 且 Python >= 3.8 则使用 longpoll，否则 http
 - **http**：传统 HTTP 回调模式，需要公网端点接收飞书事件
@@ -595,7 +591,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `FEISHU_APP_ID` | ✓ | - |
 | `FEISHU_APP_SECRET` | ✓ | - |
 | `FEISHU_VERIFICATION_TOKEN` | ✓（HTTP 回调模式） | - |
-| `FEISHU_EVENT_MODE` | ✓（可选） | - |
+| `FEISHU_EVENT_MODE` | ✓（可选，一般无需配置） | - |
 | `FEISHU_OWNER_ID` | ✓ | ✓ |
 | `FEISHU_CHAT_ID` | ✓ | ✓（客户端读取） |
 
@@ -613,7 +609,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 FEISHU_SEND_MODE=openapi
 FEISHU_APP_ID=cli_xxxxxxxxx
 FEISHU_APP_SECRET=xxxxxxxxxxxx
-FEISHU_EVENT_MODE=auto                        # auto/http/longpoll（默认 auto）
+# FEISHU_EVENT_MODE=auto                      # 一般无需配置，auto 自动选择（auto/http/longpoll）
 # FEISHU_VERIFICATION_TOKEN=your_token        # HTTP 回调模式建议配置，longpoll 模式不需要
 CALLBACK_SERVER_PORT=8080
 FEISHU_OWNER_ID=ou_admin_user
@@ -670,7 +666,7 @@ FEISHU_OWNER_ID=ou_admin_user
 |------|------|--------|
 | `FEISHU_AT_USER` | 通知 @ 用户配置：空=@ `FEISHU_OWNER_ID`，`all`=@ 所有人，`off`=禁用 | 空 |
 | `FEISHU_REPLY_IN_THREAD` | 话题内回复模式：回复消息是否收进话题详情（仅 OpenAPI 模式） | `false` |
-| `PERMISSION_REQUEST_TIMEOUT` | 服务器端超时秒数（0 禁用） | 600 |
+| `PERMISSION_REQUEST_TIMEOUT` | 权限请求服务端超时秒数（需为正整数，无效值回退默认值） | 600 |
 | `PERMISSION_NOTIFY_DELAY` | 权限通知延迟发送秒数 | 60 |
 | `CALLBACK_PAGE_CLOSE_DELAY` | 回调页面自动关闭秒数（建议范围 1-10） | 3 |
 | `STOP_THINKING_MAX_LENGTH` | Stop 事件思考过程最大长度（字符数，0 禁用） | 10000 |
@@ -682,7 +678,7 @@ FEISHU_OWNER_ID=ou_admin_user
 |------|------|--------|
 | `DEFAULT_CHAT_DIR` | 默认聊天目录，配置后直接发消息即可自动创建/继续会话，详见下文 | 空（不启用） |
 | `DEFAULT_CHAT_FOLLOW_THREAD` | 默认聊天目录的话题跟随模式，详见下文 | `true` |
-| `CLAUDE_COMMAND` | Claude 命令，支持多命令列表如 `[claude, claude --setting opus]`，详见下文 | `claude` |
+| `CLAUDE_COMMAND` | Claude 命令，支持多命令列表如 `[claude, claude --model opus]`，详见下文 | `claude` |
 
 **默认聊天目录**
 
@@ -724,7 +720,7 @@ DEFAULT_CHAT_FOLLOW_THREAD=false
 CLAUDE_COMMAND=claude
 
 # 多命令（列表格式，无需引号）
-CLAUDE_COMMAND=[claude, claude --setting opus]
+CLAUDE_COMMAND=[claude, claude --model opus]
 ```
 
 配置多命令后：

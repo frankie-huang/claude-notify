@@ -14,7 +14,7 @@
 #   CALLBACK_SERVER_URL         - 回调服务外部访问地址 (默认: http://localhost:8080)
 #   CALLBACK_SERVER_PORT        - HTTP 服务端口 (默认: 8080)
 #   PERMISSION_SOCKET_PATH      - Unix Socket 路径 (默认: /tmp/claude-permission.sock)
-#   PERMISSION_REQUEST_TIMEOUT  - 请求超时秒数 (默认: 600，0 表示禁用)
+#   PERMISSION_REQUEST_TIMEOUT  - 权限请求超时秒数 (需为正整数，默认值见 .env.example)
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

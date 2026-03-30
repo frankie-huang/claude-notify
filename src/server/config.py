@@ -146,9 +146,9 @@ def get_claude_commands() -> List[str]:
     """解析 CLAUDE_COMMAND 配置为命令列表
 
     支持格式:
-    - 单命令字符串: "claude" 或 "claude --setting opus"
-    - 无引号列表: [claude, claude --setting opus]
-    - JSON 数组: ["claude", "claude --setting opus"]
+    - 单命令字符串: "claude" 或 "claude --model opus"
+    - 无引号列表: [claude, claude --model opus]
+    - JSON 数组: ["claude", "claude --model opus"]
     - 空值/缺失: 默认 ["claude"]
 
     Returns:
@@ -308,5 +308,6 @@ FEISHU_REPLY_IN_THREAD = get_config('FEISHU_REPLY_IN_THREAD', 'false').lower() i
 # 飞书事件接收模式: auto / http / longpoll
 # - auto: 自动检测（默认）- 有 lark-oapi 则 longpoll，否则 http
 # - http: 传统 HTTP 回调模式（需要公网端点）
-# - longpoll: WebSocket 长连接模式（网关主动连接飞书）
+# - longpoll: WebSocket 长连接模式（网关主动连接飞书，无需公网端点）
+# 注: 一般无需配置，auto 自动选择，不在 .env.example 中暴露
 FEISHU_EVENT_MODE = get_config('FEISHU_EVENT_MODE', 'auto')

@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, Tuple
 from services.auth_token import check_global_auth_token
 from services.request_manager import RequestManager
 from services.decision_handler import handle_decision
-from config import VSCODE_URI_PREFIX
+from config import VSCODE_URI_PREFIX, PERMISSION_REQUEST_TIMEOUT
 from handlers.register import handle_register_callback, handle_check_owner_id
 from handlers.claude import handle_continue_session, handle_new_session
 from handlers.utils import send_json, send_html_response
@@ -74,7 +74,7 @@ def handle_status(handler):
     stats = RequestManager.get_instance().get_stats()
     result = {
         'status': 'ok',
-        'mode': 'socket-based (no server-side timeout)',
+        'mode': 'socket-based (timeout: %ds)' % PERMISSION_REQUEST_TIMEOUT,
         **stats
     }
 

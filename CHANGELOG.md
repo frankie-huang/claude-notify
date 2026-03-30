@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Released]
 
+### Fixed - 2026-03-31
+
+#### build_shell_cmd 注入当前 PATH 保持一致性
+
+- login shell 重新加载 profile 可能改变 PATH 顺序，导致找到不同版本的二进制
+- 在构造 shell 命令时注入当前进程的 PATH，覆盖 profile 设置的值
+- fish shell 使用 `set -x PATH` 语法特殊处理，PATH 值均通过 `shlex.quote` 安全转义
+
+### Changed - 2026-03-31
+
+#### 文档与配置清理
+
+- 文档中 `FEISHU_EVENT_MODE` 示例统一标注为注释，明确一般无需配置（auto 自动选择）
+- 文档/示例中 `claude --setting opus` 统一修正为 `claude --model opus`
+- `PERMISSION_REQUEST_TIMEOUT` 移除"0=禁用"语义，改为正整数校验（无效值回退默认值 600）
+
 ### Improved - 2026-03-30
 
 #### install.sh 卸载流程增强与维护命令
@@ -11,7 +27,6 @@ All notable changes to this project will be documented in this file.
 - `--uninstall` 从仅移除 hook 配置升级为完整卸载流程：确认提示、停止服务、移除配置、可选清理 runtime/log/.env
 - 卸载时遍历所有 hook 事件（不再硬编码事件名），更健壮
 - 新增 `--clean-cache` 命令，清理 Python `__pycache__` 缓存目录
-- `.env.example` 配置表补充 `FEISHU_EVENT_MODE` 字段说明
 
 ### Added - 2026-03-29
 
@@ -879,7 +894,7 @@ Claude Code
 - `CALLBACK_SERVER_URL` - 回调服务外部访问地址（默认: http://localhost:8080）
 - `CALLBACK_SERVER_PORT` - HTTP 服务端口（默认: 8080）
 - `PERMISSION_SOCKET_PATH` - Unix Socket 路径（默认: /tmp/claude-permission.sock）
-- `PERMISSION_REQUEST_TIMEOUT` - 服务器端超时秒数（默认: 600，设为 0 禁用）
+- `PERMISSION_REQUEST_TIMEOUT` - 服务器端超时秒数（需为正整数，默认: 600）
 
 **依赖**:
 - 可交互模式: socat, python3, curl

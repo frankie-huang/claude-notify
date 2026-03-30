@@ -238,10 +238,9 @@ PYTHON_SCRIPT
     echo ""
 
     # 检查配置是否合理
-    # 服务端超时为 0 表示禁用，此时无需检查
-    if [ "$server_timeout" -eq 0 ]; then
-        print_info "服务端超时已禁用 (PERMISSION_REQUEST_TIMEOUT=0)"
-        print_info "Hook 超时将由 Claude Code 默认值控制"
+    # 服务端超时需为正整数，0 或无效值在服务端运行时会自动回退为默认值
+    if [ "$server_timeout" -le 0 ]; then
+        print_info "PERMISSION_REQUEST_TIMEOUT=${server_timeout} 非正整数，服务端启动时将自动回退为默认值"
         return 0
     fi
 
@@ -290,7 +289,7 @@ configure_hook() {
     mkdir -p "$(dirname "$SETTINGS_FILE")"
 
     # 使用 Python 统一处理配置（新建或合并，仅增量写入缺失的 hook 事件）
-    # PermissionRequest timeout 需大于服务端 PERMISSION_REQUEST_TIMEOUT（默认 600 秒）
+    # PermissionRequest timeout 需大于服务端 PERMISSION_REQUEST_TIMEOUT（默认值见 .env.example）
     # 冲突时通过 /dev/tty 读取用户输入（因 stdin 被 heredoc 占用）
     SETTINGS_FILE="$SETTINGS_FILE" HOOK_PATH="$HOOK_PATH" python3 << 'PYTHON_SCRIPT'
 import json

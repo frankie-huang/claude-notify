@@ -47,7 +47,7 @@ export FEISHU_WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
 | `CALLBACK_SERVER_URL` | `http://localhost:8080` | 回调服务外部访问地址 |
 | `CALLBACK_SERVER_PORT` | `8080` | 回调服务 HTTP 端口 |
 | `PERMISSION_SOCKET_PATH` | `/tmp/claude-permission.sock` | Unix Socket 路径 |
-| `PERMISSION_REQUEST_TIMEOUT` | `600` | 服务器端超时秒数（0=禁用） |
+| `PERMISSION_REQUEST_TIMEOUT` | `600` | 服务器端超时秒数（需为正整数，无效值回退默认值） |
 
 ---
 
@@ -232,28 +232,56 @@ tail -50 log/callback/$(date +%Y-%m-%d).log | grep -A 5 "fallback"
 
 ---
 
-### 场景 5: Claude hook 超时 < 服务端超时
+### 场景 5: Claude hook 超时 > 服务端超时（正常配置）
 
 #### 背景
 
-Claude Code 的 hook 超时时间由 Claude 内部控制（通常较短，约 10-30 秒），而服务端超时默认为 300 秒。
+正常配置下，install.sh 会设置 hook 超时 = 服务端超时 + 60s，确保服务端先超时并发送"回退终端"响应，而不是被 Claude 直接杀进程。
 
 #### 测试步骤
 
-1. 使用默认服务端超时（300s）：
+1. 使用默认服务端超时，确认 hook 超时 > 服务端超时：
+```bash
+# 查看当前配置
+grep PERMISSION_REQUEST_TIMEOUT .env
+# 检查 settings.json 中 PermissionRequest hook 的 timeout
+```
+
+2. 触发权限请求
+
+3. **不点击任何按钮**，等待服务端超时
+
+#### 预期行为（同场景 4）
+
+- ✅ 服务端超时后发送"回退终端"响应
+- ✅ 脚本返回 EXIT_FALLBACK
+- ✅ Claude 回退到终端交互模式
+
+---
+
+### 场景 6: Claude hook 超时 < 服务端超时（配置不当）
+
+#### 背景
+
+如果未通过 install.sh 配置 hook 超时（或手动设置了过短的 hook 超时），Claude 会在服务端超时前杀死 hook 进程，导致服务端检测到连接断开而非正常超时。
+
+#### 测试步骤
+
+1. 设置较大的服务端超时，并手动将 hook 超时设为较短值：
 ```bash
 export PERMISSION_REQUEST_TIMEOUT=300
 ./src/start-server.sh restart
+# 手动修改 settings.json 中 hook timeout 为较短值（如 30s）
 ```
 
 2. 触发一个权限请求
 
-3. **不点击任何按钮**，等待 Claude 超时（约 10-30 秒）
+3. **不点击任何按钮**，等待 Claude hook 超时
 
 #### 预期行为
 
 **Claude Code 层面**：
-- ✅ Claude 在内部超时后取消 hook 进程
+- ✅ Claude 在 hook 超时后取消 hook 进程
 - ✅ 显示错误信息或重试提示
 
 **服务端层面**：
@@ -271,80 +299,12 @@ export PERMISSION_REQUEST_TIMEOUT=300
 grep "Cleaned up dead connection" log/callback/$(date +%Y-%m-%d).log
 
 # 预期看到类似输出：
-# 2025-01-17 10:05:00.123 [INFO] [socket] Request 123-abc registered, waiting for user response...
-# 2025-01-17 10:05:20.456 [INFO] Cleaned up dead connection: 123-abc (age=20s)  # 远小于 300s
+# Cleaned up dead connection: 123-abc (age=30s)  # 远小于服务端超时
 ```
 
 ---
 
-### 场景 6: Claude hook 超时 > 服务端超时
-
-#### 说明
-
-此场景**理论不可能发生**，因为：
-1. Claude 的 hook 超时通常在 10-30 秒范围
-2. 服务端超时默认为 300 秒
-3. 服务端超时可配置为 0（禁用），但不能小于 Claude 超时
-
-#### 如果强制测试（使用极短的服务端超时）
-
-1. 设置极短的服务端超时（如 5 秒）：
-```bash
-export PERMISSION_REQUEST_TIMEOUT=5
-./src/start-server.sh restart
-```
-
-2. 触发权限请求
-
-3. 等待 5 秒
-
-#### 预期行为（同场景 4）
-
-- ✅ 5 秒后服务端发送"回退终端"响应
-- ✅ 脚本返回 EXIT_FALLBACK
-- ✅ Claude 回退到终端交互模式
-
----
-
-### 场景 7: 禁用服务端超时（PERMISSION_REQUEST_TIMEOUT=0）
-
-#### 测试步骤
-
-1. 禁用超时：
-```bash
-export PERMISSION_REQUEST_TIMEOUT=0
-./src/start-server.sh restart
-```
-
-2. 验证配置：
-```bash
-curl -s --noproxy '*' -H "X-Auth-Token: $(python3 -c 'import json;print(json.load(open("runtime/auth_token.json"))["auth_token"])')" http://127.0.0.1:8080/status | python3 -m json.tool
-# 预期输出包含: "mode": "socket-based (no server-side timeout)"
-```
-
-3. 触发权限请求
-
-4. 等待任意长时间后点击按钮
-
-#### 预期行为
-
-- ✅ 服务端**永不超时**
-- ✅ 只要 Socket 连接存活（Claude 未超时），用户随时可以操作
-- ✅ 实际受限于 Claude 的 hook 超时（通常 10-30 秒）
-
-#### 验证方法
-
-```bash
-# 查看日志确认超时禁用
-grep "Request Timeout" log/callback/$(date +%Y-%m-%d).log | head -1
-
-# 预期输出：
-# 2025-01-17 10:00:00.000 [INFO] Request Timeout: 0s (disabled)
-```
-
----
-
-### 场景 8: 用户点击"拒绝运行"
+### 场景 7: 用户点击"拒绝运行"
 
 #### 测试步骤
 
@@ -377,7 +337,7 @@ grep "Request Timeout" log/callback/$(date +%Y-%m-%d).log | head -1
 
 ---
 
-### 场景 9: 用户点击"拒绝并中断"
+### 场景 8: 用户点击"拒绝并中断"
 
 #### 测试步骤
 
@@ -411,7 +371,7 @@ grep "Request Timeout" log/callback/$(date +%Y-%m-%d).log | head -1
 
 ---
 
-### 场景 10: 用户点击"始终允许"
+### 场景 9: 用户点击"始终允许"
 
 #### 测试步骤
 
@@ -450,7 +410,7 @@ grep "Added always-allow rule" log/callback/$(date +%Y-%m-%d).log
 
 ---
 
-### 场景 11: 用户重复点击按钮
+### 场景 10: 用户重复点击按钮
 
 #### 测试步骤
 
@@ -474,7 +434,7 @@ grep -A 2 "Already resolved" log/callback/$(date +%Y-%m-%d).log
 
 ---
 
-### 场景 12: Socket 连接中断（网络/进程问题）
+### 场景 11: Socket 连接中断（网络/进程问题）
 
 #### 测试步骤
 
@@ -506,7 +466,7 @@ tail -30 /tmp/socket-client-debug.log
 
 ---
 
-### 场景 13: 飞书 Webhook 发送失败
+### 场景 12: 飞书 Webhook 发送失败
 
 #### 测试步骤
 
@@ -535,7 +495,7 @@ grep "Failed to send Feishu card" log/hook/$(date +%Y-%m-%d).log
 
 ---
 
-### 场景 14: 多个并发权限请求
+### 场景 13: 多个并发权限请求
 
 #### 测试步骤
 
@@ -572,7 +532,7 @@ curl -s --noproxy '*' -H "X-Auth-Token: $(python3 -c 'import json;print(json.loa
 
 ---
 
-### 场景 15: 回调服务地址配置错误
+### 场景 14: 回调服务地址配置错误
 
 #### 测试步骤
 
@@ -762,7 +722,7 @@ touch "/tmp/test file with spaces.txt"
 
 - [ ] 服务端超时后正确回退到终端
 - [ ] Claude 超时后连接正确清理
-- [ ] 禁用超时时功能正常
+- [ ] 无效超时值（0/负数）正确回退默认值
 
 ### 异常处理
 

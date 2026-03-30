@@ -236,11 +236,11 @@ FEISHU_APP_ID=cli_xxxxxxxxx
 FEISHU_APP_SECRET=xxxxxxxxxxxx
 FEISHU_OWNER_ID=ou_xxx  # 默认消息接收者（必需，user_id 格式）
 
-# 事件接收模式（可选，默认 auto）
+# 事件接收模式（一般无需配置，默认 auto 自动选择）
 # auto: 有 lark-oapi 则 longpoll，否则 http
 # http: 传统 HTTP 回调（需公网端点）
 # longpoll: WebSocket 长连接（无需公网端点）
-FEISHU_EVENT_MODE=auto
+# FEISHU_EVENT_MODE=auto
 
 # HTTP 回调模式建议配置（longpoll 模式不需要）
 # FEISHU_VERIFICATION_TOKEN=your_verification_token
@@ -261,7 +261,7 @@ FEISHU_APP_ID=cli_xxxxxxxxx
 FEISHU_APP_SECRET=xxxxxxxxxxxx
 FEISHU_OWNER_ID=ou_admin_user  # 默认接收者（user_id 格式）
 CALLBACK_SERVER_PORT=8080
-FEISHU_EVENT_MODE=auto  # auto/http/longpoll（默认 auto）
+# FEISHU_EVENT_MODE=auto               # 一般无需配置，auto 自动选择
 # FEISHU_VERIFICATION_TOKEN=your_token  # HTTP 回调模式建议配置
 ```
 
@@ -303,7 +303,7 @@ FEISHU_OWNER_ID=ou_user_a  # 此实例的消息接收者（user_id 格式）
 | `FEISHU_APP_ID` | **网关** | - | 飞书应用 App ID（单机/网关必需，Callback 不需要） |
 | `FEISHU_APP_SECRET` | **网关** | - | 飞书应用 App Secret（单机/网关必需，Callback 不需要） |
 | `FEISHU_VERIFICATION_TOKEN` | 否 | - | 飞书验证 Token（HTTP 回调模式建议配置，longpoll 模式不需要） |
-| `FEISHU_EVENT_MODE` | 否 | `auto` | 事件接收模式：`auto`/`http`/`longpoll` |
+| `FEISHU_EVENT_MODE` | 否 | `auto` | 事件接收模式：`auto`/`http`/`longpoll`（一般无需配置，auto 自动选择） |
 | `FEISHU_OWNER_ID` | **是** | - | 默认消息接收者（OpenAPI 模式必需） |
 | `FEISHU_CHAT_ID` | 否 | - | 默认群聊 ID |
 | `FEISHU_GATEWAY_URL` | **Callback** | `CALLBACK_SERVER_URL` | 网关地址（分离部署时配置）。协议头决定连接模式：`ws://` 启用 WS 隧道（推荐），`http://` 使用 HTTP 回调。不配置则默认使用 `CALLBACK_SERVER_URL` |
@@ -455,7 +455,7 @@ FEISHU_SEND_MODE=openapi
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
 FEISHU_OWNER_ID=ou_xxx  # 默认接收者（user_id 格式）
-FEISHU_EVENT_MODE=auto   # longpoll 模式无需公网端点
+# FEISHU_EVENT_MODE=auto  # 一般无需配置，auto 自动选择
 CALLBACK_SERVER_URL=http://your-server:8080
 # FEISHU_VERIFICATION_TOKEN=xxx  # HTTP 回调模式建议配置
 ```
@@ -487,7 +487,7 @@ FEISHU_SEND_MODE=openapi
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
 FEISHU_OWNER_ID=ou_admin  # user_id 格式
-FEISHU_EVENT_MODE=auto
+# FEISHU_EVENT_MODE=auto  # 一般无需配置，auto 自动选择
 CALLBACK_SERVER_PORT=8080
 EOF
 
@@ -709,7 +709,7 @@ FEISHU_OWNER_ID=ou_xxx  # user_id 格式
 
 ```bash
 # 单机部署（longpoll 模式 — 无需 VERIFICATION_TOKEN）
-FEISHU_EVENT_MODE=auto  # 或 longpoll
+# FEISHU_EVENT_MODE=auto  # 一般无需配置，auto 自动选择
 
 # 单机部署（HTTP 回调模式 — 建议配置 VERIFICATION_TOKEN）
 FEISHU_VERIFICATION_TOKEN=your_verification_token
@@ -783,13 +783,13 @@ HTTP 回调模式下检查以下几点：
 
 **A:** 在 `.env` 中配置：
 ```bash
-CLAUDE_COMMAND=[claude, claude --setting opus]
+CLAUDE_COMMAND=[claude, claude --model opus]
 ```
 
 然后在飞书中：
 - `/new --cmd=0 --dir=/path prompt` — 使用第一个命令 `claude`
-- `/new --cmd=1 --dir=/path prompt` — 使用第二个命令 `claude --setting opus`
-- `/new --cmd=opus --dir=/path prompt` — 子串匹配，命中 `claude --setting opus`
+- `/new --cmd=1 --dir=/path prompt` — 使用第二个命令 `claude --model opus`
+- `/new --cmd=opus --dir=/path prompt` — 子串匹配，命中 `claude --model opus`
 
 > **说明**：`--cmd` 支持两种匹配方式：
 > - **索引**：从 0 开始，`--cmd=0` 表示第一个命令

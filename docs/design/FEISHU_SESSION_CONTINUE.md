@@ -646,7 +646,7 @@ CLAUDE_COMMAND=claude
 CLAUDE_COMMAND=claude-glm
 
 # 带参数的命令（需要用引号包裹）
-CLAUDE_COMMAND="claude --setting opus"
+CLAUDE_COMMAND="claude --model opus"
 ```
 
 **支持 Shell 别名：**
@@ -655,7 +655,7 @@ CLAUDE_COMMAND="claude --setting opus"
 
 ```bash
 # ~/.bashrc 中定义别名
-alias claude-glm='claude --setting opus'
+alias claude-glm='claude --model opus'
 
 # .env 中直接使用别名
 CLAUDE_COMMAND=claude-glm
@@ -664,7 +664,7 @@ CLAUDE_COMMAND=claude-glm
 **适用场景**：
 
 - 使用其他 Claude 变体（如 `claude-glm`）
-- 指定模型参数（如 `--setting opus`）
+- 指定模型参数（如 `--model opus`）
 - 使用 Shell 配置文件中定义的别名
 - 使用自定义脚本路径
 

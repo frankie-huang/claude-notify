@@ -240,13 +240,13 @@ class RequestManager:
         """清理长时间未处理的请求和断开的连接
 
         功能：
-            - 检测并清理已断开的 Socket 连接（无论是否启用超时）
-            - 如果启用超时，超时请求发送"回退终端"响应
+            - 检测并清理已断开的 Socket 连接
+            - 超时请求发送"回退终端"响应
 
         Args:
-            max_age: 超时秒数，None 表示使用 PERMISSION_REQUEST_TIMEOUT 配置，0 表示禁用超时
+            max_age: 超时秒数（正整数），None 表示使用 PERMISSION_REQUEST_TIMEOUT 配置
         """
-        if max_age is None:
+        if not max_age or max_age <= 0:
             max_age = PERMISSION_REQUEST_TIMEOUT
 
         with self._lock:
@@ -256,7 +256,7 @@ class RequestManager:
                     age = now - req['timestamp']
                     conn = req['conn']
 
-                    # 检查连接是否已断开（无论是否启用超时）
+                    # 检查连接是否已断开
                     if not self._is_connection_alive(conn):
                         session_id = req['data'].get('session_id', 'unknown')
                         req['status'] = self.STATUS_DISCONNECTED
@@ -264,8 +264,8 @@ class RequestManager:
                         logger.info(f"Cleaned up dead connection: {rid} (Session: {session_id}, age={age:.0f}s)")
                         continue
 
-                    # 如果启用了超时，检查是否超时
-                    if max_age > 0 and age > max_age:
+                    # 检查是否超时
+                    if age > max_age:
                         # 发送"回退终端"响应，而不是直接关闭连接
                         self._send_fallback_response(rid, req, conn, age)
 

@@ -865,7 +865,7 @@ if [ -z "$OWNER_ID" ]; then
 fi
 
 if [ "$DEPLOY_MODE" = "standalone" ]; then
-    # 读取 .env 中的 FEISHU_EVENT_MODE
+    # 读取 .env 中的 FEISHU_EVENT_MODE（一般无需配置，auto 自动选择）
     EVENT_MODE=$(get_env_value "FEISHU_EVENT_MODE" "$ENV_FILE")
     EVENT_MODE="${EVENT_MODE:-auto}"
     echo "  ${STEP}. 在飞书开放平台配置事件与回调："

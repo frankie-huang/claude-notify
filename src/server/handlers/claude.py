@@ -191,7 +191,7 @@ def _get_claude_command(claude_command: str = '') -> str:
         claude_command: 指定的命令字符串（可选）
 
     Returns:
-        命令字符串，如 'claude' 或 'claude --setting opus'
+        命令字符串，如 'claude' 或 'claude --model opus'
     """
     if claude_command:
         return claude_command
