@@ -420,6 +420,13 @@ def _handle_message_event(data: dict):
             _run_in_background(_send_notice_message, (chat_id, hint, message_id))
         return
 
+    # 群聊 @bot 过滤：at_bot_only=true 时，群聊中非 @bot 的消息静默忽略
+    if chat_type == 'group' and not message.get('is_at_bot', False):
+        if binding.get('at_bot_only', False):
+            logger.debug("[feishu] Ignored non-@bot message in group: chat=%s msg=%s",
+                         chat_id, message_id)
+            return
+
     # 检查是否是命令（优先处理，因为命令也可能是回复消息）
     is_command, command, args = _parse_command(text)
     if is_command:
@@ -427,8 +434,6 @@ def _handle_message_event(data: dict):
         return
 
     # 非命令消息：空内容早退（图片/贴图/非文字消息等均 text 为空）
-    # 不静默——bot 能收到消息即代表用户希望 bot 处理（用户可通过 FEISHU_AT_BOT_ONLY 等
-    # 配置限定接收范围）。空内容无法转给 Claude，直接告知用户避免"bot 收到却没反应"的疑惑。
     prompt = text.strip()
     if not prompt:
         hint = "消息内容为空，无法继续会话" if parent_id else "消息内容为空，请发送文字消息与我对话"
@@ -2330,6 +2335,7 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
             - owner_id: 飞书用户 ID
             - request_ip: 注册来源 IP（仅 approve_register 需要）
             - request_id: 注册请求 ID（WS 模式需要）
+            - at_bot_only: 群聊 @bot 过滤（仅 approve_register 需要）
             - session_mode: 会话模式 message/thread/group（仅 approve_register 需要）
             - claude_commands: 可用的 Claude 命令列表（仅 approve_register 需要）
             - default_chat_dir: 默认聊天目录（仅 approve_register 需要）
@@ -2349,6 +2355,7 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
     owner_id = value.get('owner_id', '')
     request_ip = value.get('request_ip', '')
     request_id = value.get('request_id', '')
+    at_bot_only = value.get('at_bot_only')
     session_mode = value.get('session_mode', 'message')
     claude_commands = value.get('claude_commands', None)
     default_chat_dir = value.get('default_chat_dir', '')
@@ -2362,6 +2369,7 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
             logger.info("[feishu] WS registration approved: owner_id=%s", owner_id)
             return True, handle_ws_authorization_approved(
                 owner_id, request_id, request_ip,
+                at_bot_only=at_bot_only,
                 session_mode=session_mode,
                 claude_commands=claude_commands,
                 default_chat_dir=default_chat_dir,
@@ -2389,6 +2397,7 @@ def handle_card_action_register(value: dict) -> Tuple[bool, dict]:
         logger.info("[feishu] Registration approved: owner_id=%s, callback_url=%s, session_mode=%s", owner_id, callback_url, session_mode)
         return True, handle_authorization_decision(
             callback_url, owner_id, request_ip, approved=True,
+            at_bot_only=at_bot_only,
             session_mode=session_mode,
             claude_commands=claude_commands,
             default_chat_dir=default_chat_dir,

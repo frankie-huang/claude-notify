@@ -552,12 +552,14 @@ def main():
         if FEISHU_GATEWAY_MODE == 'ws':
             # WS 隧道模式：客户端主动连接网关，适用于本地开发（callback 不可公网访问）
             from services.ws_tunnel_client import start_ws_tunnel_client
-            from config import (FEISHU_REPLY_IN_THREAD, FEISHU_SESSION_MODE,
+            from config import (FEISHU_REPLY_IN_THREAD, FEISHU_AT_BOT_ONLY,
+                                FEISHU_SESSION_MODE,
                                 DEFAULT_CHAT_FOLLOW_THREAD, get_claude_commands,
                                 FEISHU_GROUP_NAME_PREFIX, FEISHU_GROUP_DISSOLVE_DAYS)
             start_ws_tunnel_client(
                 FEISHU_GATEWAY_URL, FEISHU_OWNER_ID,
                 reply_in_thread=FEISHU_REPLY_IN_THREAD,
+                at_bot_only=FEISHU_AT_BOT_ONLY,
                 session_mode=FEISHU_SESSION_MODE,
                 claude_commands=get_claude_commands(),
                 default_chat_dir=DEFAULT_CHAT_DIR,

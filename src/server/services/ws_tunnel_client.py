@@ -48,6 +48,7 @@ class WSTunnelClient:
 
     def __init__(self, gateway_url: str, owner_id: str,
                  reply_in_thread: bool = False,
+                 at_bot_only: Optional[bool] = None,
                  session_mode: str = '',
                  claude_commands: Optional[List[str]] = None,
                  default_chat_dir: str = '',
@@ -59,6 +60,7 @@ class WSTunnelClient:
             gateway_url: 网关 HTTP base URL（如 http://gateway:8080）
             owner_id: 飞书用户 ID
             reply_in_thread: 是否使用回复话题模式
+            at_bot_only: 群聊 @bot 过滤（传递给 gateway BindingStore）
             session_mode: 会话模式（message/thread/group）
             claude_commands: 可用的 Claude 命令列表
             default_chat_dir: 默认聊天目录
@@ -69,6 +71,7 @@ class WSTunnelClient:
         self.gateway_url = gateway_url
         self.owner_id = owner_id
         self.reply_in_thread = reply_in_thread
+        self.at_bot_only = at_bot_only
         self.session_mode = session_mode
         self.claude_commands = claude_commands
         self.default_chat_dir = default_chat_dir
@@ -187,6 +190,7 @@ class WSTunnelClient:
             'type': 'register',
             'owner_id': self.owner_id,
             'reply_in_thread': self.reply_in_thread,
+            'at_bot_only': self.at_bot_only,
             'session_mode': self.session_mode
         }
         if self.claude_commands:
@@ -453,6 +457,7 @@ _client_instance: Optional['WSTunnelClient'] = None
 
 def start_ws_tunnel_client(gateway_url: str, owner_id: str,
                            reply_in_thread: bool = False,
+                           at_bot_only: Optional[bool] = None,
                            session_mode: str = '',
                            claude_commands: Optional[List[str]] = None,
                            default_chat_dir: str = '',
@@ -465,6 +470,7 @@ def start_ws_tunnel_client(gateway_url: str, owner_id: str,
         gateway_url: 网关 HTTP base URL（如 http://gateway:8080）
         owner_id: 飞书用户 ID
         reply_in_thread: 是否使用回复话题模式
+        at_bot_only: 群聊 @bot 过滤（传递给 gateway BindingStore）
         session_mode: 会话模式（message/thread/group）
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
@@ -484,6 +490,7 @@ def start_ws_tunnel_client(gateway_url: str, owner_id: str,
     _client_instance = WSTunnelClient(
         gateway_url, owner_id,
         reply_in_thread=reply_in_thread,
+        at_bot_only=at_bot_only,
         session_mode=session_mode,
         claude_commands=claude_commands,
         default_chat_dir=default_chat_dir,

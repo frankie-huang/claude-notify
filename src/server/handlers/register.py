@@ -80,6 +80,7 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
         data: 请求数据
             - callback_url: Callback 后端 URL（必需）
             - owner_id: 飞书用户 ID（必需）
+            - at_bot_only: 群聊 @bot 过滤（可选）
             - session_mode: 会话模式，message/thread/group（可选，默认 message）
             - reply_in_thread: 已废弃，兼容旧客户端（True 映射为 session_mode='thread'）
             - claude_commands: 可用的 Claude 命令列表（可选）
@@ -94,6 +95,7 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
     """
     callback_url = data.get('callback_url', '')
     owner_id = data.get('owner_id', '')
+    at_bot_only = data.get('at_bot_only')
     claude_commands = data.get('claude_commands', None)
     default_chat_dir = data.get('default_chat_dir', '')
     default_chat_follow_thread = data.get('default_chat_follow_thread', True)
@@ -117,7 +119,7 @@ def handle_register_request(data: dict, client_ip: str = '') -> Tuple[bool, dict
     logger.info(f"[register] Registration request: owner_id={owner_id}, callback_url={callback_url}, ip={client_ip}, session_mode={session_mode}, claude_commands={claude_commands}, default_chat_dir={default_chat_dir}")
 
     # 在后台线程中处理注册逻辑（异步）
-    _run_in_background(_process_registration, (callback_url, owner_id, client_ip, session_mode, claude_commands, default_chat_dir, default_chat_follow_thread, group_name_prefix, group_dissolve_days))
+    _run_in_background(_process_registration, (callback_url, owner_id, client_ip, at_bot_only, session_mode, claude_commands, default_chat_dir, default_chat_follow_thread, group_name_prefix, group_dissolve_days))
 
     # 立即返回成功
     return True, {
@@ -235,6 +237,7 @@ def _process_registration(
     callback_url: str,
     owner_id: str,
     client_ip: str,
+    at_bot_only: Optional[bool] = None,
     session_mode: str = 'message',
     claude_commands: Optional[List[str]] = None,
     default_chat_dir: str = '',
@@ -255,6 +258,7 @@ def _process_registration(
         callback_url: Callback 后端 URL
         owner_id: 飞书用户 ID
         client_ip: 客户端 IP
+        at_bot_only: 群聊 @bot 过滤
         session_mode: 会话模式，message/thread/group
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
@@ -289,6 +293,7 @@ def _process_registration(
             _notify_callback(callback_url, owner_id, auth_token, client_ip)
             store.upsert(
                 owner_id, callback_url, auth_token, client_ip,
+                at_bot_only,
                 session_mode, claude_commands,
                 default_chat_dir, default_chat_follow_thread,
                 group_name_prefix, group_dissolve_days
@@ -303,6 +308,7 @@ def _process_registration(
             _send_authorization_card(
                 callback_url, owner_id, client_ip,
                 old_callback_url=bound_callback_url,
+                at_bot_only=at_bot_only,
                 session_mode=session_mode,
                 claude_commands=claude_commands,
                 default_chat_dir=default_chat_dir,
@@ -323,6 +329,7 @@ def _process_registration(
         # 不提前生成 auth_token，等用户批准后再生成
         _send_authorization_card(
             callback_url, owner_id, client_ip,
+            at_bot_only=at_bot_only,
             session_mode=session_mode,
             claude_commands=claude_commands,
             default_chat_dir=default_chat_dir,
@@ -546,6 +553,7 @@ def _send_authorization_card(
     owner_id: str,
     client_ip: str,
     old_callback_url: str = '',
+    at_bot_only: Optional[bool] = None,
     session_mode: str = 'message',
     claude_commands: Optional[List[str]] = None,
     default_chat_dir: str = '',
@@ -563,6 +571,7 @@ def _send_authorization_card(
         owner_id: 飞书用户 ID
         client_ip: 客户端 IP
         old_callback_url: 旧的 callback_url（如果有，表示更换设备场景）
+        at_bot_only: 群聊 @bot 过滤
         session_mode: 会话模式，message/thread/group
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
@@ -608,6 +617,7 @@ def _send_authorization_card(
             "owner_id": owner_id,
             "request_ip": client_ip,
             "old_callback_url": old_callback_url,
+            "at_bot_only": at_bot_only,
             "session_mode": session_mode,
             "claude_commands": claude_commands,
             "default_chat_dir": default_chat_dir,
@@ -723,6 +733,7 @@ def handle_authorization_decision(
     owner_id: str,
     client_ip: str,
     approved: bool,
+    at_bot_only: Optional[bool] = None,
     session_mode: str = 'message',
     claude_commands: Optional[List[str]] = None,
     default_chat_dir: str = '',
@@ -737,6 +748,7 @@ def handle_authorization_decision(
         owner_id: 飞书用户 ID
         client_ip: 客户端 IP
         approved: 用户是否批准
+        at_bot_only: 群聊 @bot 过滤
         session_mode: 会话模式，message/thread/group
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
@@ -771,6 +783,7 @@ def handle_authorization_decision(
         if store:
             store.upsert(
                 owner_id, callback_url, auth_token, client_ip,
+                at_bot_only,
                 session_mode, claude_commands,
                 default_chat_dir, default_chat_follow_thread,
                 group_name_prefix, group_dissolve_days
@@ -881,6 +894,7 @@ def handle_register_unbind(callback_url: str, owner_id: str) -> Dict[str, Any]:
 
 def _send_ws_authorization_card(owner_id: str, request_id: str,
                                 client_ip: str, title: str, content: str,
+                                at_bot_only: Optional[bool] = None,
                                 session_mode: str = 'message',
                                 claude_commands: Optional[List[str]] = None,
                                 default_chat_dir: str = '',
@@ -899,6 +913,7 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
         client_ip: 客户端 IP
         title: 卡片标题
         content: 卡片正文（lark_md 格式）
+        at_bot_only: 群聊 @bot 过滤
         session_mode: 会话模式，message/thread/group
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
@@ -925,6 +940,7 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
             "owner_id": owner_id,
             "request_id": request_id,
             "request_ip": client_ip,
+            "at_bot_only": at_bot_only,
             "session_mode": session_mode,
             "claude_commands": claude_commands,
             "default_chat_dir": default_chat_dir,
@@ -961,6 +977,7 @@ def _send_ws_authorization_card(owner_id: str, request_id: str,
 
 def handle_ws_registration(owner_id: str, request_id: str,
                            client_ip: str,
+                           at_bot_only: Optional[bool] = None,
                            session_mode: str = 'message',
                            claude_commands: Optional[List[str]] = None,
                            default_chat_dir: str = '',
@@ -976,6 +993,7 @@ def handle_ws_registration(owner_id: str, request_id: str,
         owner_id: 飞书用户 ID
         request_id: 本次注册请求的唯一标识（UUID），用于卡片-连接匹配验证
         client_ip: 客户端 IP
+        at_bot_only: 群聊 @bot 过滤
         session_mode: 会话模式，message/thread/group
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
@@ -995,6 +1013,7 @@ def handle_ws_registration(owner_id: str, request_id: str,
         f"是否允许该连接？"
     )
     return _send_ws_authorization_card(owner_id, request_id, client_ip, title, content,
+                                       at_bot_only=at_bot_only,
                                        session_mode=session_mode,
                                        claude_commands=claude_commands,
                                        default_chat_dir=default_chat_dir,
@@ -1005,6 +1024,7 @@ def handle_ws_registration(owner_id: str, request_id: str,
 
 def handle_ws_rebind_registration(owner_id: str, request_id: str,
                                    client_ip: str, old_ip: str,
+                                   at_bot_only: Optional[bool] = None,
                                    session_mode: str = 'message',
                                    claude_commands: Optional[List[str]] = None,
                                    default_chat_dir: str = '',
@@ -1022,6 +1042,7 @@ def handle_ws_rebind_registration(owner_id: str, request_id: str,
         request_id: 本次注册请求的唯一标识（UUID），用于卡片-连接匹配验证
         client_ip: 新终端 IP
         old_ip: 旧终端 IP
+        at_bot_only: 群聊 @bot 过滤
         session_mode: 会话模式，message/thread/group
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
@@ -1042,6 +1063,7 @@ def handle_ws_rebind_registration(owner_id: str, request_id: str,
         f"是否允许换绑到新终端？"
     )
     return _send_ws_authorization_card(owner_id, request_id, client_ip, title, content,
+                                       at_bot_only=at_bot_only,
                                        session_mode=session_mode,
                                        claude_commands=claude_commands,
                                        default_chat_dir=default_chat_dir,
@@ -1070,6 +1092,7 @@ def ws_send_auth_ok(sock: 'socket.socket', auth_token: str) -> None:
 
 def handle_ws_authorization_approved(owner_id: str, request_id: str,
                                      client_ip: str,
+                                     at_bot_only: Optional[bool] = None,
                                      session_mode: str = 'message',
                                      claude_commands: Optional[List[str]] = None,
                                      default_chat_dir: str = '',
@@ -1084,6 +1107,7 @@ def handle_ws_authorization_approved(owner_id: str, request_id: str,
         owner_id: 飞书用户 ID
         request_id: 本次注册请求的唯一标识（UUID），用于卡片-连接匹配验证
         client_ip: 客户端 IP
+        at_bot_only: 群聊 @bot 过滤
         session_mode: 会话模式，message/thread/group
         claude_commands: 可用的 Claude 命令列表
         default_chat_dir: 默认聊天目录
@@ -1157,6 +1181,7 @@ def handle_ws_authorization_approved(owner_id: str, request_id: str,
         # 此处传入的参数会与已有参数合并（不覆盖已有值）
         if not registry.prepare_authorization(owner_id, request_id, auth_token, {
             'client_ip': client_ip,
+            'at_bot_only': at_bot_only,
             'session_mode': session_mode,
             'claude_commands': claude_commands,
             'default_chat_dir': default_chat_dir,

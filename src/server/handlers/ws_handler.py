@@ -175,6 +175,7 @@ def _process_tunnel_connection(sock: socket.socket, handler: Any, owner_id: str,
     # === 处理 register 消息 ===
     if msg_type == 'register':
         # 提取 register 消息中的配置参数
+        msg_at_bot_only = msg.get('at_bot_only')
         # 入口转换：优先使用 session_mode，旧客户端用 reply_in_thread 映射
         msg_session_mode = msg.get('session_mode', '')
         if not msg_session_mode or msg_session_mode not in ('message', 'thread', 'group'):
@@ -212,6 +213,7 @@ def _process_tunnel_connection(sock: socket.socket, handler: Any, owner_id: str,
                 registry.set_pending_auth_token(owner_id, request_id, new_token)
                 registry.set_pending_binding_params(owner_id, request_id, {
                     'client_ip': client_ip,
+                    'at_bot_only': msg_at_bot_only,
                     'session_mode': msg_session_mode,
                     'claude_commands': msg_claude_commands,
                     'default_chat_dir': msg_default_chat_dir,
@@ -248,6 +250,7 @@ def _process_tunnel_connection(sock: socket.socket, handler: Any, owner_id: str,
                 from handlers.register import handle_ws_rebind_registration
                 card_sent = handle_ws_rebind_registration(
                     owner_id, request_id, client_ip, old_ip,
+                    at_bot_only=msg_at_bot_only,
                     session_mode=msg_session_mode,
                     claude_commands=msg_claude_commands,
                     default_chat_dir=msg_default_chat_dir,
@@ -277,6 +280,7 @@ def _process_tunnel_connection(sock: socket.socket, handler: Any, owner_id: str,
         from handlers.register import handle_ws_registration
         card_sent = handle_ws_registration(
             owner_id, request_id, client_ip,
+            at_bot_only=msg_at_bot_only,
             session_mode=msg_session_mode,
             claude_commands=msg_claude_commands,
             default_chat_dir=msg_default_chat_dir,
@@ -416,6 +420,7 @@ def _handle_ws_message(sock: socket.socket, owner_id: str, msg: Dict[str, Any], 
                     store.upsert(
                         owner_id, 'ws://tunnel', auth_token,
                         binding_params.get('client_ip', ''),
+                        binding_params.get('at_bot_only'),
                         binding_params.get('session_mode', 'message'),
                         binding_params.get('claude_commands'),
                         binding_params.get('default_chat_dir', ''),

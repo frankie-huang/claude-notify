@@ -27,6 +27,7 @@ class BindingStore:
             "callback_url": "https://callback.example.com",
             "auth_token": "abc123.def456",
             "reply_in_thread": true,
+            "at_bot_only": false,
             "session_mode": "message",
             "claude_commands": ["claude", "claude --model opus"],
             "default_chat_dir": "/home/user/project",
@@ -109,6 +110,7 @@ class BindingStore:
         callback_url: str,
         auth_token: str,
         registered_ip: str = '',
+        at_bot_only: Optional[bool] = None,
         session_mode: str = 'message',
         claude_commands: Optional[List[str]] = None,
         default_chat_dir: str = '',
@@ -123,6 +125,7 @@ class BindingStore:
             callback_url: Callback 后端 URL
             auth_token: 认证令牌
             registered_ip: 注册来源 IP
+            at_bot_only: 群聊 @bot 过滤（None = 未传，保留旧值；True/False 显式写入）
             session_mode: 会话模式，message/thread/group
             claude_commands: 可用的 Claude 命令列表（从 Callback 后端传递）
             default_chat_dir: 默认聊天目录（从 Callback 后端传递）
@@ -165,6 +168,11 @@ class BindingStore:
                     'updated_at': int(time.time()),
                     'registered_ip': registered_ip
                 }
+                # at_bot_only：None = 调用方未传，保留旧值；True/False 显式写入
+                if at_bot_only is not None:
+                    binding_data['at_bot_only'] = bool(at_bot_only)
+                elif existing and 'at_bot_only' in existing:
+                    binding_data['at_bot_only'] = existing['at_bot_only']
                 # 群聊配置：None = 调用方未传，保留旧值；其他值（含 ''、0）显式写入
                 if group_name_prefix is not None:
                     binding_data['group_name_prefix'] = group_name_prefix
